@@ -23,13 +23,17 @@ function doGet(e) {
   try {
     setupMacroSheet();
     if (action === 'getData') {
+      var alerts = getAlertData(mode);
+      var diag = alerts._diag || {};
+      delete alerts._diag;
       result = {
         ok: true,
         mode: mode,
-        alertData: getAlertData(mode),
+        alertData: alerts,
         portfolioData: getOpenTrades(),
         historyData: getClosedTrades(),
-        macroData: getMacroData()
+        macroData: getMacroData(),
+        _diag: diag
       };
     }
     else if (action === 'saveTrade') {
@@ -160,28 +164,30 @@ function getAlertData(mode) {
       }
     }
     var output = [];
+    var _diag = {totalRows: data.length - 1, noId: 0, noPrice: 0, lowHist: 0, noCoupon: 0, lowZ: 0, passed: 0};
     for (var i = 1; i < data.length; i++) {
       var row = data[i];
       var rawId = row[0];
-      if (!rawId) continue;
+      if (!rawId) { _diag.noId++; continue; }
       // FILTER: valid prices
       var priceA = parseFloat(row[3]) || 0;
       var priceB = parseFloat(row[4]) || 0;
-      if (priceA <= 0 || priceB <= 0) continue;
+      if (priceA <= 0 || priceB <= 0) { _diag.noPrice++; continue; }
 
       // FILTER: history >= 60 trading days
       var histCount = parseFloat(row[16]) || 0;
-      if (histCount < 60) continue;
+      if (histCount < 60) { _diag.lowHist++; continue; }
 
       // FILTER: coupon must exist (exclude variable/reset)
       var couponA = row[8];
       var couponB = row[9];
       if (couponA === "" || couponA === null || couponA === undefined ||
-          couponB === "" || couponB === null || couponB === undefined) continue;
+          couponB === "" || couponB === null || couponB === undefined) { _diag.noCoupon++; continue; }
       var currentZ = parseFloat(row[12]) || 0;
 
       // FILTER: |z| >= 1.5
-      if (Math.abs(currentZ) < 1.5) continue;
+      if (Math.abs(currentZ) < 1.5) { _diag.lowZ++; continue; }
+      _diag.passed++;
       var info = parseTickerInfo(rawId);
       var cid = cleanId(rawId);
       // TREND from AlertsLog
@@ -226,6 +232,7 @@ function getAlertData(mode) {
         zTrend: trend
       });
     }
+    output._diag = _diag;
     return output;
   } catch (e) {
     console.error("getAlertData error: " + e);
