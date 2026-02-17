@@ -17,11 +17,11 @@
 // ROUTING
 // ============================================================
 function doGet(e) {
-  setupMacroSheet();
   var action = (e && e.parameter && e.parameter.action) ? e.parameter.action : 'getData';
   var mode = (e && e.parameter && e.parameter.mode) ? e.parameter.mode : 'intra';
   var result = {};
   try {
+    setupMacroSheet();
     if (action === 'getData') {
       result = {
         ok: true,
