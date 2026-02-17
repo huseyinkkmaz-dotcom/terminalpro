@@ -134,7 +134,11 @@ td:last-child{border-radius:0 10px 10px 0;border-right:1px solid var(--border)}
 </div>
 </div>
 <script>
-const GAS_URL="https://script.google.com/macros/s/AKfycbxerbmXkrbcrUh7sdMrc240vtPa-nK1EBgtxOSkhqIcsTEiWOpeZJsUdV8OeIlX9DKFVQ/exec";
+// ===========================================================================
+// PASTE YOUR DEPLOYED GOOGLE APPS SCRIPT URL BELOW (between the quotes)
+// Deploy → Manage Deployments → New Version → Copy URL → Paste here
+// ===========================================================================
+const GAS_URL="PASTE_YOUR_GAS_DEPLOYMENT_URL_HERE";
 let activeId="",sortAsc=true,liveTimer=null,currentMode="intra";
 async function apiGet(action,params={}){const url=new URL(GAS_URL);url.searchParams.set("action",action);for(const[k,v]of Object.entries(params))url.searchParams.set(k,v);const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),30000);try{const res=await fetch(url.toString(),{signal:controller.signal});clearTimeout(timer);if(!res.ok)throw new Error("HTTP "+res.status+" "+res.statusText);const text=await res.text();try{return JSON.parse(text);}catch(e){console.error("API returned non-JSON:",text.substring(0,500));throw new Error("Non-JSON response — redeploy GAS as 'Anyone'");}}catch(e){clearTimeout(timer);if(e.name==='AbortError')throw new Error("Request timed out (30s). GAS may be unreachable — check deployment URL and permissions.");throw e;}}
 function setConnStatus(s,msg){document.getElementById("connDot").className="conn-dot "+s;document.getElementById("connDot").title=msg||"API Status";}
