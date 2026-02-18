@@ -1,0 +1,11 @@
+{
+  "name": "terminalpro",
+  "version": "23.0.0",
+  "private": true,
+  "description": "Terminal Pro — Preferred Stock Pair Trading Dashboard",
+  "scripts": {
+    "push:gas": "cd gas && clasp push",
+    "deploy:netlify": "netlify deploy --dir=frontend --prod",
+    "deploy": "cd gas && clasp push && cd .. && netlify deploy --dir=frontend --prod"
+  }
+}

@@ -134,12 +134,18 @@ td:last-child{border-radius:0 10px 10px 0;border-right:1px solid var(--border)}
 </div>
 </div>
 <script>
+console.log("[TerminalPro] App Initialized");
 // ===========================================================================
-// PASTE YOUR DEPLOYED GOOGLE APPS SCRIPT URL BELOW (between the quotes)
-// Deploy → Manage Deployments → New Version → Copy URL → Paste here
+// GAS DEPLOYMENT URL — this URL is permanent. To update your backend code,
+// use clasp push, then in Apps Script: Deploy > Manage Deployments >
+// Edit (pencil) > Version: New Version > Deploy. The URL never changes.
 // ===========================================================================
 const GAS_URL="https://script.google.com/macros/s/AKfycbxerbmXkrbcrUh7sdMrc240vtPa-nK1EBgtxOSkhqIcsTEiWOpeZJsUdV8OeIlX9DKFVQ/exec";
-let activeId="",sortAsc=true,liveTimer=null,currentMode="intra";
+// --- Global state (declared before any function uses them) ---
+let currentMode = "intra";
+let activeId = "";
+let sortAsc = true;
+let liveTimer = null;
 async function apiGet(action,params={}){
   if(!GAS_URL||GAS_URL.indexOf("PASTE")!==-1||GAS_URL.indexOf("http")!==0){throw new Error("GAS_URL not configured. Open index.html and paste your Apps Script deployment URL on line 141.");}
   console.log("[TerminalPro] apiGet:",action,params);
