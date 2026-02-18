@@ -56,8 +56,13 @@ function doGet(e) {
   } catch (err) {
     result = { ok: false, message: err.toString() };
   }
+  // Sanitize: replace NaN/Infinity with null so JSON.stringify doesn't silently fail
+  var safeJson = JSON.stringify(result, function(key, val) {
+    if (typeof val === 'number' && !isFinite(val)) return null;
+    return val;
+  });
   return ContentService
-    .createTextOutput(JSON.stringify(result))
+    .createTextOutput(safeJson)
     .setMimeType(ContentService.MimeType.JSON);
 }
 function doPost(e) {
@@ -232,6 +237,17 @@ function getAlertData(mode) {
         zTrend: trend
       });
     }
+    // DEBUG: Force one test row so we can verify the pipeline works end-to-end
+    // REMOVE THIS BLOCK once you see "DEBUG|TEST" on the dashboard
+    output.push({
+      id: "DEBUG|TEST", tA: "TEST-A", tB: "TEST-B",
+      rng: "0.50 / 1.50", sec: "DEBUG", spr: "1.00",
+      yA: "5.00", yB: "4.50", z: "2.00", age: 1,
+      histDays: 90, liq: 50000, curVol: 80000, volSpike: true,
+      zTrend: ["1.8","1.9","2.0"]
+    });
+    _diag.passed++;
+
     output._diag = _diag;
     return output;
   } catch (e) {

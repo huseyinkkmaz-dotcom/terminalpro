@@ -138,7 +138,7 @@ td:last-child{border-radius:0 10px 10px 0;border-right:1px solid var(--border)}
 // PASTE YOUR DEPLOYED GOOGLE APPS SCRIPT URL BELOW (between the quotes)
 // Deploy → Manage Deployments → New Version → Copy URL → Paste here
 // ===========================================================================
-const GAS_URL="PASTE_YOUR_GAS_DEPLOYMENT_URL_HERE";
+const GAS_URL="https://script.google.com/macros/s/AKfycbxerbmXkrbcrUh7sdMrc240vtPa-nK1EBgtxOSkhqIcsTEiWOpeZJsUdV8OeIlX9DKFVQ/exec";
 let activeId="",sortAsc=true,liveTimer=null,currentMode="intra";
 async function apiGet(action,params={}){
   if(!GAS_URL||GAS_URL.indexOf("PASTE")!==-1||GAS_URL.indexOf("http")!==0){throw new Error("GAS_URL not configured. Open index.html and paste your Apps Script deployment URL on line 141.");}
