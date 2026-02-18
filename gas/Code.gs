@@ -23,12 +23,41 @@ function doGet(e) {
   try {
     setupMacroSheet();
     if (action === 'getData') {
+      // Failsafe: check if the Live/CreditLive sheet even exists
+      var sheetName = (mode === 'credit') ? 'CreditLive' : 'Live';
+      var ss = SpreadsheetApp.getActive();
+      var targetSheet = ss.getSheetByName(sheetName);
+      if (!targetSheet || targetSheet.getLastRow() <= 1) {
+        // Sheet missing or empty — return valid empty response instead of hanging
+        var setupState = PropertiesService.getScriptProperties().getProperty('SETUP_STATE');
+        var phase = setupState ? JSON.parse(setupState).phase : -1;
+        result = {
+          ok: true,
+          mode: mode,
+          status: "initializing",
+          statusMessage: !targetSheet
+            ? sheetName + " sheet not found. Run setupAllBatched() in Apps Script."
+            : sheetName + " has no data rows. GOOGLEFINANCE formulas may still be loading (wait 1-2 min then refresh).",
+          setupPhase: phase,
+          alertData: [],
+          portfolioData: [],
+          historyData: [],
+          macroData: getMacroData(),
+          _diag: { totalRows: 0, noId: 0, noPrice: 0, lowHist: 0, noCoupon: 0, lowZ: 0, passed: 0 }
+        };
+        var safeJson2 = JSON.stringify(result, function(key, val) {
+          if (typeof val === 'number' && !isFinite(val)) return null;
+          return val;
+        });
+        return ContentService.createTextOutput(safeJson2).setMimeType(ContentService.MimeType.JSON);
+      }
       var alerts = getAlertData(mode);
       var diag = alerts._diag || {};
       delete alerts._diag;
       result = {
         ok: true,
         mode: mode,
+        status: alerts.length > 0 ? "live" : "no_signals",
         alertData: alerts,
         portfolioData: getOpenTrades(),
         historyData: getClosedTrades(),
