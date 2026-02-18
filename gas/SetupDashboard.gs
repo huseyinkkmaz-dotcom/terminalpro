@@ -4,15 +4,17 @@
  * KEY CHANGE FROM V23.0:
  *   - All individual setFormula() loops replaced with batch setFormulas() calls
  *   - setupAllBatched() uses PropertiesService to save/resume progress
- *   - createAutoTrigger() installs a 10-minute trigger to run unattended
- *   - You can close your laptop — Google's servers finish the job in the background
+ *   - createAutoTrigger() installs ALL recurring triggers
+ *   - updateLivePrices() snapshots GOOGLEFINANCE values to WebCache every 10 min
+ *   - setupAllBatched() is a ONE-TIME heavy build (not recurring)
+ *   - Frontend reads from WebCache — fast, no formula recalculation
  *
  * HOW TO USE:
- *   1. Run createAutoTrigger() once — installs the 10-minute auto-runner
- *   2. Run setupAllBatched() once  — it will process as much as it can
- *   3. Close your laptop. The trigger picks up where it left off every 10 min.
- *   4. Check Execution Log to see progress. When you see "ALL PHASES COMPLETE",
- *      run clearSetupState() to clean up, then remove the auto-trigger.
+ *   1. Run createAutoTrigger() once — installs all triggers (10-min, hourly, daily)
+ *   2. Run setupAllBatched() once  — builds all sheets (resumes if it times out)
+ *   3. Close your laptop. Check Execution Log for progress.
+ *   4. Once "ALL PHASES COMPLETE" appears, WebCache is auto-populated.
+ *   5. To force a full rebuild later: clearSetupState() then setupAllBatched().
  *
  * PHASES:
  *   0 = Intra Levels (headers + stats + historical formulas)
@@ -50,6 +52,17 @@ function setupAllBatched() {
 
   var ss = SpreadsheetApp.getActive();
 
+  // ZOMBIE GUARD: If no saved state and Live sheet already has data,
+  // setup was already completed. Don't restart from phase 0 (which wipes sheets).
+  if (!stateJson) {
+    var existingLive = ss.getSheetByName('Live');
+    if (existingLive && existingLive.getLastRow() > 1) {
+      Logger.log('setupAllBatched: Live sheet already built (' + (existingLive.getLastRow() - 1) + ' rows). Skipping — setup already complete.');
+      Logger.log('To force a full rebuild: run clearSetupState() first, then setupAllBatched().');
+      return;
+    }
+  }
+
   try {
     // --- PHASE 0: Intra-company Levels sheet ---
     if (state.phase === 0) {
@@ -78,6 +91,7 @@ function setupAllBatched() {
         ]);
       }
       levels.getRange(2, 1, statsF.length, 6).setFormulas(statsF);
+      SpreadsheetApp.flush();
 
       // Historical spread formulas — BATCH (was individual setFormula per row!)
       var histF = [];
@@ -90,6 +104,7 @@ function setupAllBatched() {
         ]);
       }
       levels.getRange(2, 7, histF.length, 1).setFormulas(histF);
+      SpreadsheetApp.flush();
       levels.setFrozenRows(1);
       Logger.log('Phase 0 complete: ' + numPairs + ' intra Levels rows written (batched).');
 
@@ -172,6 +187,7 @@ function setupAllBatched() {
           ]);
         }
         cLevels.getRange(2, 1, statsF.length, 6).setFormulas(statsF);
+        SpreadsheetApp.flush();
 
         // Historical spread formulas — BATCH
         var histF = [];
@@ -184,6 +200,7 @@ function setupAllBatched() {
           ]);
         }
         cLevels.getRange(2, 7, histF.length, 1).setFormulas(histF);
+        SpreadsheetApp.flush();
         cLevels.setFrozenRows(1);
         Logger.log('Phase 4 complete: ' + numPairs + ' credit Levels rows written (batched).');
         state.phase = 5;
@@ -204,20 +221,37 @@ function setupAllBatched() {
       if (isTimeUp_(startTime)) { saveState_(props, state, 'Phase 5 done. Pausing before triggers.'); return; }
     }
 
-    // --- PHASE 6: Install triggers ---
+    // --- PHASE 6: Finalize + populate WebCache ---
     if (state.phase === 6) {
-      Logger.log('Phase 6: Installing triggers...');
-      // Remove existing
+      Logger.log('Phase 6: Finalizing...');
+      // Install triggers only if they don't already exist (createAutoTrigger may have set them)
+      var existingTriggers = {};
       var triggers = ScriptApp.getProjectTriggers();
       for (var i = 0; i < triggers.length; i++) {
-        var fn = triggers[i].getHandlerFunction();
-        if (fn === 'snapshotZScores' || fn === 'dailyCreditRefresh') {
-          ScriptApp.deleteTrigger(triggers[i]);
-        }
+        existingTriggers[triggers[i].getHandlerFunction()] = true;
       }
-      ScriptApp.newTrigger('snapshotZScores').timeBased().everyHours(1).create();
-      ScriptApp.newTrigger('dailyCreditRefresh').timeBased().atHour(5).everyDays(1).create();
-      Logger.log('Phase 6 complete: Triggers installed.');
+      if (!existingTriggers['snapshotZScores']) {
+        ScriptApp.newTrigger('snapshotZScores').timeBased().everyHours(1).create();
+        Logger.log('Installed snapshotZScores trigger.');
+      }
+      if (!existingTriggers['dailyCreditRefresh']) {
+        ScriptApp.newTrigger('dailyCreditRefresh').timeBased().atHour(5).everyDays(1).create();
+        Logger.log('Installed dailyCreditRefresh trigger.');
+      }
+      if (!existingTriggers['updateLivePrices']) {
+        ScriptApp.newTrigger('updateLivePrices').timeBased().everyMinutes(10).create();
+        Logger.log('Installed updateLivePrices trigger.');
+      }
+      // Populate WebCache immediately so frontend has data right away
+      SpreadsheetApp.flush();
+      Utilities.sleep(3000); // Brief pause for GOOGLEFINANCE formula recalculation
+      try {
+        updateLivePrices();
+        Logger.log('Phase 6 complete: WebCache populated.');
+      } catch (cacheErr) {
+        Logger.log('Phase 6: WebCache population failed (GOOGLEFINANCE may still be loading): ' + cacheErr.toString());
+        Logger.log('updateLivePrices will retry on the next 10-minute trigger cycle.');
+      }
 
       state.phase = 7;
     }
@@ -225,11 +259,10 @@ function setupAllBatched() {
     // --- PHASE 7: DONE ---
     if (state.phase >= 7) {
       props.deleteProperty('SETUP_STATE');
-      // Remove the auto-setup trigger since we're done
-      removeAutoSetupTrigger_();
       SpreadsheetApp.flush();
       Logger.log('=== ALL PHASES COMPLETE === Setup finished successfully!');
-      showMsg_('Setup complete! All sheets built. GOOGLEFINANCE data will populate over the next few minutes.');
+      Logger.log('Triggers active: updateLivePrices (10 min), snapshotZScores (1 hr), dailyCreditRefresh (5 AM).');
+      showMsg_('Setup complete! All sheets built.\n\nWebCache is populated — your dashboard should show data now.\nTriggers are active for automatic updates.');
       return;
     }
 
@@ -252,25 +285,54 @@ function saveState_(props, state, msg) {
 }
 
 /**
- * Creates a 10-minute trigger that runs setupAllBatched().
- * Run this ONCE, then run setupAllBatched() to kick it off.
- * The trigger auto-removes itself when setup is complete.
+ * Installs ALL recurring triggers. Run this ONCE.
+ *
+ * Schedule:
+ *   - updateLivePrices:    every 10 min  (light — snapshot GOOGLEFINANCE → WebCache)
+ *   - snapshotZScores:     every 1 hour  (trend ribbons + age tracking)
+ *   - dailyCreditRefresh:  daily at 5 AM (regenerate credit pairs)
+ *
+ * setupAllBatched is NOT on a recurring trigger — it's a one-time build.
+ * To rebuild: run clearSetupState() then setupAllBatched() manually.
  */
 function createAutoTrigger() {
-  // Remove any existing auto-setup trigger first
-  removeAutoSetupTrigger_();
+  // Remove ALL existing triggers managed by this system
+  var triggers = ScriptApp.getProjectTriggers();
+  for (var i = 0; i < triggers.length; i++) {
+    var fn = triggers[i].getHandlerFunction();
+    if (fn === 'setupAllBatched' || fn === 'updateLivePrices' ||
+        fn === 'snapshotZScores' || fn === 'dailyCreditRefresh') {
+      ScriptApp.deleteTrigger(triggers[i]);
+    }
+  }
 
-  ScriptApp.newTrigger('setupAllBatched')
+  // LIGHT: updateLivePrices every 10 minutes (snapshots GOOGLEFINANCE → WebCache)
+  ScriptApp.newTrigger('updateLivePrices')
     .timeBased()
     .everyMinutes(10)
     .create();
 
-  Logger.log('Auto-trigger installed: setupAllBatched will run every 10 minutes.');
+  // HOURLY: snapshotZScores (trend ribbons + Z-score age tracking)
+  ScriptApp.newTrigger('snapshotZScores')
+    .timeBased()
+    .everyHours(1)
+    .create();
+
+  // DAILY: dailyCreditRefresh at 5 AM (regenerate credit pairs from Master)
+  ScriptApp.newTrigger('dailyCreditRefresh')
+    .timeBased()
+    .atHour(5)
+    .everyDays(1)
+    .create();
+
+  Logger.log('All triggers installed:\n• updateLivePrices: every 10 min\n• snapshotZScores: every hour\n• dailyCreditRefresh: daily 5 AM');
   showMsg_(
-    'Auto-trigger created!\n\n' +
-    'Now run setupAllBatched() once to start.\n' +
-    'It will continue automatically every 10 minutes until done.\n' +
-    'You can close your laptop — check Execution Log for progress.'
+    'Triggers installed!\n\n' +
+    '• updateLivePrices: every 10 min (snapshots prices to WebCache)\n' +
+    '• snapshotZScores: every hour (trend tracking)\n' +
+    '• dailyCreditRefresh: daily 5 AM (credit pair regeneration)\n\n' +
+    'Now run setupAllBatched() to build the sheets.\n' +
+    'Then run updateLivePrices() to populate WebCache immediately.'
   );
 }
 
@@ -284,12 +346,14 @@ function removeAutoSetupTrigger_() {
   }
 }
 
-/** Reset saved progress — use if setup gets stuck */
+/** Reset saved progress — use if setup gets stuck or you want to force a full rebuild */
 function clearSetupState() {
-  PropertiesService.getScriptProperties().deleteProperty('SETUP_STATE');
+  var props = PropertiesService.getScriptProperties();
+  props.deleteProperty('SETUP_STATE');
+  props.deleteProperty('WEBCACHE_UPDATED');
   removeAutoSetupTrigger_();
   Logger.log('Setup state cleared. Run createAutoTrigger() + setupAllBatched() to start fresh.');
-  showMsg_('Setup state cleared. You can start fresh.');
+  showMsg_('Setup state cleared. You can start fresh.\n\nNext: run createAutoTrigger() then setupAllBatched().');
 }
 
 /** Show current setup progress */
@@ -306,6 +370,90 @@ function checkSetupProgress() {
     var state = JSON.parse(stateJson);
     showMsg_('Setup in progress.\n\nCurrent phase: ' + (phaseNames[state.phase] || state.phase) +
              '\n\nPhases remaining: ' + (7 - state.phase));
+  }
+}
+
+// ============================================================
+// LIGHT UPDATE — snapshots GOOGLEFINANCE values to WebCache (every 10 min)
+// ============================================================
+
+/**
+ * Light update function. Runs every 10 minutes via trigger.
+ * Reads computed GOOGLEFINANCE values from Live/CreditLive sheets
+ * and writes them as static values to WebCache/WebCacheCredit.
+ * This decouples the API from GOOGLEFINANCE recalculation timing.
+ * Target execution: <30 seconds.
+ */
+function updateLivePrices() {
+  try {
+    var ss = SpreadsheetApp.getActive();
+    var updated = 0;
+
+    var sources = [
+      { from: 'Live', to: 'WebCache' },
+      { from: 'CreditLive', to: 'WebCacheCredit' }
+    ];
+
+    for (var i = 0; i < sources.length; i++) {
+      var src = ss.getSheetByName(sources[i].from);
+      if (!src || src.getLastRow() <= 1) {
+        Logger.log('updateLivePrices: ' + sources[i].from + ' not found or empty, skipping.');
+        continue;
+      }
+
+      // Read all computed values (GOOGLEFINANCE formulas → resolved values)
+      var data = src.getDataRange().getValues();
+      if (data.length <= 1) continue;
+
+      // Sanity check: at least some rows should have non-zero prices (col D = index 3)
+      // If GOOGLEFINANCE hasn't populated yet, don't overwrite existing WebCache
+      var validPrices = 0;
+      for (var r = 1; r < data.length && r < 20; r++) {
+        if (parseFloat(data[r][3]) > 0) validPrices++;
+      }
+      if (validPrices === 0) {
+        Logger.log('updateLivePrices: ' + sources[i].from + ' has no valid prices (GOOGLEFINANCE still loading?). Keeping existing cache.');
+        continue;
+      }
+
+      // Get or create target cache sheet
+      var cache = ss.getSheetByName(sources[i].to);
+      if (!cache) {
+        cache = ss.insertSheet(sources[i].to);
+      } else {
+        cache.clear();
+      }
+
+      // Write headers
+      cache.getRange(1, 1, 1, data[0].length).setValues([data[0]]);
+      cache.getRange(1, 1, 1, data[0].length).setFontWeight('bold');
+      SpreadsheetApp.flush();
+
+      // Write data rows in chunks of 500
+      var rows = data.slice(1);
+      if (rows.length === 0) continue;
+
+      var CHUNK = 500;
+      for (var c = 0; c < rows.length; c += CHUNK) {
+        var chunk = rows.slice(c, Math.min(c + CHUNK, rows.length));
+        try {
+          cache.getRange(c + 2, 1, chunk.length, data[0].length).setValues(chunk);
+          SpreadsheetApp.flush();
+        } catch (writeErr) {
+          Logger.log('updateLivePrices: write error at row ' + (c + 2) + ' in ' + sources[i].to + ': ' + writeErr.toString());
+        }
+      }
+
+      updated += rows.length;
+      Logger.log('updateLivePrices: cached ' + rows.length + ' rows from ' + sources[i].from + ' → ' + sources[i].to);
+    }
+
+    // Store timestamp for diagnostics
+    PropertiesService.getScriptProperties().setProperty('WEBCACHE_UPDATED', new Date().toISOString());
+    Logger.log('updateLivePrices: complete. ' + updated + ' total rows cached.');
+
+  } catch (e) {
+    Logger.log('updateLivePrices ERROR: ' + e.toString());
   }
 }
 
@@ -380,6 +528,7 @@ function generateCreditPairsBatched_(ss) {
   cpSheet.getRange(1, 1, 1, 4).setFontWeight('bold').setBackground('#2d1a2e').setFontColor('#ffffff');
   if (allPairs.length > 0) {
     cpSheet.getRange(2, 1, allPairs.length, 4).setValues(allPairs);
+    SpreadsheetApp.flush();
   }
   return allPairs.length;
 }

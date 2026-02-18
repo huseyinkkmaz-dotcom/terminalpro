@@ -23,21 +23,23 @@ function doGet(e) {
   try {
     setupMacroSheet();
     if (action === 'getData') {
-      // Failsafe: check if the Live/CreditLive sheet even exists
-      var sheetName = (mode === 'credit') ? 'CreditLive' : 'Live';
+      // Failsafe: check WebCache first (fast snapshot), then Live (GOOGLEFINANCE formulas)
+      var cacheName = (mode === 'credit') ? 'WebCacheCredit' : 'WebCache';
+      var liveName = (mode === 'credit') ? 'CreditLive' : 'Live';
       var ss = SpreadsheetApp.getActive();
-      var targetSheet = ss.getSheetByName(sheetName);
+      var targetSheet = ss.getSheetByName(cacheName);
       if (!targetSheet || targetSheet.getLastRow() <= 1) {
-        // Sheet missing or empty — return valid empty response instead of hanging
+        targetSheet = ss.getSheetByName(liveName);
+      }
+      if (!targetSheet || targetSheet.getLastRow() <= 1) {
+        // No data anywhere — return valid empty response
         var setupState = PropertiesService.getScriptProperties().getProperty('SETUP_STATE');
         var phase = setupState ? JSON.parse(setupState).phase : -1;
         result = {
           ok: true,
           mode: mode,
           status: "initializing",
-          statusMessage: !targetSheet
-            ? sheetName + " sheet not found. Run setupAllBatched() in Apps Script."
-            : sheetName + " has no data rows. GOOGLEFINANCE formulas may still be loading (wait 1-2 min then refresh).",
+          statusMessage: "Data not ready. Run setupAllBatched() then updateLivePrices() in Apps Script.",
           setupPhase: phase,
           alertData: [],
           portfolioData: [],
@@ -163,11 +165,16 @@ function parseTickerInfo(rawId) {
 // ALERT DATA — supports mode switching
 // ============================================================
 function getAlertData(mode) {
-  var sheetName = (mode === 'credit') ? 'CreditLive' : 'Live';
+  // Prefer WebCache (static snapshot, fast) over Live (GOOGLEFINANCE formulas)
+  var cacheName = (mode === 'credit') ? 'WebCacheCredit' : 'WebCache';
+  var liveName = (mode === 'credit') ? 'CreditLive' : 'Live';
 
   try {
     var ss = SpreadsheetApp.getActive();
-    var liveSheet = ss.getSheetByName(sheetName);
+    var liveSheet = ss.getSheetByName(cacheName);
+    if (!liveSheet || liveSheet.getLastRow() <= 1) {
+      liveSheet = ss.getSheetByName(liveName);
+    }
     if (!liveSheet) return [];
     var data = liveSheet.getDataRange().getValues();
     if (data.length <= 1) return [];
@@ -283,11 +290,15 @@ function getOpenTrades() {
     if (!openSheet) return [];
     var openData = openSheet.getDataRange().getValues();
     if (openData.length < 2) return [];
-    // Merge Live + CreditLive rows for unified lookup
+    // Merge rows for unified lookup — prefer WebCache, fall back to Live
     var liveRows = [];
-    var sheets = ['Live', 'CreditLive'];
-    for (var s = 0; s < sheets.length; s++) {
-      var ls = ss.getSheetByName(sheets[s]);
+    var intra = ss.getSheetByName('WebCache');
+    if (!intra || intra.getLastRow() <= 1) intra = ss.getSheetByName('Live');
+    var credit = ss.getSheetByName('WebCacheCredit');
+    if (!credit || credit.getLastRow() <= 1) credit = ss.getSheetByName('CreditLive');
+    var sources = [intra, credit];
+    for (var s = 0; s < sources.length; s++) {
+      var ls = sources[s];
       if (ls && ls.getLastRow() > 1) {
         var rows = ls.getRange(2, 1, ls.getLastRow()-1, 24).getValues();
         liveRows = liveRows.concat(rows);
