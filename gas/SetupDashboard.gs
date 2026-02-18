@@ -28,23 +28,23 @@ function setupDashboard() {
   var pairsSheet = ss.getSheetByName('Pairs');
 
   if (!pairsSheet) {
-    SpreadsheetApp.getUi().alert('ERROR: "Pairs" sheet not found.\n\nRequired: A: PairID | B: TickerA | C: TickerB | D: Sector');
+    showMsg_('ERROR: "Pairs" sheet not found.\n\nRequired: A: PairID | B: TickerA | C: TickerB | D: Sector');
     return;
   }
 
   var masterSheet = ss.getSheetByName('Master');
   if (!masterSheet) {
-    SpreadsheetApp.getUi().alert('WARNING: "Master" sheet not found. Yields and coupon filtering will not work. Continuing...');
+    showMsg_('WARNING: "Master" sheet not found. Yields and coupon filtering will not work. Continuing...');
   }
 
   var pairs = pairsSheet.getDataRange().getValues();
   var numPairs = pairs.length - 1;
   if (numPairs < 1) {
-    SpreadsheetApp.getUi().alert('ERROR: Pairs sheet is empty.');
+    showMsg_('ERROR: Pairs sheet is empty.');
     return;
   }
 
-  SpreadsheetApp.getUi().alert('Setting up ' + numPairs + ' intra-company pairs.\nClick OK to proceed.');
+  showMsg_('Setting up ' + numPairs + ' intra-company pairs.\nClick OK to proceed.');
 
   // --- LEVELS ---
   var levels = getOrCreateSheet_(ss, 'Levels');
@@ -94,7 +94,7 @@ function setupDashboard() {
   // Don't clear — we want to preserve timestamps
 
   SpreadsheetApp.flush();
-  SpreadsheetApp.getUi().alert('✅ Intra-company setup complete for ' + numPairs + ' pairs.\n\nNext: run generateCreditPairs() then setupCreditSheets().');
+  showMsg_('✅ Intra-company setup complete for ' + numPairs + ' pairs.\n\nNext: run generateCreditPairs() then setupCreditSheets().');
 }
 // ============================================================
 // 2. CREDIT RATING ARBITRAGE — Pair Generation
@@ -110,13 +110,13 @@ function generateCreditPairs() {
   var master = ss.getSheetByName('Master');
 
   if (!master) {
-    SpreadsheetApp.getUi().alert('ERROR: "Master" sheet not found.');
+    showMsg_('ERROR: "Master" sheet not found.');
     return;
   }
 
   var data = master.getDataRange().getValues();
   if (data.length < 2) {
-    SpreadsheetApp.getUi().alert('ERROR: Master sheet is empty.');
+    showMsg_('ERROR: Master sheet is empty.');
     return;
   }
 
@@ -237,7 +237,7 @@ function generateCreditPairs() {
   });
   for (var r in ratingCounts) summary.push(r + ': ' + ratingCounts[r]);
 
-  SpreadsheetApp.getUi().alert(
+  showMsg_(
     '✅ Generated ' + allPairs.length + ' credit arb pairs (no cap).\n\n' +
     'Breakdown:\n' + summary.join('\n') + '\n\n' +
     'Same-company pairs filtered via Pairs sheet union + hyphen-root matching.\n\n' +
@@ -252,14 +252,14 @@ function setupCreditSheets() {
   var cpSheet = ss.getSheetByName('CreditPairs');
 
   if (!cpSheet) {
-    SpreadsheetApp.getUi().alert('ERROR: "CreditPairs" sheet not found. Run generateCreditPairs() first.');
+    showMsg_('ERROR: "CreditPairs" sheet not found. Run generateCreditPairs() first.');
     return;
   }
 
   var pairs = cpSheet.getDataRange().getValues();
   var numPairs = pairs.length - 1;
   if (numPairs < 1) {
-    SpreadsheetApp.getUi().alert('ERROR: CreditPairs is empty.');
+    showMsg_('ERROR: CreditPairs is empty.');
     return;
   }
 
@@ -297,7 +297,7 @@ function setupCreditSheets() {
   buildLiveSheet_(ss, 'CreditLive', 'CreditPairs', 'CreditLevels', numPairs, pairs);
 
   SpreadsheetApp.flush();
-  SpreadsheetApp.getUi().alert(
+  showMsg_(
     '✅ Credit sheets built!\n\n' +
     '• CreditLevels: ' + numPairs + ' pairs\n' +
     '• CreditLive: ' + numPairs + ' pairs\n\n' +
@@ -331,7 +331,7 @@ function setupTriggers() {
     .everyDays(1)
     .create();
 
-  SpreadsheetApp.getUi().alert(
+  showMsg_(
     '✅ Triggers installed!\n\n' +
     '• snapshotZScores(): Every hour (Z-log + age tracking)\n' +
     '• dailyCreditRefresh(): Daily at 5 AM (regenerate credit pairs)'
@@ -649,4 +649,12 @@ function ensureSheet_(ss, name, headers) {
 }
 function cleanId_(id) {
   return id ? String(id).toUpperCase().replace(/[^A-Z0-9]/g, '') : "";
+}
+/** Safe alert — shows UI dialog if available, falls back to Logger */
+function showMsg_(msg) {
+  try {
+    SpreadsheetApp.getUi().alert(msg);
+  } catch (e) {
+    Logger.log(msg);
+  }
 }
