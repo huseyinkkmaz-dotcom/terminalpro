@@ -806,7 +806,18 @@ function buildLiveSheet_(ss, sheetName, pairsRef, levelsRef, numPairs, pairsData
       '=IF(AND(T' + r + '>0,W' + r + '>1.5*T' + r + '),TRUE,FALSE)'
     ]);
   }
-  live.getRange(2, 1, formulas.length, 24).setFormulas(formulas);
+  // Write in chunks of 500 rows to avoid timeout on large datasets (500+ credit pairs)
+  var CHUNK_SIZE = 500;
+  for (var c = 0; c < formulas.length; c += CHUNK_SIZE) {
+    var chunk = formulas.slice(c, Math.min(c + CHUNK_SIZE, formulas.length));
+    var startRow = c + 2; // row 1 is headers, data starts at row 2
+    live.getRange(startRow, 1, chunk.length, 24).setFormulas(chunk);
+    SpreadsheetApp.flush();
+    Logger.log(sheetName + ': wrote rows ' + startRow + '-' + (startRow + chunk.length - 1) + ' of ' + (formulas.length + 1));
+    if (c + CHUNK_SIZE < formulas.length) {
+      Utilities.sleep(200);
+    }
+  }
   live.setFrozenRows(1);
 }
 function getOrCreateSheet_(ss, name) {
