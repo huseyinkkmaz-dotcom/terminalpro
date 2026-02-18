@@ -215,9 +215,9 @@ function getAlertData(mode) {
       var priceB = parseFloat(row[4]) || 0;
       if (priceA <= 0 || priceB <= 0) { _diag.noPrice++; continue; }
 
-      // FILTER: history >= 60 trading days
+      // FILTER: history >= 30 trading days (lowered from 60 to show more pairs while GOOGLEFINANCE loads)
       var histCount = parseFloat(row[16]) || 0;
-      if (histCount < 60) { _diag.lowHist++; continue; }
+      if (histCount < 30) { _diag.lowHist++; continue; }
 
       // FILTER: coupon must exist (exclude variable/reset)
       var couponA = row[8];

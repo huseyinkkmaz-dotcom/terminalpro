@@ -771,7 +771,7 @@ function snapshotZScores() {
         var priceB = parseFloat(row[4]) || 0;
         if (priceA <= 0 || priceB <= 0) continue;
         var histCount = parseFloat(row[16]) || 0;
-        if (histCount < 60) continue;
+        if (histCount < 30) continue;
         var couponA = row[8], couponB = row[9];
         if (couponA === "" || couponA === null || couponB === "" || couponB === null) continue;
         var zScore = parseFloat(row[12]) || 0;
