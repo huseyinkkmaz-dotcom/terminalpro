@@ -236,6 +236,19 @@ function getAlertData(mode) {
         }
       }
     }
+    // Load DivDates for ex-dividend date column
+    var divMap = {};
+    var divSheet = ss.getSheetByName('DivDates');
+    if (divSheet && divSheet.getLastRow() > 1) {
+      var divData = divSheet.getRange(2, 1, divSheet.getLastRow() - 1, 2).getValues();
+      for (var d = 0; d < divData.length; d++) {
+        var dticker = String(divData[d][0]).toUpperCase().trim();
+        var ddate = divData[d][1];
+        if (dticker && ddate instanceof Date) {
+          divMap[dticker] = ddate;
+        }
+      }
+    }
     var output = [];
     var _diag = {totalRows: data.length - 1, noId: 0, noPrice: 0, noHistory: 0, noCoupon: 0, lowZ: 0,
                  blacklisted: 0, intraOnly: 0, passed: 0,
@@ -320,6 +333,16 @@ function getAlertData(mode) {
       var avgLiq = parseFloat(row[19]) || 0;
       var curVol = parseFloat(row[22]) || 0;
       var volSpike = (row[23] === true || row[23] === "TRUE");
+      // DIV DATES — pick nearest upcoming ex-div for either leg
+      var now = new Date();
+      var divA = divMap[tickerA] || null;
+      var divB = divMap[tickerB] || null;
+      var nearestDiv = null, divLeg = '';
+      if (divA && divA >= now && divB && divB >= now) {
+        if (divA <= divB) { nearestDiv = divA; divLeg = 'A'; }
+        else { nearestDiv = divB; divLeg = 'B'; }
+      } else if (divA && divA >= now) { nearestDiv = divA; divLeg = 'A'; }
+      else if (divB && divB >= now) { nearestDiv = divB; divLeg = 'B'; }
       output.push({
         id: info.id,
         tA: row[1] || info.tA,
@@ -330,12 +353,14 @@ function getAlertData(mode) {
         yA: yA,
         yB: yB,
         z: currentZ.toFixed(2),
-        age: ageDays,        // Real age from ZScoreAge
-        histDays: histCount, // History depth for reference
+        age: ageDays,
+        histDays: histCount,
         liq: avgLiq,
         curVol: curVol,
         volSpike: volSpike,
-        zTrend: trend
+        zTrend: trend,
+        divDate: nearestDiv ? nearestDiv.toISOString().split('T')[0] : null,
+        divLeg: divLeg
       });
     }
     output._diag = _diag;

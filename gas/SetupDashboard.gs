@@ -137,6 +137,7 @@ function setupAllBatched() {
         ageSheet.getRange(1, 1, 1, 3).setValues([['PairID', 'FirstCrossTimestamp', 'Source']]);
         ageSheet.getRange(1, 1, 1, 3).setFontWeight('bold');
       }
+      ensureSheet_(ss, 'DivDates', ['Ticker', 'ExDivDate', 'LastFetched']);
       Logger.log('Phase 2 complete: Supporting sheets ready.');
 
       state.phase = 3;
@@ -301,7 +302,7 @@ function createAutoTrigger() {
   for (var i = 0; i < triggers.length; i++) {
     var fn = triggers[i].getHandlerFunction();
     if (fn === 'setupAllBatched' || fn === 'updateLivePrices' ||
-        fn === 'snapshotZScores' || fn === 'dailyCreditRefresh') {
+        fn === 'snapshotZScores' || fn === 'dailyCreditRefresh' || fn === 'fetchDividendDates') {
       ScriptApp.deleteTrigger(triggers[i]);
     }
   }
@@ -325,12 +326,20 @@ function createAutoTrigger() {
     .everyDays(1)
     .create();
 
-  Logger.log('All triggers installed:\n• updateLivePrices: every 10 min\n• snapshotZScores: every hour\n• dailyCreditRefresh: daily 5 AM');
+  // DAILY: fetchDividendDates at 6 AM (scrape Yahoo Finance for ex-div dates)
+  ScriptApp.newTrigger('fetchDividendDates')
+    .timeBased()
+    .atHour(6)
+    .everyDays(1)
+    .create();
+
+  Logger.log('All triggers installed:\n• updateLivePrices: every 10 min\n• snapshotZScores: every hour\n• dailyCreditRefresh: daily 5 AM\n• fetchDividendDates: daily 6 AM');
   showMsg_(
     'Triggers installed!\n\n' +
     '• updateLivePrices: every 10 min (snapshots prices to WebCache)\n' +
     '• snapshotZScores: every hour (trend tracking)\n' +
-    '• dailyCreditRefresh: daily 5 AM (credit pair regeneration)\n\n' +
+    '• dailyCreditRefresh: daily 5 AM (credit pair regeneration)\n' +
+    '• fetchDividendDates: daily 6 AM (Yahoo Finance ex-div dates)\n\n' +
     'Now run setupAllBatched() to build the sheets.\n' +
     'Then run updateLivePrices() to populate WebCache immediately.'
   );
@@ -438,6 +447,163 @@ function updateHistoricalLookback() {
   } else {
     showMsg_('No Levels/CreditLevels sheets found to update.');
   }
+}
+
+// ============================================================
+// DIVIDEND DATE FETCHING — Yahoo Finance scraping
+// ============================================================
+
+/**
+ * Convert our ticker format to Yahoo Finance format.
+ * BAC-B → BAC-PB (insert P before series letter)
+ * AGNCP → AGNCP (non-hyphenated: as-is)
+ */
+function toYahooTicker_(ticker) {
+  var t = String(ticker).trim().toUpperCase();
+  var idx = t.indexOf('-');
+  if (idx > 0) {
+    return t.substring(0, idx) + '-P' + t.substring(idx + 1);
+  }
+  return t;
+}
+
+/**
+ * Fetches ex-dividend dates for all tickers in Master sheet.
+ * Writes results to DivDates sheet. Run daily via trigger at 6 AM.
+ * Uses Yahoo Finance page scraping (extracts exDividendDate from page JSON).
+ *
+ * Batches 30 tickers at a time with UrlFetchApp.fetchAll() (parallel).
+ * Skips tickers fetched within last 20 hours.
+ * Total runtime: ~30-60 seconds for 500 tickers.
+ */
+function fetchDividendDates() {
+  var ss = SpreadsheetApp.getActive();
+  var master = ss.getSheetByName('Master');
+  if (!master) { Logger.log('fetchDividendDates: No Master sheet'); return; }
+
+  var data = master.getDataRange().getValues();
+  var tickers = [];
+  for (var i = 1; i < data.length; i++) {
+    var t = String(data[i][0]).trim();
+    if (t) tickers.push(t);
+  }
+  if (tickers.length === 0) return;
+
+  // Get or create DivDates sheet
+  var divSheet = ss.getSheetByName('DivDates');
+  if (!divSheet) {
+    divSheet = ss.insertSheet('DivDates');
+    divSheet.getRange(1, 1, 1, 3).setValues([['Ticker', 'ExDivDate', 'LastFetched']]);
+    divSheet.getRange(1, 1, 1, 3).setFontWeight('bold');
+  }
+
+  // Load existing data — skip recently fetched tickers
+  var dataMap = {};
+  if (divSheet.getLastRow() > 1) {
+    var existData = divSheet.getRange(2, 1, divSheet.getLastRow() - 1, 3).getValues();
+    var now = new Date();
+    for (var i = 0; i < existData.length; i++) {
+      var key = String(existData[i][0]).toUpperCase().trim();
+      dataMap[key] = existData[i];
+    }
+  }
+
+  var now = new Date();
+  var toFetch = [];
+  for (var i = 0; i < tickers.length; i++) {
+    var key = tickers[i].toUpperCase();
+    var existing = dataMap[key];
+    if (existing && existing[2] instanceof Date) {
+      var hoursSince = (now.getTime() - existing[2].getTime()) / (1000 * 60 * 60);
+      if (hoursSince < 20) continue;  // Skip if fetched within 20 hours
+    }
+    toFetch.push(tickers[i]);
+  }
+
+  Logger.log('fetchDividendDates: ' + toFetch.length + ' to fetch, ' + (tickers.length - toFetch.length) + ' cached.');
+  if (toFetch.length === 0) return;
+
+  // Fetch in batches of 30 using fetchAll (parallel)
+  var BATCH = 30;
+  var successCount = 0;
+
+  for (var b = 0; b < toFetch.length; b += BATCH) {
+    var batch = toFetch.slice(b, Math.min(b + BATCH, toFetch.length));
+    var requests = [];
+    for (var i = 0; i < batch.length; i++) {
+      requests.push({
+        url: 'https://finance.yahoo.com/quote/' + encodeURIComponent(toYahooTicker_(batch[i])) + '/',
+        muteHttpExceptions: true,
+        followRedirects: true,
+        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }
+      });
+    }
+
+    try {
+      var responses = UrlFetchApp.fetchAll(requests);
+      for (var i = 0; i < responses.length; i++) {
+        var ticker = batch[i];
+        var key = ticker.toUpperCase();
+        try {
+          if (responses[i].getResponseCode() === 200) {
+            var divDate = parseDivDate_(responses[i].getContentText());
+            dataMap[key] = [ticker, divDate || '', now];
+            if (divDate) successCount++;
+          } else {
+            dataMap[key] = [ticker, dataMap[key] ? dataMap[key][1] : '', now];
+          }
+        } catch (e) {
+          dataMap[key] = [ticker, dataMap[key] ? dataMap[key][1] : '', now];
+        }
+      }
+    } catch (e) {
+      Logger.log('fetchDividendDates: Batch error at offset ' + b + ': ' + e.toString());
+    }
+
+    if (b + BATCH < toFetch.length) Utilities.sleep(1500);
+  }
+
+  // Write all results back to sheet
+  var allRows = [];
+  for (var key in dataMap) {
+    allRows.push(dataMap[key]);
+  }
+  allRows.sort(function(a, b) { return String(a[0]).localeCompare(String(b[0])); });
+
+  divSheet.clear();
+  divSheet.getRange(1, 1, 1, 3).setValues([['Ticker', 'ExDivDate', 'LastFetched']]);
+  divSheet.getRange(1, 1, 1, 3).setFontWeight('bold');
+  if (allRows.length > 0) {
+    divSheet.getRange(2, 1, allRows.length, 3).setValues(allRows);
+  }
+
+  Logger.log('fetchDividendDates: Done. ' + successCount + '/' + toFetch.length + ' got dates. ' + allRows.length + ' total tickers stored.');
+}
+
+/**
+ * Parse ex-dividend date from Yahoo Finance HTML.
+ * Looks for exDividendDate in the page's embedded JSON data.
+ */
+function parseDivDate_(html) {
+  // Strategy 1: JSON "raw" timestamp (most reliable)
+  var m1 = html.match(/"exDividendDate"\s*:\s*\{[^}]*?"raw"\s*:\s*(\d+)/);
+  if (m1) {
+    var d = new Date(parseInt(m1[1]) * 1000);
+    if (d.getFullYear() >= 2024 && d.getFullYear() <= 2030) return d;
+  }
+  // Strategy 2: JSON "fmt" string
+  var m2 = html.match(/"exDividendDate"\s*:\s*\{[^}]*?"fmt"\s*:\s*"([^"]+)"/);
+  if (m2) {
+    var d = new Date(m2[1]);
+    if (!isNaN(d.getTime()) && d.getFullYear() >= 2024) return d;
+  }
+  // Strategy 3: Text pattern in page
+  var m3 = html.match(/Ex-Dividend Date<\/[^>]+>\s*<[^>]+>([A-Z][a-z]{2}\s+\d{1,2},\s+\d{4})/);
+  if (m3) {
+    var d = new Date(m3[1]);
+    if (!isNaN(d.getTime())) return d;
+  }
+  return null;
 }
 
 // ============================================================
