@@ -237,7 +237,7 @@ function getAlertData(mode) {
       }
     }
     var output = [];
-    var _diag = {totalRows: data.length - 1, noId: 0, noPrice: 0, lowHist: 0, noCoupon: 0, lowZ: 0,
+    var _diag = {totalRows: data.length - 1, noId: 0, noPrice: 0, noHistory: 0, noCoupon: 0, lowZ: 0,
                  blacklisted: 0, intraOnly: 0, passed: 0,
                  sheetUsed: liveSheet.getName(), sampleRows: []};
     // Capture first 5 rows raw data for debugging
@@ -277,9 +277,11 @@ function getAlertData(mode) {
       var priceB = parseFloat(row[4]) || 0;
       if (priceA <= 0 || priceB <= 0) { _diag.noPrice++; continue; }
 
-      // FILTER: minimum 55 trading days (~80 calendar days) of history
+      // FILTER: valid statistical history — StDev must be real (not the 0.001 IFERROR default)
+      // This catches pairs where GOOGLEFINANCE historical data failed to load
+      var stdev = parseFloat(row[11]) || 0;
+      if (stdev <= 0.001) { _diag.noHistory++; continue; }
       var histCount = parseFloat(row[16]) || 0;
-      if (histCount < 55) { _diag.lowHist++; continue; }
 
       // FILTER: coupon must exist (exclude variable/reset)
       var couponA = row[8];

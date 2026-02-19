@@ -843,8 +843,8 @@ function snapshotZScores() {
         var priceA = parseFloat(row[3]) || 0;
         var priceB = parseFloat(row[4]) || 0;
         if (priceA <= 0 || priceB <= 0) continue;
-        var histCount = parseFloat(row[16]) || 0;
-        if (histCount < 55) continue;
+        var stdev = parseFloat(row[11]) || 0;
+        if (stdev <= 0.001) continue;  // No valid historical data
         var couponA = row[8], couponB = row[9];
         if (couponA === "" || couponA === null || couponB === "" || couponB === null) continue;
         var zScore = parseFloat(row[12]) || 0;
