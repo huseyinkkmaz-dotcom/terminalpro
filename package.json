@@ -5,7 +5,7 @@
   "description": "Terminal Pro — Preferred Stock Pair Trading Dashboard",
   "scripts": {
     "push:gas": "cd gas && clasp push",
-    "deploy:frontend": "vercel ./frontend --prod",
-    "deploy": "cd gas && clasp push && cd .. && vercel ./frontend --prod"
+    "deploy:frontend": "cd frontend && vercel --prod",
+    "deploy": "cd gas && clasp push && cd ../frontend && vercel --prod"
   }
 }
