@@ -100,7 +100,7 @@ function setupAllBatched() {
         var tB = String(pairs[i + 1][2]).trim();
         if (!tA || !tB) { histF.push(['']); continue; }
         histF.push([
-          '=IFERROR(TRANSPOSE(ARRAYFORMULA(QUERY(GOOGLEFINANCE("' + tA + '","price",TODAY()-90,TODAY()),"select Col2 offset 1",0)-QUERY(GOOGLEFINANCE("' + tB + '","price",TODAY()-90,TODAY()),"select Col2 offset 1",0))),)'
+          '=IFERROR(TRANSPOSE(ARRAYFORMULA(QUERY(GOOGLEFINANCE("' + tA + '","price",TODAY()-120,TODAY()),"select Col2 offset 1",0)-QUERY(GOOGLEFINANCE("' + tB + '","price",TODAY()-120,TODAY()),"select Col2 offset 1",0))),)'
         ]);
       }
       levels.getRange(2, 7, histF.length, 1).setFormulas(histF);
@@ -196,7 +196,7 @@ function setupAllBatched() {
           var tB = String(pairs[i + 1][2]).trim();
           if (!tA || !tB) { histF.push(['']); continue; }
           histF.push([
-            '=IFERROR(TRANSPOSE(ARRAYFORMULA(QUERY(GOOGLEFINANCE("' + tA + '","price",TODAY()-90,TODAY()),"select Col2 offset 1",0)-QUERY(GOOGLEFINANCE("' + tB + '","price",TODAY()-90,TODAY()),"select Col2 offset 1",0))),)'
+            '=IFERROR(TRANSPOSE(ARRAYFORMULA(QUERY(GOOGLEFINANCE("' + tA + '","price",TODAY()-120,TODAY()),"select Col2 offset 1",0)-QUERY(GOOGLEFINANCE("' + tB + '","price",TODAY()-120,TODAY()),"select Col2 offset 1",0))),)'
           ]);
         }
         cLevels.getRange(2, 7, histF.length, 1).setFormulas(histF);
@@ -370,6 +370,73 @@ function checkSetupProgress() {
     var state = JSON.parse(stateJson);
     showMsg_('Setup in progress.\n\nCurrent phase: ' + (phaseNames[state.phase] || state.phase) +
              '\n\nPhases remaining: ' + (7 - state.phase));
+  }
+}
+
+// ============================================================
+// ONE-CLICK: Update historical lookback from 90 → 120 days
+// ============================================================
+
+/**
+ * Updates GOOGLEFINANCE historical formulas in Levels and CreditLevels
+ * from 90-day to 120-day lookback, IN-PLACE (no full rebuild needed).
+ *
+ * Run this ONCE after deploying the updated SetupDashboard.gs.
+ * It rewrites column G formulas, then GOOGLEFINANCE recalculates (~30-60s),
+ * then HistCount will increase from ~59 to ~85.
+ *
+ * After running: wait 60s, then run updateLivePrices() to refresh WebCache.
+ */
+function updateHistoricalLookback() {
+  var ss = SpreadsheetApp.getActive();
+  var updated = 0;
+
+  var targets = [
+    { levelsName: 'Levels', pairsName: 'Pairs' },
+    { levelsName: 'CreditLevels', pairsName: 'CreditPairs' }
+  ];
+
+  for (var t = 0; t < targets.length; t++) {
+    var levelsSheet = ss.getSheetByName(targets[t].levelsName);
+    var pairsSheet = ss.getSheetByName(targets[t].pairsName);
+    if (!levelsSheet || !pairsSheet) {
+      Logger.log('updateHistoricalLookback: ' + targets[t].levelsName + ' or ' + targets[t].pairsName + ' not found, skipping.');
+      continue;
+    }
+
+    var pairs = pairsSheet.getDataRange().getValues();
+    var numPairs = pairs.length - 1;
+    if (numPairs < 1) continue;
+
+    // Rebuild column G formulas with 120-day lookback
+    var histF = [];
+    for (var i = 0; i < numPairs; i++) {
+      var tA = String(pairs[i + 1][1]).trim();
+      var tB = String(pairs[i + 1][2]).trim();
+      if (!tA || !tB) { histF.push(['']); continue; }
+      histF.push([
+        '=IFERROR(TRANSPOSE(ARRAYFORMULA(QUERY(GOOGLEFINANCE("' + tA + '","price",TODAY()-120,TODAY()),"select Col2 offset 1",0)-QUERY(GOOGLEFINANCE("' + tB + '","price",TODAY()-120,TODAY()),"select Col2 offset 1",0))),)'
+      ]);
+    }
+
+    levelsSheet.getRange(2, 7, histF.length, 1).setFormulas(histF);
+    SpreadsheetApp.flush();
+    updated += numPairs;
+    Logger.log('updateHistoricalLookback: Updated ' + numPairs + ' formulas in ' + targets[t].levelsName + ' (90d → 120d).');
+  }
+
+  if (updated > 0) {
+    Logger.log('updateHistoricalLookback: Done. ' + updated + ' total formulas updated.');
+    Logger.log('GOOGLEFINANCE will recalculate in ~30-60 seconds.');
+    Logger.log('After that, run updateLivePrices() to refresh WebCache.');
+    showMsg_(
+      'Historical lookback updated to 120 days!\n\n' +
+      updated + ' formulas rewritten.\n\n' +
+      'Wait 60 seconds for GOOGLEFINANCE to recalculate,\n' +
+      'then run updateLivePrices() to refresh the cache.'
+    );
+  } else {
+    showMsg_('No Levels/CreditLevels sheets found to update.');
   }
 }
 
@@ -581,7 +648,7 @@ function setupDashboard() {
     var tB = String(pairs[i + 1][2]).trim();
     if (!tA || !tB) { histF.push(['']); continue; }
     histF.push([
-      '=IFERROR(TRANSPOSE(ARRAYFORMULA(QUERY(GOOGLEFINANCE("' + tA + '","price",TODAY()-90,TODAY()),"select Col2 offset 1",0)-QUERY(GOOGLEFINANCE("' + tB + '","price",TODAY()-90,TODAY()),"select Col2 offset 1",0))),)'
+      '=IFERROR(TRANSPOSE(ARRAYFORMULA(QUERY(GOOGLEFINANCE("' + tA + '","price",TODAY()-120,TODAY()),"select Col2 offset 1",0)-QUERY(GOOGLEFINANCE("' + tB + '","price",TODAY()-120,TODAY()),"select Col2 offset 1",0))),)'
     ]);
   }
   levels.getRange(2, 7, histF.length, 1).setFormulas(histF);
@@ -709,7 +776,7 @@ function setupCreditSheets() {
     var tB = String(pairs[i + 1][2]).trim();
     if (!tA || !tB) { histF.push(['']); continue; }
     histF.push([
-      '=IFERROR(TRANSPOSE(ARRAYFORMULA(QUERY(GOOGLEFINANCE("' + tA + '","price",TODAY()-90,TODAY()),"select Col2 offset 1",0)-QUERY(GOOGLEFINANCE("' + tB + '","price",TODAY()-90,TODAY()),"select Col2 offset 1",0))),)'
+      '=IFERROR(TRANSPOSE(ARRAYFORMULA(QUERY(GOOGLEFINANCE("' + tA + '","price",TODAY()-120,TODAY()),"select Col2 offset 1",0)-QUERY(GOOGLEFINANCE("' + tB + '","price",TODAY()-120,TODAY()),"select Col2 offset 1",0))),)'
     ]);
   }
   cLevels.getRange(2, 7, histF.length, 1).setFormulas(histF);
@@ -777,7 +844,7 @@ function snapshotZScores() {
         var priceB = parseFloat(row[4]) || 0;
         if (priceA <= 0 || priceB <= 0) continue;
         var histCount = parseFloat(row[16]) || 0;
-        if (histCount < 60) continue;
+        if (histCount < 55) continue;
         var couponA = row[8], couponB = row[9];
         if (couponA === "" || couponA === null || couponB === "" || couponB === null) continue;
         var zScore = parseFloat(row[12]) || 0;
@@ -904,7 +971,7 @@ function dailyCreditRefresh() {
       var tB = String(allPairs[i][2]).trim();
       if (!tA || !tB) { histF.push(['']); continue; }
       histF.push([
-        '=IFERROR(TRANSPOSE(ARRAYFORMULA(QUERY(GOOGLEFINANCE("' + tA + '","price",TODAY()-90,TODAY()),"select Col2 offset 1",0)-QUERY(GOOGLEFINANCE("' + tB + '","price",TODAY()-90,TODAY()),"select Col2 offset 1",0))),)'
+        '=IFERROR(TRANSPOSE(ARRAYFORMULA(QUERY(GOOGLEFINANCE("' + tA + '","price",TODAY()-120,TODAY()),"select Col2 offset 1",0)-QUERY(GOOGLEFINANCE("' + tB + '","price",TODAY()-120,TODAY()),"select Col2 offset 1",0))),)'
       ]);
     }
     cLevels.getRange(2, 7, histF.length, 1).setFormulas(histF);

@@ -277,9 +277,9 @@ function getAlertData(mode) {
       var priceB = parseFloat(row[4]) || 0;
       if (priceA <= 0 || priceB <= 0) { _diag.noPrice++; continue; }
 
-      // FILTER: minimum 60 trading days (~90 calendar days) of history
+      // FILTER: minimum 55 trading days (~80 calendar days) of history
       var histCount = parseFloat(row[16]) || 0;
-      if (histCount < 60) { _diag.lowHist++; continue; }
+      if (histCount < 55) { _diag.lowHist++; continue; }
 
       // FILTER: coupon must exist (exclude variable/reset)
       var couponA = row[8];
