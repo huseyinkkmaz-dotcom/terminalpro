@@ -5,7 +5,7 @@
   "description": "Terminal Pro — Preferred Stock Pair Trading Dashboard",
   "scripts": {
     "push:gas": "cd gas && clasp push",
-    "deploy:netlify": "netlify deploy --dir=frontend --prod",
-    "deploy": "cd gas && clasp push && cd .. && netlify deploy --dir=frontend --prod"
+    "deploy:frontend": "vercel ./frontend --prod",
+    "deploy": "cd gas && clasp push && cd .. && vercel ./frontend --prod"
   }
 }
