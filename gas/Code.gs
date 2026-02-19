@@ -205,7 +205,27 @@ function getAlertData(mode) {
       }
     }
     var output = [];
-    var _diag = {totalRows: data.length - 1, noId: 0, noPrice: 0, lowHist: 0, noCoupon: 0, lowZ: 0, passed: 0};
+    var _diag = {totalRows: data.length - 1, noId: 0, noPrice: 0, lowHist: 0, noCoupon: 0, lowZ: 0, passed: 0,
+                 sheetUsed: liveSheet.getName(), sampleRows: []};
+    // Capture first 5 rows raw data for debugging
+    for (var s = 1; s < Math.min(6, data.length); s++) {
+      var sr = data[s];
+      _diag.sampleRows.push({
+        row: s,
+        pairId: String(sr[0] || "").substring(0, 30),
+        priceA: sr[3],
+        priceB: sr[4],
+        spread: sr[5],
+        mean: sr[10],
+        stdev: sr[11],
+        zScore: sr[12],
+        couponA: sr[8],
+        couponB: sr[9],
+        histCount: sr[16],
+        yieldA: sr[6],
+        yieldB: sr[7]
+      });
+    }
     for (var i = 1; i < data.length; i++) {
       var row = data[i];
       var rawId = row[0];
