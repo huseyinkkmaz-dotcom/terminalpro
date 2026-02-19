@@ -771,14 +771,14 @@ function snapshotZScores() {
         var priceB = parseFloat(row[4]) || 0;
         if (priceA <= 0 || priceB <= 0) continue;
         var histCount = parseFloat(row[16]) || 0;
-        if (histCount < 30) continue;
+        if (histCount < 1) continue;  // Only skip if truly zero history
         var couponA = row[8], couponB = row[9];
         if (couponA === "" || couponA === null || couponB === "" || couponB === null) continue;
         var zScore = parseFloat(row[12]) || 0;
         var spread = parseFloat(row[5]) || 0;
         var cid = cleanId_(String(pairId));
         logRows.push([now, String(pairId), zScore, spread]);
-        var isActive = Math.abs(zScore) >= 1.5;
+        var isActive = Math.abs(zScore) >= 1.0;
         var existing = ageMap[cid];
         if (isActive && !existing) {
           ageUpdates.push({ action: 'add', pairId: String(pairId), cleanId: cid, source: sheets[s].source });

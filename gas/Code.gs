@@ -215,9 +215,9 @@ function getAlertData(mode) {
       var priceB = parseFloat(row[4]) || 0;
       if (priceA <= 0 || priceB <= 0) { _diag.noPrice++; continue; }
 
-      // FILTER: history >= 30 trading days (lowered from 60 to show more pairs while GOOGLEFINANCE loads)
+      // TRACK history count (no longer a hard filter — if Z-score is valid, history is sufficient)
       var histCount = parseFloat(row[16]) || 0;
-      if (histCount < 30) { _diag.lowHist++; continue; }
+      if (histCount < 1) { _diag.lowHist++; continue; }  // Only skip if truly zero history
 
       // FILTER: coupon must exist (exclude variable/reset)
       var couponA = row[8];
@@ -226,8 +226,8 @@ function getAlertData(mode) {
           couponB === "" || couponB === null || couponB === undefined) { _diag.noCoupon++; continue; }
       var currentZ = parseFloat(row[12]) || 0;
 
-      // FILTER: |z| >= 1.5
-      if (Math.abs(currentZ) < 1.5) { _diag.lowZ++; continue; }
+      // FILTER: |z| >= 1.0 (lowered from 1.5 to surface more early setups)
+      if (Math.abs(currentZ) < 1.0) { _diag.lowZ++; continue; }
       _diag.passed++;
       var info = parseTickerInfo(rawId);
       var cid = cleanId(rawId);
