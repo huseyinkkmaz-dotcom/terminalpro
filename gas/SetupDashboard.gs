@@ -468,13 +468,45 @@ function toYahooTicker_(ticker) {
 }
 
 /**
+ * Gets Yahoo Finance API authentication (cookies + crumb).
+ * Required for v7/finance/quote and v10/finance/quoteSummary endpoints.
+ */
+function getYahooCrumb_() {
+  // Step 1: Get cookies from Yahoo
+  var resp = UrlFetchApp.fetch('https://fc.yahoo.com/', {
+    muteHttpExceptions: true,
+    followRedirects: true
+  });
+  var headers = resp.getAllHeaders();
+  var cookies = '';
+  var setCookies = headers['Set-Cookie'];
+  if (setCookies) {
+    if (!Array.isArray(setCookies)) setCookies = [setCookies];
+    cookies = setCookies.map(function(c) { return c.split(';')[0]; }).join('; ');
+  }
+
+  // Step 2: Get crumb using cookies
+  var crumbResp = UrlFetchApp.fetch('https://query2.finance.yahoo.com/v1/test/getcrumb', {
+    headers: {
+      'Cookie': cookies,
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+    },
+    muteHttpExceptions: true
+  });
+
+  var crumb = crumbResp.getContentText().trim();
+  Logger.log('getYahooCrumb_: cookies=' + (cookies ? 'yes' : 'no') + ', crumb=' + (crumb ? crumb.substring(0, 6) + '...' : 'EMPTY'));
+  return { cookies: cookies, crumb: crumb };
+}
+
+/**
  * Fetches ex-dividend dates for all tickers in Master sheet.
  * Writes results to DivDates sheet. Run daily via trigger at 6 AM.
- * Uses Yahoo Finance page scraping (extracts exDividendDate from page JSON).
+ * Uses Yahoo Finance v7/finance/quote JSON API (batch endpoint).
  *
- * Batches 30 tickers at a time with UrlFetchApp.fetchAll() (parallel).
+ * Batches 50 tickers per API call for efficiency.
  * Skips tickers fetched within last 20 hours.
- * Total runtime: ~30-60 seconds for 500 tickers.
+ * Total runtime: ~15-30 seconds for 500 tickers.
  */
 function fetchDividendDates() {
   var ss = SpreadsheetApp.getActive();
@@ -501,7 +533,6 @@ function fetchDividendDates() {
   var dataMap = {};
   if (divSheet.getLastRow() > 1) {
     var existData = divSheet.getRange(2, 1, divSheet.getLastRow() - 1, 3).getValues();
-    var now = new Date();
     for (var i = 0; i < existData.length; i++) {
       var key = String(existData[i][0]).toUpperCase().trim();
       dataMap[key] = existData[i];
@@ -523,44 +554,96 @@ function fetchDividendDates() {
   Logger.log('fetchDividendDates: ' + toFetch.length + ' to fetch, ' + (tickers.length - toFetch.length) + ' cached.');
   if (toFetch.length === 0) return;
 
-  // Fetch in batches of 30 using fetchAll (parallel)
-  var BATCH = 30;
+  // Get Yahoo Finance API authentication
+  var auth = getYahooCrumb_();
+  if (!auth.crumb) {
+    Logger.log('fetchDividendDates: Failed to get Yahoo crumb. Aborting.');
+    return;
+  }
+
+  // Build Yahoo ticker → our ticker map for reverse lookup
+  var tickerMap = {};
+  for (var i = 0; i < toFetch.length; i++) {
+    var yahooSym = toYahooTicker_(toFetch[i]);
+    tickerMap[yahooSym.toUpperCase()] = toFetch[i];
+  }
+
+  // Fetch in batches of 50 using v7/finance/quote (batch JSON API)
+  var BATCH = 50;
   var successCount = 0;
 
   for (var b = 0; b < toFetch.length; b += BATCH) {
     var batch = toFetch.slice(b, Math.min(b + BATCH, toFetch.length));
-    var requests = [];
-    for (var i = 0; i < batch.length; i++) {
-      requests.push({
-        url: 'https://finance.yahoo.com/quote/' + encodeURIComponent(toYahooTicker_(batch[i])) + '/',
-        muteHttpExceptions: true,
-        followRedirects: true,
-        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }
-      });
-    }
+    var symbols = batch.map(function(t) { return toYahooTicker_(t); }).join(',');
+    var url = 'https://query2.finance.yahoo.com/v7/finance/quote?symbols=' +
+              encodeURIComponent(symbols) + '&crumb=' + encodeURIComponent(auth.crumb);
 
     try {
-      var responses = UrlFetchApp.fetchAll(requests);
-      for (var i = 0; i < responses.length; i++) {
-        var ticker = batch[i];
-        var key = ticker.toUpperCase();
-        try {
-          if (responses[i].getResponseCode() === 200) {
-            var divDate = parseDivDate_(responses[i].getContentText());
-            dataMap[key] = [ticker, divDate || '', now];
-            if (divDate) successCount++;
-          } else {
-            dataMap[key] = [ticker, dataMap[key] ? dataMap[key][1] : '', now];
+      var resp = UrlFetchApp.fetch(url, {
+        headers: {
+          'Cookie': auth.cookies,
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        },
+        muteHttpExceptions: true
+      });
+
+      var httpCode = resp.getResponseCode();
+      if (httpCode !== 200) {
+        Logger.log('fetchDividendDates: Batch at offset ' + b + ' returned HTTP ' + httpCode);
+        // Log first failure body for debugging
+        if (b === 0) Logger.log('Response sample: ' + resp.getContentText().substring(0, 500));
+        continue;
+      }
+
+      var json = JSON.parse(resp.getContentText());
+      var results = (json.quoteResponse && json.quoteResponse.result) || [];
+
+      // Log first batch info for debugging
+      if (b === 0) {
+        Logger.log('First batch: ' + results.length + ' results returned for ' + batch.length + ' requested.');
+        if (results.length > 0) {
+          var sample = results[0];
+          Logger.log('Sample ticker: ' + sample.symbol +
+            ', exDividendDate=' + (sample.exDividendDate || 'N/A') +
+            ', dividendDate=' + (sample.dividendDate || 'N/A'));
+        }
+      }
+
+      // Track which tickers in this batch got a response
+      var responded = {};
+      for (var i = 0; i < results.length; i++) {
+        var q = results[i];
+        var yahooSym = String(q.symbol).toUpperCase();
+        var ourTicker = tickerMap[yahooSym];
+        if (!ourTicker) continue;
+
+        responded[ourTicker.toUpperCase()] = true;
+
+        // exDividendDate is a Unix timestamp (seconds since epoch)
+        if (q.exDividendDate && q.exDividendDate > 0) {
+          var d = new Date(q.exDividendDate * 1000);
+          if (d.getFullYear() >= 2024 && d.getFullYear() <= 2030) {
+            dataMap[ourTicker.toUpperCase()] = [ourTicker, d, now];
+            successCount++;
+            continue;
           }
-        } catch (e) {
-          dataMap[key] = [ticker, dataMap[key] ? dataMap[key][1] : '', now];
+        }
+        // No valid ex-div date for this ticker
+        dataMap[ourTicker.toUpperCase()] = [ourTicker, '', now];
+      }
+
+      // Mark tickers not in response (delisted, invalid symbol, etc.)
+      for (var i = 0; i < batch.length; i++) {
+        var key = batch[i].toUpperCase();
+        if (!responded[key]) {
+          dataMap[key] = [batch[i], dataMap[key] ? dataMap[key][1] : '', now];
         }
       }
     } catch (e) {
       Logger.log('fetchDividendDates: Batch error at offset ' + b + ': ' + e.toString());
     }
 
-    if (b + BATCH < toFetch.length) Utilities.sleep(1500);
+    if (b + BATCH < toFetch.length) Utilities.sleep(500);
   }
 
   // Write all results back to sheet
@@ -578,32 +661,6 @@ function fetchDividendDates() {
   }
 
   Logger.log('fetchDividendDates: Done. ' + successCount + '/' + toFetch.length + ' got dates. ' + allRows.length + ' total tickers stored.');
-}
-
-/**
- * Parse ex-dividend date from Yahoo Finance HTML.
- * Looks for exDividendDate in the page's embedded JSON data.
- */
-function parseDivDate_(html) {
-  // Strategy 1: JSON "raw" timestamp (most reliable)
-  var m1 = html.match(/"exDividendDate"\s*:\s*\{[^}]*?"raw"\s*:\s*(\d+)/);
-  if (m1) {
-    var d = new Date(parseInt(m1[1]) * 1000);
-    if (d.getFullYear() >= 2024 && d.getFullYear() <= 2030) return d;
-  }
-  // Strategy 2: JSON "fmt" string
-  var m2 = html.match(/"exDividendDate"\s*:\s*\{[^}]*?"fmt"\s*:\s*"([^"]+)"/);
-  if (m2) {
-    var d = new Date(m2[1]);
-    if (!isNaN(d.getTime()) && d.getFullYear() >= 2024) return d;
-  }
-  // Strategy 3: Text pattern in page
-  var m3 = html.match(/Ex-Dividend Date<\/[^>]+>\s*<[^>]+>([A-Z][a-z]{2}\s+\d{1,2},\s+\d{4})/);
-  if (m3) {
-    var d = new Date(m3[1]);
-    if (!isNaN(d.getTime())) return d;
-  }
-  return null;
 }
 
 // ============================================================
