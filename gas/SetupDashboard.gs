@@ -767,18 +767,24 @@ function snapshotZScores() {
         var row = data[i];
         var pairId = row[0];
         if (!pairId) continue;
+        // Skip blacklisted tickers
+        var tA = String(row[1]).toUpperCase().trim();
+        var tB = String(row[2]).toUpperCase().trim();
+        if (isBlacklisted_(tA) || isBlacklisted_(tB)) continue;
+        // Skip intra-only tickers in credit sheets
+        if (sheets[s].source === 'credit' && (isIntraOnly_(tA) || isIntraOnly_(tB))) continue;
         var priceA = parseFloat(row[3]) || 0;
         var priceB = parseFloat(row[4]) || 0;
         if (priceA <= 0 || priceB <= 0) continue;
         var histCount = parseFloat(row[16]) || 0;
-        if (histCount < 1) continue;  // Only skip if truly zero history
+        if (histCount < 60) continue;
         var couponA = row[8], couponB = row[9];
         if (couponA === "" || couponA === null || couponB === "" || couponB === null) continue;
         var zScore = parseFloat(row[12]) || 0;
         var spread = parseFloat(row[5]) || 0;
         var cid = cleanId_(String(pairId));
         logRows.push([now, String(pairId), zScore, spread]);
-        var isActive = Math.abs(zScore) >= 1.0;
+        var isActive = Math.abs(zScore) >= 1.5;
         var existing = ageMap[cid];
         if (isActive && !existing) {
           ageUpdates.push({ action: 'add', pairId: String(pairId), cleanId: cid, source: sheets[s].source });
@@ -984,6 +990,33 @@ function ensureSheet_(ss, name, headers) {
 }
 function cleanId_(id) {
   return id ? String(id).toUpperCase().replace(/[^A-Z0-9]/g, '') : "";
+}
+/** Blacklist check — mirrors BLACKLIST in Code.gs */
+var BLACKLIST_ = {
+  'GJH':1,'GJP':1,'GJO':1,'GJR':1,'GJS':1,'GJT':1,
+  'EPR-E':1,'EPR-G':1,'EPR-C':1,
+  'KTH':1,'KTN':1,
+  'ONBPO':1,'ONBPP':1,
+  'BEPI':1,'BIP-A':1,'BIPJ':1,'BIPI':1,'BIPH':1,'BEPH':1,'BEP-A':1,'BEPJ':1,
+  'IPB':1,
+  'SR-A':1,'RIV-A':1,'ACP-A':1,'OPP-A':1,
+  'GAB-H':1,'GAB-K':1,
+  'GGT-E':1,'GGT-G':1,
+  'OPP-B':1,'GAM-B':1,
+  'GDV-H':1,'GNT-A':1,'GUT-C':1,'GAB-G':1
+};
+var INTRA_ONLY_ = {
+  'BHFAN':1,'BHFAO':1,'BHFAM':1,'BHFAP':1,'BHFAL':1,
+  'HFRO-A':1,'HFRO-B':1
+};
+function isBlacklisted_(ticker) {
+  return !!BLACKLIST_[String(ticker).toUpperCase().trim()];
+}
+function isIntraOnly_(ticker) {
+  var t = String(ticker).toUpperCase().trim();
+  if (INTRA_ONLY_[t]) return true;
+  if (t.indexOf('SCE-') === 0) return true;
+  return false;
 }
 function showMsg_(msg) {
   try { SpreadsheetApp.getUi().alert(msg); } catch (e) { Logger.log(msg); }

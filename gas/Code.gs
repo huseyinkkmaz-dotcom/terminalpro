@@ -149,6 +149,38 @@ function parseMoney(val) {
 function cleanId(id) {
   return id ? String(id).toUpperCase().replace(/[^A-Z0-9]/g,'') : "";
 }
+// ============================================================
+// TICKER EXCLUSION LISTS
+// ============================================================
+/** Permanently excluded from ALL views */
+var BLACKLIST = {
+  'GJH':1,'GJP':1,'GJO':1,'GJR':1,'GJS':1,'GJT':1,
+  'EPR-E':1,'EPR-G':1,'EPR-C':1,
+  'KTH':1,'KTN':1,
+  'ONBPO':1,'ONBPP':1,
+  'BEPI':1,'BIP-A':1,'BIPJ':1,'BIPI':1,'BIPH':1,'BEPH':1,'BEP-A':1,'BEPJ':1,
+  'IPB':1,
+  'SR-A':1,'RIV-A':1,'ACP-A':1,'OPP-A':1,
+  'GAB-H':1,'GAB-K':1,
+  'GGT-E':1,'GGT-G':1,
+  'OPP-B':1,'GAM-B':1,
+  'GDV-H':1,'GNT-A':1,'GUT-C':1,'GAB-G':1
+};
+/** Only allowed in intra-company mode, excluded from credit arb */
+var INTRA_ONLY = {
+  'BHFAN':1,'BHFAO':1,'BHFAM':1,'BHFAP':1,'BHFAL':1,
+  'HFRO-A':1,'HFRO-B':1
+};
+function isBlacklisted(ticker) {
+  return !!BLACKLIST[String(ticker).toUpperCase().trim()];
+}
+function isIntraOnly(ticker) {
+  var t = String(ticker).toUpperCase().trim();
+  if (INTRA_ONLY[t]) return true;
+  if (t.indexOf('SCE-') === 0) return true;
+  return false;
+}
+// ============================================================
 function parseTickerInfo(rawId) {
   var cleanRaw = String(rawId).toUpperCase().trim();
   var tA = "LEG A", tB = "LEG B", displayId = cleanRaw;
@@ -205,7 +237,8 @@ function getAlertData(mode) {
       }
     }
     var output = [];
-    var _diag = {totalRows: data.length - 1, noId: 0, noPrice: 0, lowHist: 0, noCoupon: 0, lowZ: 0, passed: 0,
+    var _diag = {totalRows: data.length - 1, noId: 0, noPrice: 0, lowHist: 0, noCoupon: 0, lowZ: 0,
+                 blacklisted: 0, intraOnly: 0, passed: 0,
                  sheetUsed: liveSheet.getName(), sampleRows: []};
     // Capture first 5 rows raw data for debugging
     for (var s = 1; s < Math.min(6, data.length); s++) {
@@ -230,14 +263,23 @@ function getAlertData(mode) {
       var row = data[i];
       var rawId = row[0];
       if (!rawId) { _diag.noId++; continue; }
+
+      // FILTER: blacklisted tickers — excluded from all views
+      var tickerA = String(row[1]).toUpperCase().trim();
+      var tickerB = String(row[2]).toUpperCase().trim();
+      if (isBlacklisted(tickerA) || isBlacklisted(tickerB)) { _diag.blacklisted++; continue; }
+
+      // FILTER: intra-only tickers — excluded from credit arb
+      if (mode === 'credit' && (isIntraOnly(tickerA) || isIntraOnly(tickerB))) { _diag.intraOnly++; continue; }
+
       // FILTER: valid prices
       var priceA = parseFloat(row[3]) || 0;
       var priceB = parseFloat(row[4]) || 0;
       if (priceA <= 0 || priceB <= 0) { _diag.noPrice++; continue; }
 
-      // TRACK history count (no longer a hard filter — if Z-score is valid, history is sufficient)
+      // FILTER: minimum 60 trading days (~90 calendar days) of history
       var histCount = parseFloat(row[16]) || 0;
-      if (histCount < 1) { _diag.lowHist++; continue; }  // Only skip if truly zero history
+      if (histCount < 60) { _diag.lowHist++; continue; }
 
       // FILTER: coupon must exist (exclude variable/reset)
       var couponA = row[8];
@@ -246,8 +288,8 @@ function getAlertData(mode) {
           couponB === "" || couponB === null || couponB === undefined) { _diag.noCoupon++; continue; }
       var currentZ = parseFloat(row[12]) || 0;
 
-      // FILTER: |z| >= 1.0 (lowered from 1.5 to surface more early setups)
-      if (Math.abs(currentZ) < 1.0) { _diag.lowZ++; continue; }
+      // FILTER: |z| >= 1.5
+      if (Math.abs(currentZ) < 1.5) { _diag.lowZ++; continue; }
       _diag.passed++;
       var info = parseTickerInfo(rawId);
       var cid = cleanId(rawId);
