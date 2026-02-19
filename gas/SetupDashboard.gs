@@ -561,89 +561,85 @@ function fetchDividendDates() {
     return;
   }
 
-  // Build Yahoo ticker → our ticker map for reverse lookup
-  var tickerMap = {};
-  for (var i = 0; i < toFetch.length; i++) {
-    var yahooSym = toYahooTicker_(toFetch[i]);
-    tickerMap[yahooSym.toUpperCase()] = toFetch[i];
-  }
-
-  // Fetch in batches of 50 using v7/finance/quote (batch JSON API)
-  var BATCH = 50;
+  // Fetch using v10/finance/quoteSummary with calendarEvents module (has exDividendDate)
+  // Uses fetchAll for parallel per-ticker requests in batches of 30
+  var BATCH = 30;
   var successCount = 0;
 
   for (var b = 0; b < toFetch.length; b += BATCH) {
     var batch = toFetch.slice(b, Math.min(b + BATCH, toFetch.length));
-    var symbols = batch.map(function(t) { return toYahooTicker_(t); }).join(',');
-    var url = 'https://query2.finance.yahoo.com/v7/finance/quote?symbols=' +
-              encodeURIComponent(symbols) + '&crumb=' + encodeURIComponent(auth.crumb);
-
-    try {
-      var resp = UrlFetchApp.fetch(url, {
+    var requests = [];
+    for (var i = 0; i < batch.length; i++) {
+      var yahooSym = toYahooTicker_(batch[i]);
+      requests.push({
+        url: 'https://query2.finance.yahoo.com/v10/finance/quoteSummary/' +
+             encodeURIComponent(yahooSym) + '?modules=calendarEvents&crumb=' +
+             encodeURIComponent(auth.crumb),
+        muteHttpExceptions: true,
         headers: {
           'Cookie': auth.cookies,
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-        },
-        muteHttpExceptions: true
+        }
       });
+    }
 
-      var httpCode = resp.getResponseCode();
-      if (httpCode !== 200) {
-        Logger.log('fetchDividendDates: Batch at offset ' + b + ' returned HTTP ' + httpCode);
-        // Log first failure body for debugging
-        if (b === 0) Logger.log('Response sample: ' + resp.getContentText().substring(0, 500));
-        continue;
-      }
-
-      var json = JSON.parse(resp.getContentText());
-      var results = (json.quoteResponse && json.quoteResponse.result) || [];
-
-      // Log first batch info for debugging
-      if (b === 0) {
-        Logger.log('First batch: ' + results.length + ' results returned for ' + batch.length + ' requested.');
-        if (results.length > 0) {
-          var sample = results[0];
-          Logger.log('Sample ticker: ' + sample.symbol +
-            ', exDividendDate=' + (sample.exDividendDate || 'N/A') +
-            ', dividendDate=' + (sample.dividendDate || 'N/A'));
-        }
-      }
-
-      // Track which tickers in this batch got a response
-      var responded = {};
-      for (var i = 0; i < results.length; i++) {
-        var q = results[i];
-        var yahooSym = String(q.symbol).toUpperCase();
-        var ourTicker = tickerMap[yahooSym];
-        if (!ourTicker) continue;
-
-        responded[ourTicker.toUpperCase()] = true;
-
-        // exDividendDate is a Unix timestamp (seconds since epoch)
-        if (q.exDividendDate && q.exDividendDate > 0) {
-          var d = new Date(q.exDividendDate * 1000);
-          if (d.getFullYear() >= 2024 && d.getFullYear() <= 2030) {
-            dataMap[ourTicker.toUpperCase()] = [ourTicker, d, now];
-            successCount++;
-            continue;
+    try {
+      var responses = UrlFetchApp.fetchAll(requests);
+      for (var i = 0; i < responses.length; i++) {
+        var ticker = batch[i];
+        var key = ticker.toUpperCase();
+        try {
+          var httpCode = responses[i].getResponseCode();
+          if (httpCode === 200) {
+            var json = JSON.parse(responses[i].getContentText());
+            var result = json.quoteSummary && json.quoteSummary.result;
+            if (result && result[0] && result[0].calendarEvents) {
+              var cal = result[0].calendarEvents;
+              // Try exDividendDate first (preferred)
+              var exDiv = cal.exDividendDate;
+              if (exDiv && exDiv.raw && exDiv.raw > 0) {
+                var d = new Date(exDiv.raw * 1000);
+                if (d.getFullYear() >= 2024 && d.getFullYear() <= 2030) {
+                  dataMap[key] = [ticker, d, now];
+                  successCount++;
+                  // Log first success for debugging
+                  if (successCount === 1) {
+                    Logger.log('First success: ' + ticker + ' → exDiv=' + d.toISOString().split('T')[0]);
+                  }
+                  continue;
+                }
+              }
+              // Fallback: dividendDate (payment date, ~2 weeks after ex-div)
+              var divPay = cal.dividendDate;
+              if (divPay && divPay.raw && divPay.raw > 0) {
+                var d = new Date(divPay.raw * 1000);
+                if (d.getFullYear() >= 2024 && d.getFullYear() <= 2030) {
+                  dataMap[key] = [ticker, d, now];
+                  successCount++;
+                  if (successCount === 1) {
+                    Logger.log('First success (payDate fallback): ' + ticker + ' → ' + d.toISOString().split('T')[0]);
+                  }
+                  continue;
+                }
+              }
+            }
+            dataMap[key] = [ticker, '', now];
+          } else {
+            // Log first non-200 for debugging
+            if (b === 0 && i === 0) {
+              Logger.log('First ticker HTTP ' + httpCode + ': ' + responses[i].getContentText().substring(0, 300));
+            }
+            dataMap[key] = [ticker, dataMap[key] ? dataMap[key][1] : '', now];
           }
-        }
-        // No valid ex-div date for this ticker
-        dataMap[ourTicker.toUpperCase()] = [ourTicker, '', now];
-      }
-
-      // Mark tickers not in response (delisted, invalid symbol, etc.)
-      for (var i = 0; i < batch.length; i++) {
-        var key = batch[i].toUpperCase();
-        if (!responded[key]) {
-          dataMap[key] = [batch[i], dataMap[key] ? dataMap[key][1] : '', now];
+        } catch (e) {
+          dataMap[key] = [ticker, dataMap[key] ? dataMap[key][1] : '', now];
         }
       }
     } catch (e) {
       Logger.log('fetchDividendDates: Batch error at offset ' + b + ': ' + e.toString());
     }
 
-    if (b + BATCH < toFetch.length) Utilities.sleep(500);
+    if (b + BATCH < toFetch.length) Utilities.sleep(1000);
   }
 
   // Write all results back to sheet
