@@ -277,11 +277,12 @@ function getAlertData(mode) {
       var priceB = parseFloat(row[4]) || 0;
       if (priceA <= 0 || priceB <= 0) { _diag.noPrice++; continue; }
 
-      // FILTER: valid statistical history — StDev must be real (not the 0.001 IFERROR default)
-      // This catches pairs where GOOGLEFINANCE historical data failed to load
+      // FILTER: valid statistical history
+      // 1) StDev must be real (not the 0.001 IFERROR default) — catches total GOOGLEFINANCE failure
+      // 2) HistCount >= 40 — catches new tickers with too little data (wild Z-scores)
       var stdev = parseFloat(row[11]) || 0;
-      if (stdev <= 0.001) { _diag.noHistory++; continue; }
       var histCount = parseFloat(row[16]) || 0;
+      if (stdev <= 0.001 || histCount < 40) { _diag.noHistory++; continue; }
 
       // FILTER: coupon must exist (exclude variable/reset)
       var couponA = row[8];
