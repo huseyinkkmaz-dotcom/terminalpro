@@ -500,13 +500,15 @@ function getYahooCrumb_() {
 }
 
 /**
- * Fetches ex-dividend dates for all tickers in Master sheet.
+ * Fetches dividend dates for all tickers in Master sheet.
  * Writes results to DivDates sheet. Run daily via trigger at 6 AM.
- * Uses Yahoo Finance v7/finance/quote JSON API (batch endpoint).
  *
- * Batches 50 tickers per API call for efficiency.
+ * Two-phase approach:
+ *   Phase 1: v7/finance/quote batch (50/request, fast) — uses dividendDate field
+ *   Phase 2: v8/finance/chart fallback (no auth needed) — for tickers Phase 1 missed
+ *
+ * If the date is in the past, adds 91 days until it's >= today (quarterly projection).
  * Skips tickers fetched within last 20 hours.
- * Total runtime: ~15-30 seconds for 500 tickers.
  */
 function fetchDividendDates() {
   var ss = SpreadsheetApp.getActive();
@@ -525,7 +527,7 @@ function fetchDividendDates() {
   var divSheet = ss.getSheetByName('DivDates');
   if (!divSheet) {
     divSheet = ss.insertSheet('DivDates');
-    divSheet.getRange(1, 1, 1, 3).setValues([['Ticker', 'ExDivDate', 'LastFetched']]);
+    divSheet.getRange(1, 1, 1, 3).setValues([['Ticker', 'NextDivDate', 'LastFetched']]);
     divSheet.getRange(1, 1, 1, 3).setFontWeight('bold');
   }
 
@@ -546,7 +548,7 @@ function fetchDividendDates() {
     var existing = dataMap[key];
     if (existing && existing[2] instanceof Date) {
       var hoursSince = (now.getTime() - existing[2].getTime()) / (1000 * 60 * 60);
-      if (hoursSince < 20) continue;  // Skip if fetched within 20 hours
+      if (hoursSince < 20) continue;
     }
     toFetch.push(tickers[i]);
   }
@@ -554,100 +556,180 @@ function fetchDividendDates() {
   Logger.log('fetchDividendDates: ' + toFetch.length + ' to fetch, ' + (tickers.length - toFetch.length) + ' cached.');
   if (toFetch.length === 0) return;
 
-  // Get Yahoo Finance API authentication
+  // ── Phase 1: v7/finance/quote batch (50 tickers per request) ──
   var auth = getYahooCrumb_();
   if (!auth.crumb) {
-    Logger.log('fetchDividendDates: Failed to get Yahoo crumb. Aborting.');
-    return;
+    Logger.log('fetchDividendDates: Failed to get Yahoo crumb. Skipping Phase 1.');
   }
 
-  // Fetch using v10/finance/quoteSummary with calendarEvents module (has exDividendDate)
-  // Uses fetchAll for parallel per-ticker requests in batches of 20
-  // (per-ticker endpoint — more requests than v7 batch, so smaller batches to avoid 429s)
-  var BATCH = 20;
+  var tickerMap = {};  // Yahoo symbol → our ticker
+  for (var i = 0; i < toFetch.length; i++) {
+    tickerMap[toYahooTicker_(toFetch[i]).toUpperCase()] = toFetch[i];
+  }
+
   var successCount = 0;
+  var BATCH = 50;
 
-  for (var b = 0; b < toFetch.length; b += BATCH) {
-    var batch = toFetch.slice(b, Math.min(b + BATCH, toFetch.length));
-    var requests = [];
-    for (var i = 0; i < batch.length; i++) {
-      var yahooSym = toYahooTicker_(batch[i]);
-      requests.push({
-        url: 'https://query2.finance.yahoo.com/v10/finance/quoteSummary/' +
-             encodeURIComponent(yahooSym) + '?modules=calendarEvents&crumb=' +
-             encodeURIComponent(auth.crumb),
-        muteHttpExceptions: true,
-        headers: {
-          'Cookie': auth.cookies,
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+  if (auth.crumb) {
+    for (var b = 0; b < toFetch.length; b += BATCH) {
+      var batch = toFetch.slice(b, Math.min(b + BATCH, toFetch.length));
+      var symbols = batch.map(function(t) { return toYahooTicker_(t); }).join(',');
+      var url = 'https://query2.finance.yahoo.com/v7/finance/quote?symbols=' +
+                encodeURIComponent(symbols) + '&crumb=' + encodeURIComponent(auth.crumb);
+
+      try {
+        var resp = UrlFetchApp.fetch(url, {
+          headers: {
+            'Cookie': auth.cookies,
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+          },
+          muteHttpExceptions: true
+        });
+
+        if (resp.getResponseCode() !== 200) {
+          Logger.log('Phase 1: Batch at offset ' + b + ' HTTP ' + resp.getResponseCode());
+          continue;
         }
-      });
-    }
 
-    try {
-      var responses = UrlFetchApp.fetchAll(requests);
-      for (var i = 0; i < responses.length; i++) {
-        var ticker = batch[i];
-        var key = ticker.toUpperCase();
-        try {
-          var httpCode = responses[i].getResponseCode();
-          if (httpCode === 200) {
+        var json = JSON.parse(resp.getContentText());
+        var results = (json.quoteResponse && json.quoteResponse.result) || [];
+
+        if (b === 0) {
+          Logger.log('Phase 1: ' + results.length + '/' + batch.length + ' results.');
+          if (results.length > 0) {
+            var s = results[0];
+            Logger.log('Sample: ' + s.symbol +
+              ' dividendDate=' + (s.dividendDate || 'N/A') +
+              ' exDividendDate=' + (s.exDividendDate || 'N/A'));
+          }
+        }
+
+        for (var i = 0; i < results.length; i++) {
+          var q = results[i];
+          var yahooSym = String(q.symbol).toUpperCase();
+          var ourTicker = tickerMap[yahooSym];
+          if (!ourTicker) continue;
+          var key = ourTicker.toUpperCase();
+
+          // Try exDividendDate first, then dividendDate
+          var rawTs = (q.exDividendDate && q.exDividendDate > 0) ? q.exDividendDate
+                    : (q.dividendDate && q.dividendDate > 0) ? q.dividendDate
+                    : 0;
+
+          if (rawTs > 0) {
+            var d = projectNextDivDate_(new Date(rawTs * 1000), now);
+            if (d) {
+              dataMap[key] = [ourTicker, d, now];
+              successCount++;
+              continue;
+            }
+          }
+          // Mark as checked but no date found (so Phase 2 can try)
+          if (!dataMap[key] || !dataMap[key][1]) {
+            dataMap[key] = [ourTicker, '', now];
+          }
+        }
+      } catch (e) {
+        Logger.log('Phase 1: Batch error at offset ' + b + ': ' + e.toString());
+      }
+
+      if (b + BATCH < toFetch.length) Utilities.sleep(500);
+    }
+  }
+
+  Logger.log('Phase 1 done: ' + successCount + '/' + toFetch.length + ' got dates.');
+
+  // ── Phase 2: v8/finance/chart fallback for misses (NO auth needed) ──
+  var misses = [];
+  for (var i = 0; i < toFetch.length; i++) {
+    var key = toFetch[i].toUpperCase();
+    if (!dataMap[key] || !(dataMap[key][1] instanceof Date)) {
+      misses.push(toFetch[i]);
+    }
+  }
+
+  if (misses.length > 0) {
+    Logger.log('Phase 2: Fetching ' + misses.length + ' tickers via chart history.');
+    var CHART_BATCH = 20;
+    var nowSec = Math.floor(now.getTime() / 1000);
+    var oneYearAgo = nowSec - 365 * 86400;
+    var phase2Count = 0;
+
+    for (var b = 0; b < misses.length; b += CHART_BATCH) {
+      var batch = misses.slice(b, Math.min(b + CHART_BATCH, misses.length));
+      var requests = [];
+      for (var i = 0; i < batch.length; i++) {
+        var yahooSym = toYahooTicker_(batch[i]);
+        requests.push({
+          url: 'https://query1.finance.yahoo.com/v8/finance/chart/' +
+               encodeURIComponent(yahooSym) +
+               '?period1=' + oneYearAgo + '&period2=' + nowSec +
+               '&interval=1d&events=div',
+          muteHttpExceptions: true,
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+          }
+        });
+      }
+
+      try {
+        var responses = UrlFetchApp.fetchAll(requests);
+        for (var i = 0; i < responses.length; i++) {
+          var ticker = batch[i];
+          var key = ticker.toUpperCase();
+          try {
+            if (responses[i].getResponseCode() !== 200) {
+              dataMap[key] = [ticker, '', now];
+              continue;
+            }
             var json = JSON.parse(responses[i].getContentText());
-            var result = json.quoteSummary && json.quoteSummary.result;
-            if (result && result[0] && result[0].calendarEvents) {
-              var cal = result[0].calendarEvents;
-              // Try exDividendDate first (preferred)
-              var exDiv = cal.exDividendDate;
-              if (exDiv && exDiv.raw && exDiv.raw > 0) {
-                var d = new Date(exDiv.raw * 1000);
-                if (d.getFullYear() >= 2024 && d.getFullYear() <= 2030) {
-                  dataMap[key] = [ticker, d, now];
-                  successCount++;
-                  // Log first success for debugging
-                  if (successCount === 1) {
-                    Logger.log('First success: ' + ticker + ' → exDiv=' + d.toISOString().split('T')[0]);
-                  }
-                  continue;
+            var chartResult = json.chart && json.chart.result;
+            if (!chartResult || !chartResult[0]) {
+              dataMap[key] = [ticker, '', now];
+              continue;
+            }
+            var events = chartResult[0].events;
+            if (!events || !events.dividends) {
+              dataMap[key] = [ticker, '', now];
+              continue;
+            }
+
+            // Get the most recent dividend date (keys are Unix timestamps)
+            var divKeys = Object.keys(events.dividends);
+            var latest = 0;
+            for (var k = 0; k < divKeys.length; k++) {
+              var ts = Number(divKeys[k]);
+              if (ts > latest) latest = ts;
+            }
+
+            if (latest > 0) {
+              var d = projectNextDivDate_(new Date(latest * 1000), now);
+              if (d) {
+                dataMap[key] = [ticker, d, now];
+                phase2Count++;
+                if (phase2Count === 1) {
+                  Logger.log('Phase 2 first success: ' + ticker + ' → ' + d.toISOString().split('T')[0]);
                 }
-              }
-              // Fallback: dividendDate (payment date, ~2 weeks after ex-div)
-              var divPay = cal.dividendDate;
-              if (divPay && divPay.raw && divPay.raw > 0) {
-                var d = new Date(divPay.raw * 1000);
-                if (d.getFullYear() >= 2024 && d.getFullYear() <= 2030) {
-                  dataMap[key] = [ticker, d, now];
-                  successCount++;
-                  if (successCount === 1) {
-                    Logger.log('First success (payDate fallback): ' + ticker + ' → ' + d.toISOString().split('T')[0]);
-                  }
-                  continue;
-                }
+                continue;
               }
             }
             dataMap[key] = [ticker, '', now];
-          } else {
-            // Log first non-200 for debugging
-            if (b === 0 && i === 0) {
-              Logger.log('First ticker HTTP ' + httpCode + ': ' + responses[i].getContentText().substring(0, 300));
-            }
-            dataMap[key] = [ticker, dataMap[key] ? dataMap[key][1] : '', now];
+          } catch (e) {
+            dataMap[key] = [ticker, '', now];
           }
-        } catch (e) {
-          dataMap[key] = [ticker, dataMap[key] ? dataMap[key][1] : '', now];
         }
+      } catch (e) {
+        Logger.log('Phase 2: Batch error at offset ' + b + ': ' + e.toString());
       }
-    } catch (e) {
-      Logger.log('fetchDividendDates: Batch error at offset ' + b + ': ' + e.toString());
+
+      if (b + CHART_BATCH < misses.length) Utilities.sleep(1000);
     }
 
-    // Log progress every 5 batches
-    if (((b / BATCH) % 5) === 4) {
-      Logger.log('Progress: ' + Math.min(b + BATCH, toFetch.length) + '/' + toFetch.length + ' tickers, ' + successCount + ' dates found so far.');
-    }
-    if (b + BATCH < toFetch.length) Utilities.sleep(1500);
+    successCount += phase2Count;
+    Logger.log('Phase 2 done: ' + phase2Count + '/' + misses.length + ' recovered.');
   }
 
-  // Write all results back to sheet
+  // ── Write results to sheet ──
   var allRows = [];
   for (var key in dataMap) {
     allRows.push(dataMap[key]);
@@ -655,13 +737,35 @@ function fetchDividendDates() {
   allRows.sort(function(a, b) { return String(a[0]).localeCompare(String(b[0])); });
 
   divSheet.clear();
-  divSheet.getRange(1, 1, 1, 3).setValues([['Ticker', 'ExDivDate', 'LastFetched']]);
+  divSheet.getRange(1, 1, 1, 3).setValues([['Ticker', 'NextDivDate', 'LastFetched']]);
   divSheet.getRange(1, 1, 1, 3).setFontWeight('bold');
   if (allRows.length > 0) {
     divSheet.getRange(2, 1, allRows.length, 3).setValues(allRows);
   }
 
   Logger.log('fetchDividendDates: Done. ' + successCount + '/' + toFetch.length + ' got dates. ' + allRows.length + ' total tickers stored.');
+}
+
+/**
+ * Projects the next dividend date from a known dividend date.
+ * If the date is in the past, adds 91 days (quarterly) until it's >= today.
+ * Returns null if the result is unreasonable (> 1 year out).
+ */
+function projectNextDivDate_(divDate, today) {
+  var d = new Date(divDate.getTime());
+  var maxFuture = new Date(today.getTime() + 400 * 86400000); // ~13 months max
+
+  // If already in the future, return as-is
+  if (d >= today) return d;
+
+  // Add 91 days (quarterly) until it's in the future
+  while (d < today) {
+    d = new Date(d.getTime() + 91 * 86400000);
+  }
+
+  // Sanity check: don't return dates too far out
+  if (d > maxFuture) return null;
+  return d;
 }
 
 // ============================================================
