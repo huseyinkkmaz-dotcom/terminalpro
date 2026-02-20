@@ -599,8 +599,8 @@ function fetchDividendDates() {
           if (results.length > 0) {
             var s = results[0];
             Logger.log('Sample: ' + s.symbol +
-              ' dividendDate=' + (s.dividendDate || 'N/A') +
-              ' exDividendDate=' + (s.exDividendDate || 'N/A'));
+              ' exDividendDate=' + (s.exDividendDate || 'N/A') +
+              ' (payDate=' + (s.dividendDate || 'N/A') + ', ignored)');
           }
         }
 
@@ -611,10 +611,8 @@ function fetchDividendDates() {
           if (!ourTicker) continue;
           var key = ourTicker.toUpperCase();
 
-          // Try exDividendDate first, then dividendDate
-          var rawTs = (q.exDividendDate && q.exDividendDate > 0) ? q.exDividendDate
-                    : (q.dividendDate && q.dividendDate > 0) ? q.dividendDate
-                    : 0;
+          // ONLY use exDividendDate — dividendDate is the PAY date, not ex-date
+          var rawTs = (q.exDividendDate && q.exDividendDate > 0) ? q.exDividendDate : 0;
 
           if (rawTs > 0) {
             var d = projectNextDivDate_(new Date(rawTs * 1000), now);

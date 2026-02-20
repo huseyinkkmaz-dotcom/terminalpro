@@ -333,16 +333,10 @@ function getAlertData(mode) {
       var avgLiq = parseFloat(row[19]) || 0;
       var curVol = parseFloat(row[22]) || 0;
       var volSpike = (row[23] === true || row[23] === "TRUE");
-      // DIV DATES — pick nearest upcoming ex-div for either leg
+      // DIV DATES — send both legs' ex-dividend dates
       var now = new Date();
       var divA = divMap[tickerA] || null;
       var divB = divMap[tickerB] || null;
-      var nearestDiv = null, divLeg = '';
-      if (divA && divA >= now && divB && divB >= now) {
-        if (divA <= divB) { nearestDiv = divA; divLeg = 'A'; }
-        else { nearestDiv = divB; divLeg = 'B'; }
-      } else if (divA && divA >= now) { nearestDiv = divA; divLeg = 'A'; }
-      else if (divB && divB >= now) { nearestDiv = divB; divLeg = 'B'; }
       output.push({
         id: info.id,
         tA: row[1] || info.tA,
@@ -359,8 +353,8 @@ function getAlertData(mode) {
         curVol: curVol,
         volSpike: volSpike,
         zTrend: trend,
-        divDate: nearestDiv ? nearestDiv.toISOString().split('T')[0] : null,
-        divLeg: divLeg
+        exDivA: (divA && divA >= now) ? divA.toISOString().split('T')[0] : null,
+        exDivB: (divB && divB >= now) ? divB.toISOString().split('T')[0] : null
       });
     }
     output._diag = _diag;
