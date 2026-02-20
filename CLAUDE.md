@@ -2,7 +2,7 @@
 
 ## What This Is
 
-A real-time **statistical arbitrage dashboard** for **Preferred Stock Pair Trading**. It tracks 100+ pairs using 90-day mean reversion Z-scores, yields, liquidity, and volume spike detection.
+A real-time **statistical arbitrage dashboard** for **Preferred Stock Pair Trading**. It tracks 100+ pairs using 90-day mean reversion Z-scores, yields, liquidity, volume spike detection, and upcoming ex-dividend dates.
 
 **Two strategies:**
 - **Intra-Company Pairs** — Same issuer, different series (e.g., BAC-B vs BAC-M)
@@ -19,6 +19,9 @@ Google Sheets (Data Layer)
     ├── CreditPairs sheet   → Auto: generated inter-company pairs by rating
     ├── CreditLevels sheet  → Auto: 90-day stats for credit pairs
     ├── CreditLive sheet    → Auto: real-time data for credit pairs
+    ├── WebCache sheet      → Auto: static snapshot of Live (updated every 10 min)
+    ├── WebCacheCredit sheet→ Auto: static snapshot of CreditLive (updated every 10 min)
+    ├── DivDates sheet      → Auto: ex-dividend dates fetched from Yahoo Finance
     ├── ZScoreAge sheet     → Auto: timestamps when Z-scores first cross ±1.5
     ├── AlertsLog sheet     → Auto: hourly Z-score snapshots (trend ribbons)
     ├── OpenTrades sheet    → Trade journal (active)
@@ -27,9 +30,9 @@ Google Sheets (Data Layer)
 
 Google Apps Script (API Backend)
     ├── Code.gs             → doGet/doPost routing, data reading, trade operations
-    └── SetupDashboard.gs   → Sheet builder, credit pair generator, hourly/daily triggers
+    └── SetupDashboard.gs   → Sheet builder, credit pair generator, triggers, dividend fetcher
 
-Netlify (Frontend)
+Vercel (Frontend)
     └── index.html          → Single-file dashboard (HTML + CSS + JS)
 ```
 
@@ -38,32 +41,54 @@ Netlify (Frontend)
 ### `gas/Code.gs` — API Backend (V23)
 
 - **doGet()** routes `?action=getData|saveTrade|closeTrade` with optional `&mode=intra|credit`
-- **getAlertData(mode)** reads Live or CreditLive sheet. Filters:
+- **WebCache failsafe** — API prefers `WebCache` / `WebCacheCredit` (static snapshots) over `Live` / `CreditLive` (GOOGLEFINANCE formulas). Faster responses, decoupled from formula recalculation.
+- **getAlertData(mode)** reads WebCache (or Live fallback) sheet. Filters:
   - Skips pairs with missing/zero prices
   - Skips pairs with < 60 trading days of history (HistCount column Q/index 16)
   - Skips pairs where either ticker has empty Coupon Yield (columns I,J / index 8,9)
   - Only returns pairs with |Z-Score| >= 1.5
+  - Enriches each pair with `divDate` and `divLeg` from the DivDates sheet (nearest upcoming ex-div from either leg)
 - **getOpenTrades()** merges Live + CreditLive for unified portfolio lookup
 - **saveTradeToSheet() / closeTradeInSheet()** check both Live and CreditLive
 
-### `gas/SetupDashboard.gs` — Setup & Automation (V23)
+### `gas/SetupDashboard.gs` — Setup & Automation (V23.1)
 
-- **setupDashboard()** builds Levels + Live sheets from Pairs sheet
+**Batched setup system** — uses `PropertiesService` to save/resume progress across GAS timeouts.
+
+- **setupAllBatched()** — 7-phase execution:
+  - Phase 0: Intra Levels
+  - Phase 1: Intra Live
+  - Phase 2: Supporting sheets (OpenTrades, ClosedTrades, AlertsLog, ZScoreAge, DivDates)
+  - Phase 3: Generate credit pairs
+  - Phase 4: Credit Levels
+  - Phase 5: Credit Live
+  - Phase 6: Install triggers
 - **generateCreditPairs()** reads Master, groups by credit rating, generates inter-company combinations
   - Uses union-find on Pairs sheet to detect same-company tickers (handles both hyphenated like BAC-M and non-hyphenated like AGNCP)
   - No pair cap — generates all valid combinations
-- **setupCreditSheets()** builds CreditLevels + CreditLive from CreditPairs
-- **setupTriggers()** installs:
+- **createAutoTrigger()** installs all recurring triggers at once:
+  - Every 10 min: `updateLivePrices()` — snapshots Live/CreditLive values to WebCache/WebCacheCredit
   - Hourly: `snapshotZScores()` — logs to AlertsLog + updates ZScoreAge
-  - Daily at 5AM: `dailyCreditRefresh()` — regenerates credit pairs from Master
-- **setupAll()** convenience function: runs all four setup steps in order
+  - Daily at 5 AM: `dailyCreditRefresh()` — regenerates credit pairs from Master
+  - Daily at 6 AM: `fetchDividendDates()` — refreshes ex-dividend dates
+- **fetchDividendDates()** — two-phase Yahoo Finance fetch:
+  - Phase 1: v7/finance/quote API (50 tickers per batch, requires crumb auth)
+  - Phase 2: v8/finance/chart fallback (no auth, uses 1-year history for dividend events)
+  - Projects quarterly dividends forward if last date is in the past (+91 days)
+  - 20-hour cache window to avoid rate limiting
+- **updateLivePrices()** — reads computed values from Live/CreditLive, writes static snapshots to WebCache/WebCacheCredit every 10 minutes
 
 ### `frontend/index.html` — Dashboard UI
 
-- Standalone HTML file deployed to Netlify
+- Standalone HTML file deployed to Vercel
 - Strategy pill switch: "Intra-Company" (blue accent) / "Credit Arb" (purple accent)
 - Fetches from GAS via `?action=getData&mode=intra|credit`
 - Features: Z-score trend ribbons, volume spike tags, sortable columns, trade entry modal
+- **Div Date column** — shows nearest ex-dividend date with color coding:
+  - Red: <= 7 days away
+  - Yellow: <= 30 days away
+  - Gray: > 30 days away
+  - Shows which leg (A or B) has the upcoming dividend
 - **CRITICAL**: Line 1 of `<script>` has `GAS_URL` constant — must be set to deployed GAS URL
 
 ## Live Sheet Column Map (24 columns, 0-indexed)
@@ -97,31 +122,49 @@ Both `Live` and `CreditLive` share this layout:
 | 22 | W | CurVol | =(U+V)/2 |
 | 23 | X | VolSpike | =IF(CurVol > 1.5*AvgLiq) |
 
+## DivDates Sheet (auto-populated)
+
+| A: Ticker | B: NextDivDate | C: LastFetched |
+|-----------|---------------|----------------|
+| BAC-B | 2026-03-15 | 2026-02-20T06:00:00 |
+
+Populated by `fetchDividendDates()` via Yahoo Finance. 20-hour cache — tickers fetched within the last 20 hours are skipped.
+
 ## Critical Rules When Editing
 
 1. **Preserve ticker hyphens** — Preferred stock tickers use hyphens (PSA-F, BAC-M). Never strip them. The `cleanId()` function removes hyphens only for matching purposes, never for display or storage.
 2. **Column indices matter** — Code.gs uses 0-indexed column references to read Live sheet arrays. If you add/remove/reorder columns in `buildLiveSheet_()`, you MUST update every index reference in `getAlertData()`, `getOpenTrades()`, `saveTradeToSheet()`, and `snapshotZScores()`.
 3. **Two parallel sheet systems** — Intra-company uses `Pairs → Levels → Live`. Credit arb uses `CreditPairs → CreditLevels → CreditLive`. They share the same 24-column layout but reference different source sheets. The `buildLiveSheet_()` function is parameterized for this.
-4. **GAS deployment** — Every code change requires: Manage Deployments → New Version → Deploy. The URL stays the same but the version must increment.
-5. **GOOGLEFINANCE limits** — ~1000 GOOGLEFINANCE calls per sheet. Each pair uses ~6 calls in Live (price×2, volumeavg×2, volume×2) + 2 in Levels (historical). With 500+ credit pairs, sheets may load slowly (30-60s).
-6. **Frontend is a single file** — All HTML, CSS, and JS live in `index.html`. No build step. Drag the `frontend/` folder to Netlify to deploy.
-7. **ZScoreAge tracking** — The hourly trigger manages this. If |z| >= 1.5 and no timestamp exists → creates one. If |z| < 1.5 and timestamp exists → deletes it. Age = days since first crossing.
+4. **WebCache layer** — API reads from WebCache/WebCacheCredit (static values), not directly from Live/CreditLive (formulas). The `updateLivePrices()` trigger snapshots formula results every 10 minutes. If you change Live sheet structure, WebCache must match.
+5. **GAS deployment** — Every code change requires: Manage Deployments → New Version → Deploy. The URL stays the same but the version must increment.
+6. **GOOGLEFINANCE limits** — ~1000 GOOGLEFINANCE calls per sheet. Each pair uses ~6 calls in Live (price×2, volumeavg×2, volume×2) + 2 in Levels (historical). With 500+ credit pairs, sheets may load slowly (30-60s).
+7. **Frontend is a single file** — All HTML, CSS, and JS live in `index.html`. No build step. Deploy via `vercel --prod` from the `frontend/` directory.
+8. **ZScoreAge tracking** — The hourly trigger manages this. If |z| >= 1.5 and no timestamp exists → creates one. If |z| < 1.5 and timestamp exists → deletes it. Age = days since first crossing.
+9. **DivDates fetch** — Yahoo Finance has rate limits. The 20-hour cache in LastFetched prevents hammering. Phase 1 (batch API) handles most tickers; Phase 2 (chart fallback) catches the rest.
 
 ## Deployment
 
-### GAS (Backend)
+### GAS (Backend) — done in browser
 
-1. Open Apps Script editor for the Google Sheet
+1. Open the Google Sheet → Extensions → Apps Script
 2. Replace/update `Code.gs` and `SetupDashboard.gs`
-3. Run `setupAll()` (or individual steps: setupDashboard → generateCreditPairs → setupCreditSheets → setupTriggers)
-4. Deploy → Manage Deployments → New Version → Deploy
-5. Copy the deployment URL (format: `https://script.google.com/macros/s/.../exec`)
+3. Run `setupAllBatched()` (or individual steps for partial updates)
+4. Run `createAutoTrigger()` to install all recurring triggers
+5. Run `fetchDividendDates()` to populate DivDates sheet
+6. Deploy → Manage Deployments → New Version → Deploy
+7. The deployment URL stays the same (format: `https://script.google.com/macros/s/.../exec`)
 
-### Netlify (Frontend)
+### Vercel (Frontend) — done in command prompt
 
 1. Set `GAS_URL` in index.html to the GAS deployment URL
-2. Drag `frontend/` folder to Netlify deploy
-3. Live at: https://terminal-pairs.netlify.app/
+2. From the `frontend/` directory, run `vercel --prod`
+3. Or use: `npm run deploy:frontend` from the project root
+
+### npm Scripts (from project root)
+
+- `npm run push:gas` — push GAS files via clasp
+- `npm run deploy:frontend` — deploy frontend to Vercel
+- `npm run deploy` — push GAS + deploy frontend
 
 ## Google Sheets Required
 
