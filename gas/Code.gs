@@ -81,6 +81,17 @@ function doGet(e) {
       closeTradeInSheet(e.parameter.id || "");
       result = { ok: true, message: "Trade closed" };
     }
+    else if (action === 'getWatchlist') {
+      result = { ok: true, watchlistData: getWatchlistData() };
+    }
+    else if (action === 'saveWatchlist') {
+      saveToWatchlist(e.parameter.id || "", e.parameter.mode || "intra");
+      result = { ok: true, message: "Added to watchlist" };
+    }
+    else if (action === 'removeWatchlist') {
+      removeFromWatchlist(e.parameter.id || "");
+      result = { ok: true, message: "Removed from watchlist" };
+    }
     else {
       result = { ok: false, message: "Unknown action: " + action };
     }
@@ -485,4 +496,211 @@ function closeTradeInSheet(id) {
     if (rowId.includes(cleanTarget) || cleanTarget.includes(rowId)) { sheet.deleteRow(i+1); break; }
   }
   return true;
+}
+// ============================================================
+// WATCHLIST
+// ============================================================
+function saveToWatchlist(id, mode) {
+  var ss = SpreadsheetApp.getActive();
+  var sheet = ss.getSheetByName('Watchlist');
+  if (!sheet) {
+    sheet = ss.insertSheet('Watchlist');
+    sheet.getRange(1, 1, 1, 4).setValues([['PairID', 'AddedDate', 'AddedZ', 'Mode']]);
+    sheet.getRange(1, 1, 1, 4).setFontWeight('bold');
+  }
+  // Check for duplicate
+  var cleanTarget = cleanId(id);
+  if (sheet.getLastRow() > 1) {
+    var existing = sheet.getRange(2, 1, sheet.getLastRow() - 1, 1).getValues();
+    for (var i = 0; i < existing.length; i++) {
+      if (cleanId(existing[i][0]) === cleanTarget) return; // already exists
+    }
+  }
+  // Look up current Z-score
+  var curZ = 0;
+  var sheets = ['WebCache', 'WebCacheCredit', 'Live', 'CreditLive'];
+  for (var s = 0; s < sheets.length; s++) {
+    var ls = ss.getSheetByName(sheets[s]);
+    if (!ls || ls.getLastRow() <= 1) continue;
+    var data = ls.getDataRange().getValues();
+    for (var i = 1; i < data.length; i++) {
+      if (cleanId(data[i][0]) === cleanTarget) { curZ = parseFloat(data[i][12]) || 0; break; }
+    }
+    if (curZ !== 0) break;
+  }
+  sheet.appendRow([id, new Date(), curZ, mode]);
+}
+function removeFromWatchlist(id) {
+  var ss = SpreadsheetApp.getActive();
+  var sheet = ss.getSheetByName('Watchlist');
+  if (!sheet || sheet.getLastRow() <= 1) return;
+  var data = sheet.getDataRange().getValues();
+  var cleanTarget = cleanId(id);
+  for (var i = data.length - 1; i >= 1; i--) {
+    if (cleanId(data[i][0]) === cleanTarget) { sheet.deleteRow(i + 1); break; }
+  }
+}
+function getWatchlistData() {
+  try {
+    var ss = SpreadsheetApp.getActive();
+    var sheet = ss.getSheetByName('Watchlist');
+    if (!sheet || sheet.getLastRow() <= 1) return [];
+    var watchRows = sheet.getRange(2, 1, sheet.getLastRow() - 1, 4).getValues();
+
+    // Build unified live lookup from both caches
+    var liveMap = {}; // cleanId → row array
+    var cacheSheets = [
+      { name: 'WebCache', fallback: 'Live' },
+      { name: 'WebCacheCredit', fallback: 'CreditLive' }
+    ];
+    for (var c = 0; c < cacheSheets.length; c++) {
+      var ls = ss.getSheetByName(cacheSheets[c].name);
+      if (!ls || ls.getLastRow() <= 1) ls = ss.getSheetByName(cacheSheets[c].fallback);
+      if (!ls || ls.getLastRow() <= 1) continue;
+      var rows = ls.getDataRange().getValues();
+      for (var i = 1; i < rows.length; i++) {
+        var cid = cleanId(rows[i][0]);
+        if (cid && !liveMap[cid]) liveMap[cid] = rows[i];
+      }
+    }
+
+    // Load AlertsLog for 5-day Z history
+    var logSheet = ss.getSheetByName('AlertsLog');
+    var logData = [];
+    if (logSheet && logSheet.getLastRow() > 1) {
+      var lastRow = logSheet.getLastRow();
+      var startRow = Math.max(2, lastRow - 2000);
+      logData = logSheet.getRange(startRow, 1, lastRow - startRow + 1, 4).getValues();
+    }
+
+    // Load DivDates
+    var divMap = {};
+    var divSheet = ss.getSheetByName('DivDates');
+    if (divSheet && divSheet.getLastRow() > 1) {
+      var divData = divSheet.getRange(2, 1, divSheet.getLastRow() - 1, 2).getValues();
+      for (var d = 0; d < divData.length; d++) {
+        var dticker = String(divData[d][0]).toUpperCase().trim();
+        var ddate = divData[d][1];
+        if (dticker && ddate instanceof Date) divMap[dticker] = ddate;
+      }
+    }
+
+    var now = new Date();
+    var output = [];
+    for (var w = 0; w < watchRows.length; w++) {
+      var pairId = watchRows[w][0];
+      if (!pairId) continue;
+      var addedDate = watchRows[w][1];
+      var addedZ = parseFloat(watchRows[w][2]) || 0;
+      var wMode = watchRows[w][3] || 'intra';
+      var cid = cleanId(pairId);
+      var row = liveMap[cid];
+
+      if (!row) {
+        // Pair not found in live data — show minimal card
+        output.push({
+          id: String(pairId), tA: '', tB: '', sec: '', mode: wMode,
+          priceA: 0, priceB: 0, spr: '0.00', z: '0.00',
+          addedZ: addedZ.toFixed(2), zChange: '0.00', mean: '0.00',
+          distToMean: '0.00', yA: '0', yB: '0', yieldSpread: '0.00',
+          liq: 0, volSpike: false, daysWatching: 0,
+          addedDate: addedDate instanceof Date ? addedDate.toISOString().split('T')[0] : '',
+          zHistory: [], converging: false, exDivA: null, exDivB: null,
+          target: 'Data unavailable — pair may have been removed'
+        });
+        continue;
+      }
+
+      // Extract live data (same column indices as getAlertData)
+      var tA = String(row[1]).trim();
+      var tB = String(row[2]).trim();
+      var priceA = parseFloat(row[3]) || 0;
+      var priceB = parseFloat(row[4]) || 0;
+      var spread = parseFloat(row[5]) || 0;
+      var yieldA = parseFloat(row[6]) || 0;
+      var yieldB = parseFloat(row[7]) || 0;
+      var mean = parseFloat(row[10]) || 0;
+      var stdev = parseFloat(row[11]) || 0;
+      var currentZ = parseFloat(row[12]) || 0;
+      var sector = row[15] || '';
+      var avgLiq = parseFloat(row[19]) || 0;
+      var volSpike = (row[23] === true || row[23] === 'TRUE');
+
+      var yA = yieldA > 1 ? yieldA.toFixed(2) : (yieldA * 100).toFixed(2);
+      var yB = yieldB > 1 ? yieldB.toFixed(2) : (yieldB * 100).toFixed(2);
+      var yieldSpread = Math.abs(yieldA - yieldB);
+      yieldSpread = yieldA > 1 ? yieldSpread.toFixed(2) : (yieldSpread * 100).toFixed(2);
+      var distToMean = spread - mean;
+      var zChange = currentZ - addedZ;
+      var daysWatching = addedDate instanceof Date ? Math.floor((now.getTime() - addedDate.getTime()) / 86400000) : 0;
+
+      // 5-day Z history from AlertsLog
+      var dailyZ = {}; // dateStr → last z
+      for (var k = 0; k < logData.length; k++) {
+        if (cleanId(logData[k][1]) === cid) {
+          var ts = logData[k][0];
+          if (ts instanceof Date) {
+            var dateStr = ts.toISOString().split('T')[0];
+            dailyZ[dateStr] = parseFloat(logData[k][2]) || 0;
+          }
+        }
+      }
+      var sortedDays = Object.keys(dailyZ).sort();
+      var last5 = sortedDays.slice(-5);
+      var zHistory = [];
+      var months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+      for (var h = 0; h < last5.length; h++) {
+        var parts = last5[h].split('-');
+        var label = months[parseInt(parts[1], 10) - 1] + ' ' + parseInt(parts[2], 10);
+        zHistory.push({ date: label, z: dailyZ[last5[h]].toFixed(2) });
+      }
+      var converging = false;
+      if (zHistory.length >= 2) {
+        var firstZ = Math.abs(parseFloat(zHistory[0].z));
+        var lastZ = Math.abs(parseFloat(zHistory[zHistory.length - 1].z));
+        converging = lastZ < firstZ;
+      }
+
+      // Ex-div dates
+      var tickerAUp = tA.toUpperCase();
+      var tickerBUp = tB.toUpperCase();
+      var divA = divMap[tickerAUp] || null;
+      var divB = divMap[tickerBUp] || null;
+
+      // Target string
+      var target = '';
+      if (mean >= 0) {
+        target = tA + ' should be $' + Math.abs(mean).toFixed(2) + ' higher than ' + tB;
+      } else {
+        target = tA + ' should be $' + Math.abs(mean).toFixed(2) + ' lower than ' + tB;
+      }
+
+      output.push({
+        id: String(pairId),
+        tA: tA, tB: tB, sec: sector, mode: wMode,
+        priceA: priceA, priceB: priceB,
+        spr: spread.toFixed(2),
+        z: currentZ.toFixed(2),
+        addedZ: addedZ.toFixed(2),
+        zChange: zChange.toFixed(2),
+        mean: mean.toFixed(2),
+        distToMean: distToMean.toFixed(2),
+        yA: yA, yB: yB,
+        yieldSpread: yieldSpread,
+        liq: avgLiq,
+        volSpike: volSpike,
+        daysWatching: daysWatching,
+        addedDate: addedDate instanceof Date ? addedDate.toISOString().split('T')[0] : '',
+        zHistory: zHistory,
+        converging: converging,
+        exDivA: (divA && divA >= now) ? divA.toISOString().split('T')[0] : null,
+        exDivB: (divB && divB >= now) ? divB.toISOString().split('T')[0] : null,
+        target: target
+      });
+    }
+    return output;
+  } catch (e) {
+    console.error('getWatchlistData error: ' + e);
+    return [];
+  }
 }

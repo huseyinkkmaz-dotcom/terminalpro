@@ -138,6 +138,7 @@ function setupAllBatched() {
         ageSheet.getRange(1, 1, 1, 3).setFontWeight('bold');
       }
       ensureSheet_(ss, 'DivDates', ['Ticker', 'ExDivDate', 'LastFetched']);
+      ensureSheet_(ss, 'Watchlist', ['PairID', 'AddedDate', 'AddedZ', 'Mode']);
       Logger.log('Phase 2 complete: Supporting sheets ready.');
 
       state.phase = 3;

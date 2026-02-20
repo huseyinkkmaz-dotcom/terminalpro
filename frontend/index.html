@@ -97,6 +97,23 @@ td:last-child{border-radius:0 10px 10px 0;border-right:1px solid var(--border)}
 .sec-menu-item:hover{background:rgba(255,255,255,.05);color:var(--text)}
 .sec-menu-item.active{color:var(--accent)}
 .sec-menu-item .sec-count{font-family:'JetBrains Mono';font-weight:900}
+.star-btn{background:transparent;border:none;color:var(--border);cursor:pointer;font-size:16px;padding:0;line-height:1;transition:.2s;margin-right:8px}
+.star-btn:hover{color:var(--yellow)}.star-btn.saved{color:var(--yellow)}
+.watch-card{background:var(--card);padding:25px;border-radius:15px;border:1px solid var(--border)}
+.watch-header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:16px}
+.watch-pair{font-weight:900;font-size:20px;color:var(--accent)}
+.watch-badge{font-size:9px;font-weight:900;padding:4px 10px;border-radius:4px;background:rgba(255,255,255,.05);color:var(--subtext)}
+.watch-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px}
+.watch-metric{padding:10px;background:rgba(255,255,255,.03);border-radius:8px;border:1px solid rgba(255,255,255,.04)}
+.watch-metric-label{font-size:9px;font-weight:900;color:var(--subtext);text-transform:uppercase;margin-bottom:4px}
+.watch-metric-val{font-family:'JetBrains Mono';font-weight:900;font-size:13px}
+.watch-trend{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin:12px 0}
+.watch-trend-day{font-size:9px;font-family:'JetBrains Mono';padding:4px 8px;border-radius:4px;border:1px solid rgba(255,255,255,.08);display:flex;flex-direction:column;align-items:center;gap:2px}
+.watch-trend-date{font-size:8px;color:var(--subtext);font-weight:400}
+.watch-actions{display:flex;gap:10px;margin-top:16px}
+.watch-enter-btn{flex:1;background:rgba(14,165,233,.05);border:1.5px solid var(--accent);color:var(--accent);padding:12px;border-radius:8px;font-size:10px;font-weight:900;cursor:pointer;text-transform:uppercase}
+.watch-remove-btn{flex:1;background:rgba(239,68,68,.05);border:1.5px solid var(--high);color:var(--high);padding:12px;border-radius:8px;font-size:10px;font-weight:900;cursor:pointer;text-transform:uppercase}
+.watch-empty{text-align:center;padding:60px;color:var(--subtext);font-size:12px}
 </style>
 </head>
 <body>
@@ -117,6 +134,7 @@ td:last-child{border-radius:0 10px 10px 0;border-right:1px solid var(--border)}
 <div class="nav-bar">
 <div class="nav-item active" onclick="tab('alerts',this)">Market Alerts</div>
 <div class="nav-item" onclick="tab('portfolio',this)">Active Portfolio</div>
+<div class="nav-item" onclick="tabWatchlist(this)">Watchlist <span id="watchCount"></span></div>
 <div class="nav-item" onclick="tab('history',this)">History</div>
 <div class="live-switch"><span class="switch-label">Live (5m)</span><label><input type="checkbox" class="switch-input" id="autoRefresh" onchange="toggleLive()"><div class="switch-slider"></div></label></div>
 <div class="conn-dot loading" id="connDot" title="API Status"></div>
@@ -138,6 +156,10 @@ td:last-child{border-radius:0 10px 10px 0;border-right:1px solid var(--border)}
 <div id="portfolio" class="tab-content">
 <div class="exposure-pill-box"><div class="exp-pill"><span class="exp-label">LONG</span><span class="exp-val-long" id="valLong">$0</span></div><div class="exp-pill"><span class="exp-label">SHORT</span><span class="exp-val-short" id="valShort">$0</span></div></div>
 <div class="portfolio-grid" id="portfolioGrid"></div>
+</div>
+<div id="watchlist" class="tab-content">
+<h2 style="font-size:14px;font-weight:900;color:var(--subtext);text-transform:uppercase;margin-bottom:25px">Watchlist</h2>
+<div class="portfolio-grid" id="watchlistGrid"></div>
 </div>
 <div id="history" class="tab-content">
 <h2 style="font-size:14px;font-weight:900;color:var(--subtext);text-transform:uppercase;margin-bottom:25px">Closed Positions</h2>
@@ -189,6 +211,33 @@ function sortAge(){sortBy('data-age');}function sortZ(){sortBy('data-z',true);}f
 function sortBy(attr,abs){const tb=document.querySelector("#alertBody");const rows=Array.from(tb.querySelectorAll("tr"));rows.sort((a,b)=>{let av=parseFloat(a.getAttribute(attr))||0,bv=parseFloat(b.getAttribute(attr))||0;if(abs){av=Math.abs(av);bv=Math.abs(bv);}return sortAsc?(bv-av):(av-bv);});rows.forEach(r=>tb.appendChild(r));sortAsc=!sortAsc;}
 function toggleLive(){if(document.getElementById('autoRefresh').checked){refreshData();liveTimer=setInterval(()=>{if(document.getElementById('entryModal').style.display!=='block')refreshData();},300000);}else clearInterval(liveTimer);}
 async function refreshData(){try{setConnStatus("loading");const data=await apiGet("getData",{mode:currentMode});if(data&&data.ok){updateUI(data);setConnStatus("ok");}else setConnStatus("err");}catch(e){setConnStatus("err");}}
+// ── WATCHLIST ──
+async function addToWatchlist(id,btn){try{btn.innerHTML='&#9733;';btn.classList.add('saved');await apiGet("saveWatchlist",{id:id,mode:currentMode});}catch(e){btn.innerHTML='&#9734;';btn.classList.remove('saved');}}
+async function removeFromWatchlistUI(id,cardEl){if(cardEl)cardEl.style.opacity='0.4';try{await apiGet("removeWatchlist",{id:id});await loadWatchlist();}catch(e){if(cardEl)cardEl.style.opacity='1';}}
+async function tabWatchlist(el){document.querySelectorAll('.tab-content').forEach(x=>x.classList.remove('active'));document.querySelectorAll('.nav-item').forEach(x=>x.classList.remove('active'));document.getElementById('watchlist').classList.add('active');el.classList.add('active');await loadWatchlist();}
+async function loadWatchlist(){try{setConnStatus("loading");const data=await apiGet("getWatchlist");if(data&&data.ok){renderWatchlist(data.watchlistData||[]);setConnStatus("ok");}else setConnStatus("err");}catch(e){setConnStatus("err");}}
+function renderWatchlist(wd){var grid=document.getElementById('watchlistGrid');var ct=document.getElementById('watchCount');ct.innerText=wd.length>0?'('+wd.length+')':'';if(!wd||wd.length===0){grid.innerHTML='<div class="watch-empty"><div style="font-size:28px;margin-bottom:12px">&#9734;</div><div style="font-weight:900;margin-bottom:8px">No pairs on your Watchlist</div><div>Click the star icon on any alert to start watching it.</div></div>';return;}
+var h='';wd.forEach(function(w,i){var z=parseFloat(w.z)||0;var zClr=z>0?'var(--high)':'var(--low)';var addZ=parseFloat(w.addedZ)||0;var zChg=parseFloat(w.zChange)||0;var chgClr=Math.abs(z)<Math.abs(addZ)?'var(--low)':'var(--high)';var chgArr=Math.abs(z)<Math.abs(addZ)?'&#8600;':'&#8599;';var al=parseFloat(w.liq)||0;var lc=al>50000?'dot-green':(al>20000?'dot-yellow':'dot-red');var lt=al>1000?(al/1000).toFixed(0)+'k':al.toFixed(0);
+var trendH='';if(w.zHistory&&w.zHistory.length>0){for(var t=0;t<w.zHistory.length;t++){var tv=parseFloat(w.zHistory[t].z);var tc=Math.abs(tv)>=2?'var(--high)':(Math.abs(tv)>=1.5?'var(--yellow)':'var(--low)');trendH+='<div class="watch-trend-day" style="color:'+tc+'"><span class="watch-trend-date">'+w.zHistory[t].date+'</span>'+tv.toFixed(1)+'&sigma;</div>';}}else{trendH='<span style="color:var(--subtext);font-size:10px">No history yet</span>';}
+var divH='';if(w.exDivA||w.exDivB){var fD=function(dt,tk){if(!dt)return tk+': —';var dd=new Date(dt+'T00:00:00');var mn=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][dd.getMonth()];return tk+': '+mn+' '+dd.getDate();};divH='<div class="watch-metric"><div class="watch-metric-label">Ex-Div Dates</div><div class="watch-metric-val" style="font-size:10px;line-height:1.6">'+fD(w.exDivA,w.tA)+'<br>'+fD(w.exDivB,w.tB)+'</div></div>';}
+var si=String(w.id).replace(/'/g,"\\'"),sa=String(w.tA).replace(/'/g,"\\'"),sb=String(w.tB).replace(/'/g,"\\'");
+h+='<div class="watch-card" id="wcard-'+i+'">';
+h+='<div class="watch-header"><div><div class="watch-pair">'+w.id+'</div><div style="font-size:10px;color:var(--subtext);font-weight:900;text-transform:uppercase;margin-top:4px">'+w.sec+'</div></div><div style="display:flex;gap:8px;align-items:center"><div class="watch-badge">'+w.daysWatching+'d watching</div><div class="watch-badge">'+w.mode+'</div></div></div>';
+h+='<div class="watch-grid">';
+h+='<div class="watch-metric"><div class="watch-metric-label">Current Spread</div><div class="watch-metric-val">$'+w.spr+'</div></div>';
+h+='<div class="watch-metric"><div class="watch-metric-label">Current Z-Score</div><div class="watch-metric-val" style="color:'+zClr+'">'+z.toFixed(2)+'&sigma;</div></div>';
+h+='<div class="watch-metric"><div class="watch-metric-label">Saved Z-Score</div><div class="watch-metric-val">'+addZ.toFixed(2)+'&sigma;</div></div>';
+h+='<div class="watch-metric"><div class="watch-metric-label">Z Change</div><div class="watch-metric-val" style="color:'+chgClr+'">'+chgArr+' '+(zChg>=0?'+':'')+zChg.toFixed(2)+'&sigma;</div></div>';
+h+='<div class="watch-metric"><div class="watch-metric-label">Yields</div><div class="watch-metric-val">'+w.yA+'% / '+w.yB+'%</div></div>';
+h+='<div class="watch-metric"><div class="watch-metric-label">Yield Spread</div><div class="watch-metric-val">'+w.yieldSpread+'%</div></div>';
+h+='<div class="watch-metric"><div class="watch-metric-label">Liquidity</div><div class="watch-metric-val"><span class="dot '+lc+'"></span>'+lt+'</div></div>';
+if(divH){h+=divH;}else{h+='<div class="watch-metric"><div class="watch-metric-label">Ex-Div Dates</div><div class="watch-metric-val" style="color:var(--subtext);font-size:10px">—</div></div>';}
+h+='</div>';
+h+='<div class="target-ribbon"><div class="target-row"><div class="target-desc">CURRENT SPREAD</div><div class="target-val">$'+w.spr+' (Diff)</div></div><div class="target-row"><div class="target-desc">TARGET MEAN</div><div class="target-val accent">'+w.target.toUpperCase()+'</div></div><div class="target-row"><div class="target-desc">DISTANCE TO MEAN</div><div class="target-val">$'+Math.abs(parseFloat(w.distToMean)||0).toFixed(2)+'</div></div></div>';
+h+='<div style="margin-top:12px"><div class="watch-metric-label" style="margin-bottom:8px">5-Day Z-Score Trend</div><div class="watch-trend">'+trendH+'</div></div>';
+h+='<div class="watch-actions"><button class="watch-enter-btn" onclick="openModal(\''+si+'\',\''+sa+'\',\''+sb+'\')">Enter Trade</button><button class="watch-remove-btn" onclick="removeFromWatchlistUI(\''+si+'\',document.getElementById(\'wcard-'+i+'\'))">Remove</button></div>';
+h+='</div>';});
+grid.innerHTML=h;}
 function buildTrend(trend){if(!trend||!trend.length)return'<span style="color:var(--subtext);font-size:10px">No data</span>';var h='';for(var i=0;i<trend.length;i++){var v=parseFloat(trend[i]);if(isNaN(v))continue;var c='var(--subtext)';if(i>0){var p=parseFloat(trend[i-1]);if(!isNaN(p)){if(Math.abs(v)<Math.abs(p))c='var(--low)';else if(Math.abs(v)>Math.abs(p))c='var(--high)';}}if(i>0){var p2=parseFloat(trend[i-1]);if(!isNaN(p2)){var ar=Math.abs(v)<Math.abs(p2)?'↘':'↗';var ac2=Math.abs(v)<Math.abs(p2)?'var(--low)':'var(--high)';h+='<span class="trend-arrow" style="color:'+ac2+'">'+ar+'</span>';}}h+='<div class="trend-pill" style="color:'+c+'">'+v+'σ</div>';}return h;}
 function renderMacro(m){if(!m||!m.us10y)return;document.getElementById('m_us10y').innerText=m.us10y.val;var c1=m.us10y.chg,e1=document.getElementById('c_us10y');e1.innerText='('+(c1>=0?'+':'')+(c1*100).toFixed(2)+'%)';e1.className='macro-chg '+(c1>=0?'chg-pos':'chg-neg');document.getElementById('m_tlt').innerText=m.tlt.val;var c2=m.tlt.chg,e2=document.getElementById('c_tlt');e2.innerText='('+(c2>=0?'+':'')+(c2*100).toFixed(2)+'%)';e2.className='macro-chg '+(c2>=0?'chg-pos':'chg-neg');document.getElementById('m_pff').innerText=m.pff.val;var c3=m.pff.chg,e3=document.getElementById('c_pff');e3.innerText='('+(c3>=0?'+':'')+(c3*100).toFixed(2)+'%)';e3.className='macro-chg '+(c3>=0?'chg-pos':'chg-neg');}
 function renderAlerts(ad){if(!ad)return;var maxS=0,maxId="N/A",maxUrl="#";var fmt=function(t){return t?"'"+t.trim().replace('-','/P')+"'":"UNKNOWN";};var isCr=currentMode==='credit';var ac=isCr?'var(--purple)':'var(--accent)';
@@ -199,7 +248,7 @@ var h='';ad.forEach(function(r){var z=parseFloat(r.z),az=Math.abs(z);var act=az>
 var divTd='<td><div style="display:flex;flex-direction:column;gap:3px"><div class="mono-data" style="color:var(--subtext);font-size:10px">'+r.tA+': —</div><div class="mono-data" style="color:var(--subtext);font-size:10px">'+r.tB+': —</div></div></td>';
 var fmtDiv=function(dt,ticker){if(!dt)return'<div class="mono-data" style="color:var(--subtext);font-size:10px">'+ticker+': —</div>';var dd=new Date(dt+'T00:00:00');var dn=new Date();dn.setHours(0,0,0,0);var dDiff=Math.round((dd-dn)/(1000*60*60*24));var dMon=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][dd.getMonth()];var dStr=dMon+' '+dd.getDate();var dClr=dDiff<=7?'var(--high)':(dDiff<=30?'var(--yellow)':'var(--subtext)');var dW=dDiff<=7?'900':'400';return'<div class="mono-data" style="color:'+dClr+';font-size:10px;font-weight:'+dW+'">'+ticker+': '+dStr+'</div>';};
 if(r.exDivA||r.exDivB){divTd='<td><div style="display:flex;flex-direction:column;gap:3px">'+fmtDiv(r.exDivA,r.tA)+fmtDiv(r.exDivB,r.tB)+'</div></td>';}
-h+='<tr class="alert-row" data-s="'+r.id.toLowerCase()+' '+(r.sec||'').toLowerCase()+' '+act.l.toLowerCase()+'" data-z="'+r.z+'" data-age="'+ag+'" data-liq="'+al+'">'+'<td><div style="display:flex;align-items:center"><button class="plus-btn" onclick="openModal(\''+si+'\',\''+sa+'\',\''+sb+'\')">+</button><div><a href="'+url+'" target="_blank" class="'+lk+'">'+r.id+'</a><div class="range-tag">'+r.rng+'</div><div style="font-size:10px;color:var(--subtext);font-weight:900;text-transform:uppercase;margin-top:2px">'+r.sec+'</div></div></div></td>'+divTd+'<td><div class="mono-data">$'+r.spr+'</div></td>'+'<td><div style="color:'+(z>0?'var(--high)':'var(--low)')+'" class="mono-data">'+z.toFixed(2)+'σ</div></td>'+'<td><div class="mono-data">'+r.yA+'% / '+r.yB+'%</div></td>'+'<td><div style="display:flex;flex-direction:column;gap:2px"><div style="display:flex;align-items:center"><span class="dot '+lc+'"></span>'+lt+'</div>'+sp+'</div></td>'+'<td><div>'+at+'</div></td>'+'<td><div class="trend-tape">'+tr+'</div></td>'+'<td><div class="action-tag" style="color:'+act.c+';border-color:'+act.c+'">'+act.l+'</div></td></tr>';});
+h+='<tr class="alert-row" data-s="'+r.id.toLowerCase()+' '+(r.sec||'').toLowerCase()+' '+act.l.toLowerCase()+'" data-z="'+r.z+'" data-age="'+ag+'" data-liq="'+al+'">'+'<td><div style="display:flex;align-items:center"><button class="star-btn" id="star-'+si.replace(/[^a-zA-Z0-9]/g,'')+'" onclick="addToWatchlist(\''+si+'\',this)" title="Add to Watchlist">&#9734;</button><button class="plus-btn" onclick="openModal(\''+si+'\',\''+sa+'\',\''+sb+'\')">+</button><div><a href="'+url+'" target="_blank" class="'+lk+'">'+r.id+'</a><div class="range-tag">'+r.rng+'</div><div style="font-size:10px;color:var(--subtext);font-weight:900;text-transform:uppercase;margin-top:2px">'+r.sec+'</div></div></div></td>'+divTd+'<td><div class="mono-data">$'+r.spr+'</div></td>'+'<td><div style="color:'+(z>0?'var(--high)':'var(--low)')+'" class="mono-data">'+z.toFixed(2)+'σ</div></td>'+'<td><div class="mono-data">'+r.yA+'% / '+r.yB+'%</div></td>'+'<td><div style="display:flex;flex-direction:column;gap:2px"><div style="display:flex;align-items:center"><span class="dot '+lc+'"></span>'+lt+'</div>'+sp+'</div></td>'+'<td><div>'+at+'</div></td>'+'<td><div class="trend-tape">'+tr+'</div></td>'+'<td><div class="action-tag" style="color:'+act.c+';border-color:'+act.c+'">'+act.l+'</div></td></tr>';});
 document.getElementById('alertBody').innerHTML=h;search();}
 function updateUI(data){if(!data)return;renderAlerts(data.alertData);renderMacro(data.macroData);
 var lng=0,sht=0;if(data.portfolioData)data.portfolioData.forEach(function(p){var pA=parseFloat(p.pA)||0,pB=parseFloat(p.pB)||0,sA=parseFloat(p.sA)||0,sB=parseFloat(p.sB)||0;if(sA>0)lng+=pA*sA;else sht+=Math.abs(pA*sA);if(sB>0)lng+=pB*sB;else sht+=Math.abs(pB*sB);});
