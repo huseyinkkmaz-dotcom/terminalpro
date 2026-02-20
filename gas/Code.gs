@@ -564,13 +564,19 @@ function getWatchlistData() {
       }
     }
 
-    // Load AlertsLog for 5-day Z history
+    // Load AlertsLog for 5-day Z history — pre-build map for O(1) lookup per pair
     var logSheet = ss.getSheetByName('AlertsLog');
-    var logData = [];
+    var logMap = {}; // cleanId → [{ts: Date, z: number}, ...]
     if (logSheet && logSheet.getLastRow() > 1) {
       var lastRow = logSheet.getLastRow();
       var startRow = Math.max(2, lastRow - 2000);
-      logData = logSheet.getRange(startRow, 1, lastRow - startRow + 1, 4).getValues();
+      var logData = logSheet.getRange(startRow, 1, lastRow - startRow + 1, 4).getValues();
+      for (var lg = 0; lg < logData.length; lg++) {
+        var lcid = cleanId(logData[lg][1]);
+        if (!lcid) continue;
+        if (!logMap[lcid]) logMap[lcid] = [];
+        logMap[lcid].push({ ts: logData[lg][0], z: parseFloat(logData[lg][2]) || 0 });
+      }
     }
 
     // Load DivDates
@@ -634,15 +640,14 @@ function getWatchlistData() {
       var zChange = currentZ - addedZ;
       var daysWatching = addedDate instanceof Date ? Math.floor((now.getTime() - addedDate.getTime()) / 86400000) : 0;
 
-      // 5-day Z history from AlertsLog
+      // 5-day Z history from AlertsLog (pre-built map)
       var dailyZ = {}; // dateStr → last z
-      for (var k = 0; k < logData.length; k++) {
-        if (cleanId(logData[k][1]) === cid) {
-          var ts = logData[k][0];
-          if (ts instanceof Date) {
-            var dateStr = ts.toISOString().split('T')[0];
-            dailyZ[dateStr] = parseFloat(logData[k][2]) || 0;
-          }
+      var pairLog = logMap[cid] || [];
+      for (var k = 0; k < pairLog.length; k++) {
+        var ts = pairLog[k].ts;
+        if (ts instanceof Date) {
+          var dateStr = ts.toISOString().split('T')[0];
+          dailyZ[dateStr] = pairLog[k].z;
         }
       }
       var sortedDays = Object.keys(dailyZ).sort();
