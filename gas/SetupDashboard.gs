@@ -562,8 +562,9 @@ function fetchDividendDates() {
   }
 
   // Fetch using v10/finance/quoteSummary with calendarEvents module (has exDividendDate)
-  // Uses fetchAll for parallel per-ticker requests in batches of 30
-  var BATCH = 30;
+  // Uses fetchAll for parallel per-ticker requests in batches of 20
+  // (per-ticker endpoint — more requests than v7 batch, so smaller batches to avoid 429s)
+  var BATCH = 20;
   var successCount = 0;
 
   for (var b = 0; b < toFetch.length; b += BATCH) {
@@ -639,7 +640,11 @@ function fetchDividendDates() {
       Logger.log('fetchDividendDates: Batch error at offset ' + b + ': ' + e.toString());
     }
 
-    if (b + BATCH < toFetch.length) Utilities.sleep(1000);
+    // Log progress every 5 batches
+    if (((b / BATCH) % 5) === 4) {
+      Logger.log('Progress: ' + Math.min(b + BATCH, toFetch.length) + '/' + toFetch.length + ' tickers, ' + successCount + ' dates found so far.');
+    }
+    if (b + BATCH < toFetch.length) Utilities.sleep(1500);
   }
 
   // Write all results back to sheet
