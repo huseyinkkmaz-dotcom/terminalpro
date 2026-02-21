@@ -4,9 +4,10 @@
 
 A real-time **statistical arbitrage dashboard** for **Preferred Stock Pair Trading**. It tracks 100+ pairs using 90-day mean reversion Z-scores, yields, liquidity, volume spike detection, and upcoming ex-dividend dates.
 
-**Two strategies:**
+**Three strategies:**
 - **Intra-Company Pairs** — Same issuer, different series (e.g., BAC-B vs BAC-M)
 - **Credit Rating Arbitrage** — Different issuers, same credit rating (e.g., BBB vs BBB cross-company)
+- **Macro Valuation** — Individual preferreds vs. US Treasuries (yield spread Z-scores against 5 benchmarks: US2Y, US5Y, US7Y, US10Y, US30Y)
 
 ## Architecture
 
@@ -26,7 +27,10 @@ Google Sheets (Data Layer)
     ├── AlertsLog sheet     → Auto: hourly Z-score snapshots (trend ribbons)
     ├── OpenTrades sheet    → Trade journal (active)
     ├── ClosedTrades sheet  → Trade journal (closed)
-    └── MacroData sheet     → Auto: US10Y, TLT, PFF macro indicators
+    ├── MacroData sheet     → Auto: US10Y, TLT, PFF macro indicators
+    ├── TreasuryHist sheet  → Auto: 90-day FRED treasury yields (US2Y-US30Y)
+    ├── MacroCalc sheet     → Auto: computed macro valuations per ticker
+    └── MacroCache sheet    → Auto: static snapshot of MacroCalc
 
 Google Apps Script (API Backend)
     ├── Code.gs             → doGet/doPost routing, data reading, trade operations

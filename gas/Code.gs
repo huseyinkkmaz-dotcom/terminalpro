@@ -92,6 +92,9 @@ function doGet(e) {
       removeFromWatchlist(e.parameter.id || "");
       result = { ok: true, message: "Removed from watchlist" };
     }
+    else if (action === 'getMacroValuation') {
+      result = { ok: true, macroValData: getMacroValuationData() };
+    }
     else {
       result = { ok: false, message: "Unknown action: " + action };
     }
@@ -706,5 +709,87 @@ function getWatchlistData() {
   } catch (e) {
     console.error('getWatchlistData error: ' + e);
     return [];
+  }
+}
+// ============================================================
+// MACRO VALUATION — Preferreds vs. US Treasuries
+// ============================================================
+function getMacroValuationData() {
+  try {
+    var ss = SpreadsheetApp.getActive();
+    var sheet = ss.getSheetByName('MacroCache');
+    if (!sheet || sheet.getLastRow() <= 1) {
+      sheet = ss.getSheetByName('MacroCalc');
+    }
+    if (!sheet || sheet.getLastRow() <= 1) {
+      return { status: 'no_data', data: [], sectorAvg: {} };
+    }
+    var data = sheet.getDataRange().getValues();
+    var bmKeys = ['US2Y', 'US5Y', 'US7Y', 'US10Y', 'US30Y'];
+
+    // First pass: collect data and sector z-scores
+    var sectorZMap = {};
+    var results = [];
+
+    for (var i = 1; i < data.length; i++) {
+      var row = data[i];
+      var ticker = String(row[0]).trim();
+      if (!ticker) continue;
+
+      var item = {
+        ticker: ticker,
+        coupon: parseFloat(row[1]) || 0,
+        curPrice: parseFloat(row[2]) || 0,
+        curYield: parseFloat(row[3]) || 0,
+        sector: String(row[4] || ''),
+        credit: String(row[5] || ''),
+        benchmarks: {},
+        avgZ: parseFloat(row[41]) || 0,
+        signal: String(row[42] || 'FAIR'),
+        bestBM: String(row[43] || 'N/A'),
+        sectorAvgZ: 0
+      };
+
+      // Parse benchmark data (7 columns each, starting at index 6)
+      for (var b = 0; b < bmKeys.length; b++) {
+        var base = 6 + (b * 7);
+        item.benchmarks[bmKeys[b]] = {
+          spread: parseFloat(row[base]) || 0,
+          mean: parseFloat(row[base + 1]) || 0,
+          z: parseFloat(row[base + 2]) || 0,
+          pct: parseFloat(row[base + 3]) || 0,
+          hi90: parseFloat(row[base + 4]) || 0,
+          lo90: parseFloat(row[base + 5]) || 0,
+          dir: String(row[base + 6] || '→')
+        };
+      }
+
+      // Track sector averages
+      if (item.sector && item.avgZ !== 0) {
+        if (!sectorZMap[item.sector]) sectorZMap[item.sector] = [];
+        sectorZMap[item.sector].push(item.avgZ);
+      }
+
+      results.push(item);
+    }
+
+    // Compute sector averages
+    var sectorAvg = {};
+    for (var sec in sectorZMap) {
+      var arr = sectorZMap[sec];
+      var sum = 0;
+      for (var j = 0; j < arr.length; j++) sum += arr[j];
+      sectorAvg[sec] = parseFloat((sum / arr.length).toFixed(2));
+    }
+
+    // Attach sector avg to each item
+    for (var i = 0; i < results.length; i++) {
+      results[i].sectorAvgZ = sectorAvg[results[i].sector] || 0;
+    }
+
+    return { status: 'ok', data: results, sectorAvg: sectorAvg };
+  } catch (e) {
+    console.error('getMacroValuationData error: ' + e);
+    return { status: 'error', data: [], sectorAvg: {} };
   }
 }

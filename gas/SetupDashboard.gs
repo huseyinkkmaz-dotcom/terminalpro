@@ -139,6 +139,7 @@ function setupAllBatched() {
       }
       ensureSheet_(ss, 'DivDates', ['Ticker', 'ExDivDate', 'LastFetched']);
       ensureSheet_(ss, 'Watchlist', ['PairID', 'AddedDate', 'AddedZ', 'Mode']);
+      ensureSheet_(ss, 'TreasuryHist', ['Date', 'US2Y', 'US5Y', 'US7Y', 'US10Y', 'US30Y']);
       Logger.log('Phase 2 complete: Supporting sheets ready.');
 
       state.phase = 3;
@@ -303,7 +304,8 @@ function createAutoTrigger() {
   for (var i = 0; i < triggers.length; i++) {
     var fn = triggers[i].getHandlerFunction();
     if (fn === 'setupAllBatched' || fn === 'updateLivePrices' ||
-        fn === 'snapshotZScores' || fn === 'dailyCreditRefresh' || fn === 'fetchDividendDates') {
+        fn === 'snapshotZScores' || fn === 'dailyCreditRefresh' || fn === 'fetchDividendDates' ||
+        fn === 'dailyMacroRefresh' || fn === 'computeMacroValuationsBatch') {
       ScriptApp.deleteTrigger(triggers[i]);
     }
   }
@@ -334,13 +336,21 @@ function createAutoTrigger() {
     .everyDays(1)
     .create();
 
-  Logger.log('All triggers installed:\n• updateLivePrices: every 10 min\n• snapshotZScores: every hour\n• dailyCreditRefresh: daily 5 AM\n• fetchDividendDates: daily 6 AM');
+  // DAILY: dailyMacroRefresh at 7 AM (macro valuation: preferreds vs treasuries)
+  ScriptApp.newTrigger('dailyMacroRefresh')
+    .timeBased()
+    .atHour(7)
+    .everyDays(1)
+    .create();
+
+  Logger.log('All triggers installed:\n• updateLivePrices: every 10 min\n• snapshotZScores: every hour\n• dailyCreditRefresh: daily 5 AM\n• fetchDividendDates: daily 6 AM\n• dailyMacroRefresh: daily 7 AM');
   showMsg_(
     'Triggers installed!\n\n' +
     '• updateLivePrices: every 10 min (snapshots prices to WebCache)\n' +
     '• snapshotZScores: every hour (trend tracking)\n' +
     '• dailyCreditRefresh: daily 5 AM (credit pair regeneration)\n' +
-    '• fetchDividendDates: daily 6 AM (Yahoo Finance ex-div dates)\n\n' +
+    '• fetchDividendDates: daily 6 AM (Yahoo Finance ex-div dates)\n' +
+    '• dailyMacroRefresh: daily 7 AM (macro valuation vs treasuries)\n\n' +
     'Now run setupAllBatched() to build the sheets.\n' +
     'Then run updateLivePrices() to populate WebCache immediately.'
   );
@@ -1415,4 +1425,440 @@ function isIntraOnly_(ticker) {
 }
 function showMsg_(msg) {
   try { SpreadsheetApp.getUi().alert(msg); } catch (e) { Logger.log(msg); }
+}
+
+// ============================================================
+// MACRO VALUATION — Preferreds vs. US Treasuries
+// ============================================================
+// Benchmarks: fetched from FRED public CSV (no API key needed)
+var MACRO_BENCHMARKS = [
+  { key: 'US2Y',  fred: 'DGS2',  label: 'US 2Y' },
+  { key: 'US5Y',  fred: 'DGS5',  label: 'US 5Y' },
+  { key: 'US7Y',  fred: 'DGS7',  label: 'US 7Y' },
+  { key: 'US10Y', fred: 'DGS10', label: 'US 10Y' },
+  { key: 'US30Y', fred: 'DGS30', label: 'US 30Y' }
+];
+
+// MacroCalc column headers (45 columns)
+// [0-5] Ticker, Coupon, CurPrice, CurYield, Sector, Credit
+// [6-12] US2Y: Spr, Mean, Z, Pct, Hi, Lo, Dir  (×5 benchmarks = 35 cols)
+// [41-44] AvgZ, Signal, BestBM, LastComputed
+var MACRO_HEADERS = (function() {
+  var h = ['Ticker', 'Coupon', 'CurPrice', 'CurYield', 'Sector', 'Credit'];
+  for (var b = 0; b < MACRO_BENCHMARKS.length; b++) {
+    var k = MACRO_BENCHMARKS[b].key;
+    h.push(k + '_Spr', k + '_Mean', k + '_Z', k + '_Pct', k + '_Hi', k + '_Lo', k + '_Dir');
+  }
+  h.push('AvgZ', 'Signal', 'BestBM', 'LastComputed');
+  return h;
+})();
+
+/**
+ * Fetches 120 days of treasury yield history from FRED (public CSV, no API key).
+ * Writes to TreasuryHist sheet: Date | US2Y | US5Y | US7Y | US10Y | US30Y
+ */
+function fetchTreasuryHistory() {
+  var ss = SpreadsheetApp.getActive();
+  var sheet = ss.getSheetByName('TreasuryHist');
+  if (!sheet) {
+    sheet = ss.insertSheet('TreasuryHist');
+  } else {
+    sheet.clear();
+  }
+
+  var endDate = Utilities.formatDate(new Date(), 'GMT', 'yyyy-MM-dd');
+  var startDate = Utilities.formatDate(new Date(new Date().getTime() - 150 * 86400000), 'GMT', 'yyyy-MM-dd');
+
+  // Fetch all 5 benchmarks in parallel
+  var requests = [];
+  for (var i = 0; i < MACRO_BENCHMARKS.length; i++) {
+    requests.push({
+      url: 'https://fred.stlouisfed.org/graph/fredgraph.csv?id=' + MACRO_BENCHMARKS[i].fred +
+           '&cosd=' + startDate + '&coed=' + endDate,
+      muteHttpExceptions: true,
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }
+    });
+  }
+
+  var responses = UrlFetchApp.fetchAll(requests);
+
+  // Parse each CSV into dateStr → yield
+  var yieldMaps = [];
+  for (var i = 0; i < responses.length; i++) {
+    var map = {};
+    if (responses[i].getResponseCode() === 200) {
+      var lines = responses[i].getContentText().split('\n');
+      for (var j = 1; j < lines.length; j++) {
+        var parts = lines[j].split(',');
+        if (parts.length >= 2 && parts[1].trim() !== '.' && parts[1].trim() !== '') {
+          var val = parseFloat(parts[1]);
+          if (!isNaN(val)) map[parts[0].trim()] = val;
+        }
+      }
+    }
+    yieldMaps.push(map);
+    Logger.log('fetchTreasuryHistory: ' + MACRO_BENCHMARKS[i].key + ' — ' + Object.keys(map).length + ' data points');
+  }
+
+  // Build unified sorted date list
+  var allDates = {};
+  for (var i = 0; i < yieldMaps.length; i++) {
+    for (var d in yieldMaps[i]) allDates[d] = true;
+  }
+  var dates = Object.keys(allDates).sort();
+
+  // Write to sheet
+  var headers = ['Date'];
+  for (var i = 0; i < MACRO_BENCHMARKS.length; i++) headers.push(MACRO_BENCHMARKS[i].key);
+  sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+  sheet.getRange(1, 1, 1, headers.length).setFontWeight('bold');
+
+  if (dates.length > 0) {
+    var rows = [];
+    for (var d = 0; d < dates.length; d++) {
+      var row = [dates[d]];
+      for (var i = 0; i < yieldMaps.length; i++) {
+        row.push(yieldMaps[i][dates[d]] || '');
+      }
+      rows.push(row);
+    }
+    sheet.getRange(2, 1, rows.length, headers.length).setValues(rows);
+  }
+
+  Logger.log('fetchTreasuryHistory: Done. ' + dates.length + ' dates written.');
+}
+
+/**
+ * Daily orchestrator — called by trigger at 7 AM.
+ * Step 1: Refresh treasury yields from FRED.
+ * Step 2: Start batched macro computation for all preferreds.
+ */
+function dailyMacroRefresh() {
+  try {
+    Logger.log('dailyMacroRefresh: Starting...');
+    fetchTreasuryHistory();
+    computeMacroValuationsBatch();
+  } catch (e) {
+    Logger.log('dailyMacroRefresh ERROR: ' + e.toString());
+  }
+}
+
+/**
+ * Batched macro valuation computation. Processes 40 tickers per iteration.
+ * Uses PropertiesService to save/resume progress across GAS time limits.
+ * When more tickers remain + time runs out, schedules a 1-min continuation trigger.
+ */
+function computeMacroValuationsBatch() {
+  var startTime = new Date().getTime();
+  var props = PropertiesService.getScriptProperties();
+  var stateJson = props.getProperty('MACRO_BATCH');
+  var state = stateJson ? JSON.parse(stateJson) : { idx: 0 };
+  var ss = SpreadsheetApp.getActive();
+
+  Logger.log('computeMacroValuationsBatch: Starting from index ' + state.idx);
+
+  // Read Master sheet for ticker list
+  var master = ss.getSheetByName('Master');
+  if (!master) { Logger.log('computeMacroValuationsBatch: No Master sheet'); return; }
+  var masterData = master.getDataRange().getValues();
+
+  // Build ticker list (only fixed-rate preferreds with coupon)
+  var tickers = [];
+  for (var i = 1; i < masterData.length; i++) {
+    var ticker = String(masterData[i][0]).trim();
+    var coupon = masterData[i][2]; // Column C: Coupon Yield
+    var curYield = masterData[i][3]; // Column D: Current Yield
+    var credit = String(masterData[i][4] || '').trim();
+    if (!ticker) continue;
+    if (coupon === '' || coupon === null || coupon === undefined) continue;
+    if (isBlacklisted_(ticker)) continue;
+    tickers.push({
+      ticker: ticker,
+      coupon: parseFloat(coupon) || 0,
+      curYield: parseFloat(curYield) || 0,
+      credit: credit,
+      sector: ''
+    });
+  }
+
+  // Get sector from Pairs sheet
+  var pairsSheet = ss.getSheetByName('Pairs');
+  if (pairsSheet) {
+    var pData = pairsSheet.getDataRange().getValues();
+    var sectorMap = {};
+    for (var i = 1; i < pData.length; i++) {
+      var sec = String(pData[i][3] || '').trim();
+      if (sec) {
+        var tA = String(pData[i][1]).trim().toUpperCase();
+        var tB = String(pData[i][2]).trim().toUpperCase();
+        if (tA) sectorMap[tA] = sec;
+        if (tB) sectorMap[tB] = sec;
+      }
+    }
+    for (var i = 0; i < tickers.length; i++) {
+      tickers[i].sector = sectorMap[tickers[i].ticker.toUpperCase()] || '';
+    }
+  }
+
+  Logger.log('computeMacroValuationsBatch: ' + tickers.length + ' total tickers');
+
+  if (state.idx >= tickers.length) {
+    props.deleteProperty('MACRO_BATCH');
+    snapshotMacroCache_();
+    cleanupMacroBatchTriggers_();
+    Logger.log('computeMacroValuationsBatch: All done! (was already complete)');
+    return;
+  }
+
+  // Read TreasuryHist
+  var treasurySheet = ss.getSheetByName('TreasuryHist');
+  if (!treasurySheet || treasurySheet.getLastRow() <= 1) {
+    Logger.log('computeMacroValuationsBatch: No TreasuryHist data. Run fetchTreasuryHistory() first.');
+    return;
+  }
+  var treasuryData = treasurySheet.getDataRange().getValues();
+
+  // Build treasury date → yields lookup
+  var treasuryByDate = {};
+  var treasuryDates = [];
+  for (var i = 1; i < treasuryData.length; i++) {
+    var dateStr = String(treasuryData[i][0]).trim();
+    if (!dateStr) continue;
+    var yields = [];
+    for (var b = 0; b < MACRO_BENCHMARKS.length; b++) {
+      yields.push(parseFloat(treasuryData[i][b + 1]) || 0);
+    }
+    treasuryByDate[dateStr] = yields;
+    treasuryDates.push(dateStr);
+  }
+  treasuryDates.sort();
+  if (treasuryDates.length > 100) treasuryDates = treasuryDates.slice(-100);
+
+  // Get or create MacroCalc sheet
+  var calcSheet = ss.getSheetByName('MacroCalc');
+  if (!calcSheet) {
+    calcSheet = ss.insertSheet('MacroCalc');
+    calcSheet.getRange(1, 1, 1, MACRO_HEADERS.length).setValues([MACRO_HEADERS]);
+    calcSheet.getRange(1, 1, 1, MACRO_HEADERS.length).setFontWeight('bold');
+  } else if (state.idx === 0) {
+    // First batch — clear existing data rows (keep headers)
+    if (calcSheet.getLastRow() > 1) {
+      calcSheet.getRange(2, 1, calcSheet.getLastRow() - 1, MACRO_HEADERS.length).clearContent();
+    }
+  }
+
+  var BATCH_SIZE = 40;
+  var now = new Date();
+  var nowSec = Math.floor(now.getTime() / 1000);
+  var histStartSec = nowSec - 150 * 86400;
+
+  // Process batches in a loop until time runs out
+  while (state.idx < tickers.length) {
+    // Time check
+    if ((new Date().getTime() - startTime) > MAX_RUNTIME_MS) {
+      props.setProperty('MACRO_BATCH', JSON.stringify(state));
+      scheduleMacroContinuation_();
+      Logger.log('computeMacroValuationsBatch: Paused at ' + state.idx + '/' + tickers.length + '. Continuation scheduled.');
+      return;
+    }
+
+    var endIdx = Math.min(state.idx + BATCH_SIZE, tickers.length);
+    var batch = tickers.slice(state.idx, endIdx);
+
+    // Fetch 90-day price history for batch via Yahoo Finance v8/chart
+    var requests = [];
+    for (var i = 0; i < batch.length; i++) {
+      var yahooSym = toYahooTicker_(batch[i].ticker);
+      requests.push({
+        url: 'https://query1.finance.yahoo.com/v8/finance/chart/' +
+             encodeURIComponent(yahooSym) +
+             '?period1=' + histStartSec + '&period2=' + nowSec + '&interval=1d',
+        muteHttpExceptions: true,
+        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }
+      });
+    }
+
+    var responses = UrlFetchApp.fetchAll(requests);
+
+    // Process each ticker in the batch
+    var resultRows = [];
+    for (var i = 0; i < batch.length; i++) {
+      var t = batch[i];
+      var row = [t.ticker, t.coupon, 0, 0, t.sector, t.credit];
+
+      // Parse Yahoo response for price history
+      var priceByDate = {};
+      var curPrice = 0;
+      try {
+        if (responses[i].getResponseCode() === 200) {
+          var json = JSON.parse(responses[i].getContentText());
+          var chartResult = json.chart && json.chart.result && json.chart.result[0];
+          if (chartResult) {
+            var timestamps = chartResult.timestamp || [];
+            var closes = (chartResult.indicators && chartResult.indicators.quote &&
+                          chartResult.indicators.quote[0] && chartResult.indicators.quote[0].close) || [];
+            for (var j = 0; j < timestamps.length; j++) {
+              if (closes[j] !== null && closes[j] !== undefined) {
+                var d = new Date(timestamps[j] * 1000);
+                var ds = Utilities.formatDate(d, 'GMT', 'yyyy-MM-dd');
+                priceByDate[ds] = closes[j];
+                curPrice = closes[j];
+              }
+            }
+          }
+        }
+      } catch (e) {
+        // Skip this ticker on parse error
+      }
+
+      row[2] = curPrice;
+      row[3] = curPrice > 0 ? parseFloat(((t.coupon / curPrice) * 100).toFixed(2)) : 0;
+
+      // Compute spread stats for each benchmark
+      var allZ = [];
+      var bestZ = 0, bestBM = '';
+
+      for (var b = 0; b < MACRO_BENCHMARKS.length; b++) {
+        var spreads = [];
+        for (var d = 0; d < treasuryDates.length; d++) {
+          var dateStr = treasuryDates[d];
+          var price = priceByDate[dateStr];
+          var tYield = treasuryByDate[dateStr] ? treasuryByDate[dateStr][b] : 0;
+          if (price && price > 0 && tYield > 0) {
+            var prefYield = (t.coupon / price) * 100;
+            var spread = (prefYield - tYield) * 100; // bps
+            spreads.push(spread);
+          }
+        }
+
+        var curSpread = 0, mean = 0, z = 0, pct = 50, hi = 0, lo = 0, dir = '→';
+
+        if (spreads.length >= 20) {
+          var calcSpreads = spreads.slice(-90);
+          // Mean
+          var sum = 0;
+          for (var s = 0; s < calcSpreads.length; s++) sum += calcSpreads[s];
+          mean = sum / calcSpreads.length;
+          // StDev
+          var sqSum = 0;
+          for (var s = 0; s < calcSpreads.length; s++) sqSum += Math.pow(calcSpreads[s] - mean, 2);
+          var stdev = Math.sqrt(sqSum / calcSpreads.length);
+          // Current spread
+          curSpread = calcSpreads[calcSpreads.length - 1];
+          // Z-score
+          z = stdev > 0 ? (curSpread - mean) / stdev : 0;
+          // Percentile
+          var below = 0;
+          for (var s = 0; s < calcSpreads.length; s++) {
+            if (calcSpreads[s] <= curSpread) below++;
+          }
+          pct = Math.round((below / calcSpreads.length) * 100);
+          // Hi/Lo
+          hi = calcSpreads[0]; lo = calcSpreads[0];
+          for (var s = 1; s < calcSpreads.length; s++) {
+            if (calcSpreads[s] > hi) hi = calcSpreads[s];
+            if (calcSpreads[s] < lo) lo = calcSpreads[s];
+          }
+          // Direction (7-day slope)
+          if (calcSpreads.length >= 7) {
+            var recent = calcSpreads.slice(-7);
+            var slope = recent[recent.length - 1] - recent[0];
+            if (slope > 5) dir = '↗';
+            else if (slope < -5) dir = '↘';
+          }
+
+          allZ.push(z);
+          if (Math.abs(z) > Math.abs(bestZ)) {
+            bestZ = z;
+            bestBM = MACRO_BENCHMARKS[b].key;
+          }
+        }
+
+        row.push(
+          Math.round(curSpread), Math.round(mean),
+          parseFloat(z.toFixed(2)), pct,
+          Math.round(hi), Math.round(lo), dir
+        );
+      }
+
+      // Aggregates
+      var avgZ = 0;
+      if (allZ.length > 0) {
+        var zSum = 0;
+        for (var z2 = 0; z2 < allZ.length; z2++) zSum += allZ[z2];
+        avgZ = zSum / allZ.length;
+      }
+      var signal = 'FAIR';
+      if (avgZ >= 2.5) signal = 'EXTREMELY CHEAP';
+      else if (avgZ >= 1.5) signal = 'CHEAP';
+      else if (avgZ <= -2.5) signal = 'EXTREMELY EXPENSIVE';
+      else if (avgZ <= -1.5) signal = 'EXPENSIVE';
+
+      row.push(parseFloat(avgZ.toFixed(2)), signal, bestBM || 'N/A', now.toISOString());
+      resultRows.push(row);
+    }
+
+    // Write batch results to MacroCalc
+    if (resultRows.length > 0) {
+      calcSheet.getRange(state.idx + 2, 1, resultRows.length, MACRO_HEADERS.length).setValues(resultRows);
+      SpreadsheetApp.flush();
+    }
+
+    Logger.log('computeMacroValuationsBatch: Processed ' + state.idx + '-' + endIdx + ' of ' + tickers.length);
+    state.idx = endIdx;
+
+    // Brief pause between batches to avoid rate limits
+    if (state.idx < tickers.length) Utilities.sleep(1000);
+  }
+
+  // All done
+  props.deleteProperty('MACRO_BATCH');
+  snapshotMacroCache_();
+  cleanupMacroBatchTriggers_();
+  Logger.log('computeMacroValuationsBatch: COMPLETE. All ' + tickers.length + ' tickers processed.');
+}
+
+/** Snapshot MacroCalc → MacroCache (same pattern as updateLivePrices) */
+function snapshotMacroCache_() {
+  var ss = SpreadsheetApp.getActive();
+  var src = ss.getSheetByName('MacroCalc');
+  if (!src || src.getLastRow() <= 1) return;
+  var data = src.getDataRange().getValues();
+  var cache = ss.getSheetByName('MacroCache');
+  if (!cache) {
+    cache = ss.insertSheet('MacroCache');
+  } else {
+    cache.clear();
+  }
+  cache.getRange(1, 1, data.length, data[0].length).setValues(data);
+  cache.getRange(1, 1, 1, data[0].length).setFontWeight('bold');
+  PropertiesService.getScriptProperties().setProperty('MACRO_CACHE_UPDATED', new Date().toISOString());
+  Logger.log('snapshotMacroCache_: Cached ' + (data.length - 1) + ' rows.');
+}
+
+/** Schedule a 1-minute continuation trigger for batch processing */
+function scheduleMacroContinuation_() {
+  cleanupMacroBatchTriggers_();
+  ScriptApp.newTrigger('computeMacroValuationsBatch')
+    .timeBased()
+    .after(60000)
+    .create();
+}
+
+/** Remove any existing macro batch continuation triggers */
+function cleanupMacroBatchTriggers_() {
+  var triggers = ScriptApp.getProjectTriggers();
+  for (var i = 0; i < triggers.length; i++) {
+    if (triggers[i].getHandlerFunction() === 'computeMacroValuationsBatch') {
+      ScriptApp.deleteTrigger(triggers[i]);
+    }
+  }
+}
+
+/** Manual reset if macro batch gets stuck */
+function clearMacroBatchState() {
+  PropertiesService.getScriptProperties().deleteProperty('MACRO_BATCH');
+  cleanupMacroBatchTriggers_();
+  Logger.log('Macro batch state cleared.');
+  showMsg_('Macro batch state cleared. Run dailyMacroRefresh() to start fresh.');
 }
