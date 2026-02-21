@@ -1010,6 +1010,83 @@ function setupDashboard() {
   showMsg_('Intra-company setup complete for ' + numPairs + ' pairs.\n\nNext: run generateCreditPairs() then setupCreditSheets().');
 }
 
+// ── Cross-Credit-Rating Pair Generator (hardcoded tier rules) ──
+function generateCrossRatingPairs_(groups, nonRated, companyOf, intraPairs, seen) {
+  var toSet = function(arr) {
+    var s = {};
+    for (var i = 0; i < arr.length; i++) s[arr[i].toUpperCase()] = true;
+    return s;
+  };
+  var exBBB = toSet(['BNH', 'BNJ', 'KTH', 'KTN']);
+  var exBBBm = toSet(['BEPI', 'BEPJ', 'BEP-A', 'BHFAL', 'BHFAN', 'BHFAO', 'BHFAP',
+                       'BIPI', 'BIPJ', 'BIP-A', 'BML-G', 'BML-J', 'BML-L',
+                       'ETI-', 'IPB', 'SR-A']);
+  var incBBp = toSet(['FITBO', 'HBANZ', 'CFG-E', 'CFG-H', 'DLR-J', 'DLR-K', 'DLR-L',
+                       'HBANL', 'HBANM', 'HBANP', 'T-A', 'T-C', 'UNMA',
+                       'WFC-C', 'WFC-Y', 'WFC-D', 'WFC-Z', 'WFC-A', 'SIGIP', 'MTB-K']);
+  var exBB = toSet(['ANG-D', 'GJH']);
+  var incBBm = toSet(['TCBIO', 'ASB-E', 'ASB-F', 'SYF-A']);
+
+  var filt = function(arr, ex) {
+    return (arr || []).filter(function(t) { return !ex[t.toUpperCase()]; });
+  };
+
+  // Build set of all valid tickers across all tiers + non-rated
+  var allValid = {};
+  for (var r in groups) {
+    for (var i = 0; i < groups[r].length; i++) allValid[groups[r][i].toUpperCase()] = groups[r][i];
+  }
+  for (var i = 0; i < nonRated.length; i++) allValid[nonRated[i].toUpperCase()] = nonRated[i];
+
+  var bbbPlus = groups['BBB+'] || [];
+  var bbb = filt(groups['BBB'], exBBB);
+  var bbbMinus = filt(groups['BBB-'], exBBBm);
+  var bb = filt(groups['BB'], exBB);
+  // Include-only pools: match against all valid Master tickers
+  var bbPlusPool = [];
+  for (var k in incBBp) { if (allValid[k]) bbPlusPool.push(allValid[k]); }
+  var bbMinusPool = [];
+  for (var k in incBBm) { if (allValid[k]) bbMinusPool.push(allValid[k]); }
+  var nr = nonRated || [];
+
+  var pairs = [];
+  var addPairs = function(poolA, poolB) {
+    for (var a = 0; a < poolA.length; a++) {
+      for (var b = 0; b < poolB.length; b++) {
+        var tA = poolA[a], tB = poolB[b];
+        if (tA.toUpperCase() === tB.toUpperCase()) continue;
+        if (intraPairs[cleanId_(tA) + '_' + cleanId_(tB)]) continue;
+        var coA = companyOf[tA.toUpperCase()] || tA.toUpperCase().replace(/-.*/, '');
+        var coB = companyOf[tB.toUpperCase()] || tB.toUpperCase().replace(/-.*/, '');
+        if (coA === coB) continue;
+        var sorted = [tA, tB].sort();
+        var key = sorted[0] + '|' + sorted[1];
+        if (seen[key]) continue;
+        seen[key] = true;
+        pairs.push([key, sorted[0], sorted[1], 'OTHER']);
+      }
+    }
+  };
+
+  addPairs(bbbPlus, bbb);             // 1. BBB+ vs BBB
+  addPairs(bbbPlus, bbbMinus);        // 2. BBB+ vs BBB-
+  addPairs(bbb, bbbMinus);            // 3. BBB vs BBB-
+  addPairs(bbbPlus, bbPlusPool);      // 4. BBB+ vs BB+ (include-only)
+  addPairs(bbb, bbPlusPool);          // 5. BBB vs BB+ (include-only)
+  addPairs(bbbMinus, bbPlusPool);     // 6. BBB- vs BB+ (include-only)
+  addPairs(bbbPlus, bb);              // 7. BBB+ vs BB
+  addPairs(bbb, bb);                  // 8. BBB vs BB
+  addPairs(bbbMinus, bb);             // 9. BBB- vs BB
+  addPairs(bbPlusPool, bb);           // 10. BB+ (include-only) vs BB
+  // 11. BB- (include-only) vs everything except BBB+
+  var rule11Pool = bbb.concat(bbbMinus).concat(bbPlusPool).concat(bb).concat(nr);
+  addPairs(bbMinusPool, rule11Pool);
+  addPairs(nr, nr);                   // 12. Non-Rated vs Non-Rated
+
+  Logger.log('generateCrossRatingPairs_: ' + pairs.length + ' cross-rating pairs');
+  return pairs;
+}
+
 // 2. CREDIT PAIR GENERATION (interactive version)
 function generateCreditPairs() {
   var ss = SpreadsheetApp.getActive();
@@ -1039,19 +1116,26 @@ function generateCreditPairs() {
   }
 
   var groups = {};
+  var nonRated = [];
   for (var i = 1; i < data.length; i++) {
     var ticker = String(data[i][0]).trim();
     var coupon = data[i][2]; var curYield = data[i][3]; var rating = String(data[i][4]).trim();
-    if (!ticker || !rating) continue;
+    if (!ticker) continue;
     if (coupon === "" || coupon === null || coupon === undefined) continue;
     if (curYield === "" || curYield === null || curYield === undefined) continue;
     var upper = ticker.toUpperCase();
     if (!companyOf[upper]) companyOf[upper] = upper.replace(/-.*/, '');
-    if (!groups[rating]) groups[rating] = [];
-    groups[rating].push(ticker);
+    if (rating) {
+      if (!groups[rating]) groups[rating] = [];
+      groups[rating].push(ticker);
+    } else {
+      nonRated.push(ticker);
+    }
   }
 
+  // Same-rating pairs
   var allPairs = [];
+  var seen = {};
   for (var rating in groups) {
     var tickers = groups[rating];
     if (tickers.length < 2) continue;
@@ -1063,10 +1147,16 @@ function generateCreditPairs() {
         var coA = companyOf[tA.toUpperCase()] || tA.toUpperCase().replace(/-.*/, '');
         var coB = companyOf[tB.toUpperCase()] || tB.toUpperCase().replace(/-.*/, '');
         if (coA === coB) continue;
-        allPairs.push([tA + "|" + tB, tA, tB, "CreditArb:" + rating]);
+        var key = tA + "|" + tB;
+        seen[key] = true;
+        allPairs.push([key, tA, tB, "CreditArb:" + rating]);
       }
     }
   }
+
+  // Cross-rating pairs (OTHER sector)
+  var crossPairs = generateCrossRatingPairs_(groups, nonRated, companyOf, intraPairs, seen);
+  allPairs = allPairs.concat(crossPairs);
 
   var cpSheet = getOrCreateSheet_(ss, 'CreditPairs');
   cpSheet.getRange(1, 1, 1, 4).setValues([['PairID', 'TickerA', 'TickerB', 'Sector']]);
@@ -1075,7 +1165,7 @@ function generateCreditPairs() {
 
   var summary = [];
   var ratingCounts = {};
-  allPairs.forEach(function(p) { var r = p[3].replace('CreditArb:', ''); ratingCounts[r] = (ratingCounts[r] || 0) + 1; });
+  allPairs.forEach(function(p) { var r = p[3]; ratingCounts[r] = (ratingCounts[r] || 0) + 1; });
   for (var r in ratingCounts) summary.push(r + ': ' + ratingCounts[r]);
   showMsg_('Generated ' + allPairs.length + ' credit arb pairs.\n\nBreakdown:\n' + summary.join('\n') + '\n\nNext: run setupCreditSheets().');
 }
@@ -1189,7 +1279,7 @@ function snapshotZScores() {
         var spread = parseFloat(row[5]) || 0;
         var cid = cleanId_(String(pairId));
         logRows.push([now, String(pairId), zScore, spread]);
-        var isActive = Math.abs(zScore) >= 1.5;
+        var isActive = Math.abs(zScore) >= 1.8;
         var existing = ageMap[cid];
         if (isActive && !existing) {
           ageUpdates.push({ action: 'add', pairId: String(pairId), cleanId: cid, source: sheets[s].source });
@@ -1249,19 +1339,26 @@ function dailyCreditRefresh() {
     }
 
     var groups = {};
+    var nonRated = [];
     for (var i = 1; i < data.length; i++) {
       var ticker = String(data[i][0]).trim();
       var coupon = data[i][2]; var curYield = data[i][3]; var rating = String(data[i][4]).trim();
-      if (!ticker || !rating) continue;
+      if (!ticker) continue;
       if (coupon === "" || coupon === null || coupon === undefined) continue;
       if (curYield === "" || curYield === null || curYield === undefined) continue;
       var upper = ticker.toUpperCase();
       if (!companyOf[upper]) companyOf[upper] = upper.replace(/-.*/, '');
-      if (!groups[rating]) groups[rating] = [];
-      groups[rating].push(ticker);
+      if (rating) {
+        if (!groups[rating]) groups[rating] = [];
+        groups[rating].push(ticker);
+      } else {
+        nonRated.push(ticker);
+      }
     }
 
+    // Same-rating pairs
     var allPairs = [];
+    var seen = {};
     for (var rating in groups) {
       var tickers = groups[rating];
       if (tickers.length < 2) continue;
@@ -1273,10 +1370,16 @@ function dailyCreditRefresh() {
           var coA = companyOf[tA.toUpperCase()] || tA.toUpperCase().replace(/-.*/, '');
           var coB = companyOf[tB.toUpperCase()] || tB.toUpperCase().replace(/-.*/, '');
           if (coA === coB) continue;
-          allPairs.push([tA + "|" + tB, tA, tB, "CreditArb:" + rating]);
+          var key = tA + "|" + tB;
+          seen[key] = true;
+          allPairs.push([key, tA, tB, "CreditArb:" + rating]);
         }
       }
     }
+
+    // Cross-rating pairs (OTHER sector)
+    var crossPairs = generateCrossRatingPairs_(groups, nonRated, companyOf, intraPairs, seen);
+    allPairs = allPairs.concat(crossPairs);
 
     var cpSheet = getOrCreateSheet_(ss, 'CreditPairs');
     cpSheet.getRange(1, 1, 1, 4).setValues([['PairID', 'TickerA', 'TickerB', 'Sector']]);

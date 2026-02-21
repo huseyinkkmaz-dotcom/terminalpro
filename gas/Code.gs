@@ -318,8 +318,8 @@ function getAlertData(mode) {
           couponB === "" || couponB === null || couponB === undefined) { _diag.noCoupon++; continue; }
       var currentZ = parseFloat(row[12]) || 0;
 
-      // FILTER: |z| >= 1.5
-      if (Math.abs(currentZ) < 1.5) { _diag.lowZ++; continue; }
+      // FILTER: |z| >= 1.8
+      if (Math.abs(currentZ) < 1.8) { _diag.lowZ++; continue; }
       _diag.passed++;
       var info = parseTickerInfo(rawId);
       var cid = cleanId(rawId);
