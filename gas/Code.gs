@@ -727,8 +727,8 @@ function getMacroValuationData() {
     var data = sheet.getDataRange().getValues();
     var bmKeys = ['US2Y', 'US5Y', 'US7Y', 'US10Y', 'US30Y'];
 
-    // First pass: collect data and sector z-scores
-    var sectorZMap = {};
+    // First pass: collect data and credit rating z-scores
+    var creditZMap = {};
     var results = [];
 
     for (var i = 1; i < data.length; i++) {
@@ -764,32 +764,32 @@ function getMacroValuationData() {
         };
       }
 
-      // Track sector averages
-      if (item.sector && item.avgZ !== 0) {
-        if (!sectorZMap[item.sector]) sectorZMap[item.sector] = [];
-        sectorZMap[item.sector].push(item.avgZ);
+      // Track credit rating averages
+      if (item.credit && item.avgZ !== 0) {
+        if (!creditZMap[item.credit]) creditZMap[item.credit] = [];
+        creditZMap[item.credit].push(item.avgZ);
       }
 
       results.push(item);
     }
 
-    // Compute sector averages
-    var sectorAvg = {};
-    for (var sec in sectorZMap) {
-      var arr = sectorZMap[sec];
+    // Compute credit rating averages
+    var creditAvg = {};
+    for (var cr in creditZMap) {
+      var arr = creditZMap[cr];
       var sum = 0;
       for (var j = 0; j < arr.length; j++) sum += arr[j];
-      sectorAvg[sec] = parseFloat((sum / arr.length).toFixed(2));
+      creditAvg[cr] = parseFloat((sum / arr.length).toFixed(2));
     }
 
-    // Attach sector avg to each item
+    // Attach credit avg to each item
     for (var i = 0; i < results.length; i++) {
-      results[i].sectorAvgZ = sectorAvg[results[i].sector] || 0;
+      results[i].creditAvgZ = creditAvg[results[i].credit] || 0;
     }
 
-    return { status: 'ok', data: results, sectorAvg: sectorAvg };
+    return { status: 'ok', data: results, creditAvg: creditAvg };
   } catch (e) {
     console.error('getMacroValuationData error: ' + e);
-    return { status: 'error', data: [], sectorAvg: {} };
+    return { status: 'error', data: [], creditAvg: {} };
   }
 }

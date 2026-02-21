@@ -315,8 +315,8 @@ function zHeatColor(z){if(z>=2.5)return'rgba(16,185,129,0.35)';if(z>=1.5)return'
 function zTextColor(z){if(z>=2.5)return'var(--low)';if(z>=1.5)return'var(--low)';if(z<=-2.5)return'var(--high)';if(z<=-1.5)return'var(--high)';return'var(--subtext)';}
 function signalStyle(sig){if(sig==='EXTREMELY CHEAP')return{c:'var(--low)',bg:'rgba(16,185,129,0.1)',b:'var(--low)'};if(sig==='CHEAP')return{c:'var(--low)',bg:'transparent',b:'var(--low)'};if(sig==='EXPENSIVE')return{c:'var(--high)',bg:'transparent',b:'var(--high)'};if(sig==='EXTREMELY EXPENSIVE')return{c:'var(--high)',bg:'rgba(239,68,68,0.1)',b:'var(--high)'};return{c:'var(--subtext)',bg:'transparent',b:'var(--border)'};}
 async function tabMacro(el){document.querySelectorAll('.tab-content').forEach(function(x){x.classList.remove('active');});document.querySelectorAll('.nav-item').forEach(function(x){x.classList.remove('active');});document.getElementById('macroVal').classList.add('active');el.classList.add('active');await loadMacroValuation();}
-async function loadMacroValuation(){try{setConnStatus('loading');var data=await apiGet('getMacroValuation');if(data&&data.ok&&data.macroValData){macroData=data.macroValData.data||[];renderMacroTable(macroData,data.macroValData.sectorAvg||{});setConnStatus('ok');}else{setConnStatus('err');document.getElementById('macroBody').innerHTML='<tr><td colspan="11" class="macro-empty">No macro valuation data. Run <b>dailyMacroRefresh()</b> in Apps Script.</td></tr>';}}catch(e){setConnStatus('err');document.getElementById('macroBody').innerHTML='<tr><td colspan="11" class="macro-empty">Error loading data: '+e.message+'</td></tr>';}}
-function renderMacroTable(items,sectorAvg){
+async function loadMacroValuation(){try{setConnStatus('loading');var data=await apiGet('getMacroValuation');if(data&&data.ok&&data.macroValData){macroData=data.macroValData.data||[];renderMacroTable(macroData,data.macroValData.creditAvg||{});setConnStatus('ok');}else{setConnStatus('err');document.getElementById('macroBody').innerHTML='<tr><td colspan="11" class="macro-empty">No macro valuation data. Run <b>dailyMacroRefresh()</b> in Apps Script.</td></tr>';}}catch(e){setConnStatus('err');document.getElementById('macroBody').innerHTML='<tr><td colspan="11" class="macro-empty">Error loading data: '+e.message+'</td></tr>';}}
+function renderMacroTable(items,creditAvg){
 var bmKeys=['US2Y','US5Y','US7Y','US10Y','US30Y'];
 // Summary counts
 var cheap=0,exp=0,fair=0;
@@ -365,11 +365,10 @@ h+='</div>';}
 h+='</div>';
 h+='<div class="macro-extra">';
 h+='<div class="macro-extra-item"><div class="me-label">Yield Pickup vs 10Y</div><div class="me-val" style="color:var(--low)">'+(r.benchmarks.US10Y?r.benchmarks.US10Y.spread:0)+' bps</div></div>';
-h+='<div class="macro-extra-item"><div class="me-label">Best Benchmark</div><div class="me-val" style="color:var(--accent)">'+r.bestBM+'</div></div>';
 h+='<div class="macro-extra-item"><div class="me-label">Coupon</div><div class="me-val">'+r.coupon.toFixed(2)+'%</div></div>';
 h+='<div class="macro-extra-item"><div class="me-label">Price</div><div class="me-val">$'+r.curPrice.toFixed(2)+'</div></div>';
-var saZ=(sectorAvg||{})[r.sector]||0;
-h+='<div class="macro-extra-item"><div class="me-label">Sector Avg Z</div><div class="me-val" style="color:'+zTextColor(saZ)+'">'+saZ.toFixed(2)+'&sigma;</div></div>';
+var caZ=(creditAvg||{})[r.credit]||0;
+h+='<div class="macro-extra-item"><div class="me-label">Credit Rating Avg Z</div><div class="me-val" style="color:'+zTextColor(caZ)+'">'+caZ.toFixed(2)+'&sigma;</div></div>';
 h+='</div>';
 h+='</td></tr>';
 });

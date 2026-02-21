@@ -1523,6 +1523,8 @@ function fetchTreasuryHistory() {
       rows.push(row);
     }
     sheet.getRange(2, 1, rows.length, headers.length).setValues(rows);
+    // Force date column to plain text so Sheets doesn't auto-convert to Date objects
+    sheet.getRange(2, 1, rows.length, 1).setNumberFormat('@');
   }
 
   Logger.log('fetchTreasuryHistory: Done. ' + dates.length + ' dates written.');
@@ -1628,7 +1630,14 @@ function computeMacroValuationsBatch() {
   var treasuryByDate = {};
   var treasuryDates = [];
   for (var i = 1; i < treasuryData.length; i++) {
-    var dateStr = String(treasuryData[i][0]).trim();
+    var rawDate = treasuryData[i][0];
+    var dateStr;
+    // Google Sheets auto-converts date strings to Date objects — handle both
+    if (rawDate instanceof Date) {
+      dateStr = Utilities.formatDate(rawDate, 'GMT', 'yyyy-MM-dd');
+    } else {
+      dateStr = String(rawDate).trim();
+    }
     if (!dateStr) continue;
     var yields = [];
     for (var b = 0; b < MACRO_BENCHMARKS.length; b++) {
@@ -1718,7 +1727,8 @@ function computeMacroValuationsBatch() {
       }
 
       row[2] = curPrice;
-      row[3] = curPrice > 0 ? parseFloat(((t.coupon / curPrice) * 100).toFixed(2)) : 0;
+      // Current Yield = Coupon% × $25 par / Price  (standard preferred stock formula)
+      row[3] = curPrice > 0 ? parseFloat((t.coupon * 25 / curPrice).toFixed(4)) : 0;
 
       // Compute spread stats for each benchmark
       var allZ = [];
@@ -1731,7 +1741,7 @@ function computeMacroValuationsBatch() {
           var price = priceByDate[dateStr];
           var tYield = treasuryByDate[dateStr] ? treasuryByDate[dateStr][b] : 0;
           if (price && price > 0 && tYield > 0) {
-            var prefYield = (t.coupon / price) * 100;
+            var prefYield = t.coupon * 25 / price;  // Coupon% × $25 par / Price
             var spread = (prefYield - tYield) * 100; // bps
             spreads.push(spread);
           }
