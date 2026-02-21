@@ -787,7 +787,22 @@ function getMacroValuationData() {
       results[i].creditAvgZ = creditAvg[results[i].credit] || 0;
     }
 
-    return { status: 'ok', data: results, creditAvg: creditAvg };
+    // Read latest treasury yields from TreasuryHist for the banner
+    var treasuryYields = {};
+    try {
+      var thSheet = ss.getSheetByName('TreasuryHist');
+      if (thSheet && thSheet.getLastRow() > 1) {
+        var thHeaders = thSheet.getRange(1, 1, 1, thSheet.getLastColumn()).getValues()[0];
+        var lastRow = thSheet.getRange(thSheet.getLastRow(), 1, 1, thSheet.getLastColumn()).getValues()[0];
+        for (var c = 1; c < thHeaders.length; c++) {
+          var key = String(thHeaders[c]).trim();
+          var val = parseFloat(lastRow[c]);
+          if (key && !isNaN(val)) treasuryYields[key] = val;
+        }
+      }
+    } catch (e) { /* treasury banner is non-critical */ }
+
+    return { status: 'ok', data: results, creditAvg: creditAvg, treasuryYields: treasuryYields };
   } catch (e) {
     console.error('getMacroValuationData error: ' + e);
     return { status: 'error', data: [], creditAvg: {} };

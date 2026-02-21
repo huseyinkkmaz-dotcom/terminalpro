@@ -1580,10 +1580,16 @@ function computeMacroValuationsBatch() {
     if (!ticker) continue;
     if (coupon === '' || coupon === null || coupon === undefined) continue;
     if (isBlacklisted_(ticker)) continue;
+    // Master sheet may store coupon as decimal (0.06) or percentage (6.00).
+    // All preferred coupons are > 1%, so if value < 1 it's a decimal → multiply by 100.
+    var couponPct = parseFloat(coupon) || 0;
+    if (couponPct > 0 && couponPct < 1) couponPct = couponPct * 100;
+    var yieldPct = parseFloat(curYield) || 0;
+    if (yieldPct > 0 && yieldPct < 1) yieldPct = yieldPct * 100;
     tickers.push({
       ticker: ticker,
-      coupon: parseFloat(coupon) || 0,
-      curYield: parseFloat(curYield) || 0,
+      coupon: couponPct,
+      curYield: yieldPct,
       credit: credit,
       sector: ''
     });
