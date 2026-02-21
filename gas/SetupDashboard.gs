@@ -1531,20 +1531,26 @@ function fetchTreasuryHistory() {
 /**
  * Daily orchestrator — called by trigger at 7 AM.
  * Step 1: Refresh treasury yields from FRED.
- * Step 2: Start batched macro computation for all preferreds.
+ * Step 2: Schedule batched computation as a SEPARATE execution (avoids timeout).
  */
 function dailyMacroRefresh() {
   try {
-    Logger.log('dailyMacroRefresh: Starting...');
+    Logger.log('dailyMacroRefresh: Starting treasury fetch...');
     fetchTreasuryHistory();
-    computeMacroValuationsBatch();
+    Logger.log('dailyMacroRefresh: Treasury fetch complete. Scheduling computation in 1 min...');
+    // Schedule computation as a separate execution to avoid sharing the 6-min limit
+    cleanupMacroBatchTriggers_();
+    ScriptApp.newTrigger('computeMacroValuationsBatch')
+      .timeBased()
+      .after(60000)
+      .create();
   } catch (e) {
     Logger.log('dailyMacroRefresh ERROR: ' + e.toString());
   }
 }
 
 /**
- * Batched macro valuation computation. Processes 40 tickers per iteration.
+ * Batched macro valuation computation. Processes 20 tickers per iteration.
  * Uses PropertiesService to save/resume progress across GAS time limits.
  * When more tickers remain + time runs out, schedules a 1-min continuation trigger.
  */
@@ -1647,7 +1653,7 @@ function computeMacroValuationsBatch() {
     }
   }
 
-  var BATCH_SIZE = 40;
+  var BATCH_SIZE = 20;
   var now = new Date();
   var nowSec = Math.floor(now.getTime() / 1000);
   var histStartSec = nowSec - 150 * 86400;
