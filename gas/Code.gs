@@ -232,11 +232,11 @@ function getAlertData(mode) {
       }
     }
     // Load ZScoreAge for age column (Task 1)
+    var now = new Date();
     var ageMap = {};
     var ageSheet = ss.getSheetByName('ZScoreAge');
     if (ageSheet) {
       var ageData = ageSheet.getDataRange().getValues();
-      var now = new Date();
       for (var a = 1; a < ageData.length; a++) {
         var aid = cleanId(String(ageData[a][0]));
         var ts = ageData[a][1];
@@ -344,8 +344,7 @@ function getAlertData(mode) {
       var avgLiq = parseFloat(row[19]) || 0;
       var curVol = parseFloat(row[22]) || 0;
       var volSpike = (row[23] === true || row[23] === "TRUE");
-      // DIV DATES — send both legs' ex-dividend dates
-      var now = new Date();
+      // DIV DATES — send both legs' ex-dividend dates (uses 'now' from line ~239)
       var divA = divMap[tickerA] || null;
       var divB = divMap[tickerB] || null;
       output.push({
