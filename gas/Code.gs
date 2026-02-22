@@ -229,10 +229,14 @@ function getAlertData(mode) {
     var data = liveSheet.getDataRange().getValues();
     if (data.length <= 1) return [];
     // Load AlertsLog for trend ribbons — group by DATE for daily Z-trend
-    // BUG FIX: snapshotZScores runs hourly, so AlertsLog has ~24 entries per pair per day.
-    // Old code did slice(-7) on raw entries = last 7 HOURS, not days.
-    // Fix: group by date, keep last Z per day, then slice last 7 days.
+    // snapshotZScores runs hourly → ~24 entries per pair per day.
+    // Group by date, keep last Z per day, then take last 7 PREVIOUS days.
+    // Today is excluded because we always append the current live Z at the end.
     var logMap = {}; // {cleanId: {dateStr: lastZForThatDay}}
+    var now = new Date();
+    var tMM = now.getMonth() + 1;
+    var tDD = now.getDate();
+    var todayKey = now.getFullYear() + '-' + (tMM < 10 ? '0' : '') + tMM + '-' + (tDD < 10 ? '0' : '') + tDD;
     var logSheet = ss.getSheetByName('AlertsLog');
     if (logSheet) {
       var lastRow = logSheet.getLastRow();
@@ -245,20 +249,24 @@ function getAlertData(mode) {
           if (!lcid) continue;
           var zVal = parseFloat(logData[k][2]);
           if (isNaN(zVal)) continue;
-          // Group by date — last Z per day wins (most recent hourly snapshot)
+          // Extract YYYY-MM-DD from timestamp
           var dateKey = '';
           if (ts instanceof Date) {
             var mm = ts.getMonth() + 1;
             var dd = ts.getDate();
             dateKey = ts.getFullYear() + '-' + (mm < 10 ? '0' : '') + mm + '-' + (dd < 10 ? '0' : '') + dd;
+          } else if (typeof ts === 'string' && ts.length >= 10) {
+            // Fallback: parse "YYYY-MM-DD..." string timestamps
+            dateKey = ts.substring(0, 10);
           }
+          if (!dateKey) continue; // skip entries without valid timestamps
+          if (dateKey === todayKey) continue; // exclude today — live Z appended later
           if (!logMap[lcid]) logMap[lcid] = {};
-          logMap[lcid][dateKey] = zVal;
+          logMap[lcid][dateKey] = zVal; // last snapshot per day wins
         }
       }
     }
     // Load ZScoreAge for age column (Task 1)
-    var now = new Date();
     var ageMap = {};
     var ageSheet = ss.getSheetByName('ZScoreAge');
     if (ageSheet) {
