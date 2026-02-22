@@ -21,8 +21,8 @@
  *   1 = Intra Live sheet
  *   2 = Supporting sheets (OpenTrades, ClosedTrades, AlertsLog, ZScoreAge)
  *   3 = Generate credit pairs
- *   4 = Credit Levels (headers + stats + historical formulas)
- *   5 = Credit Live sheet
+ *   4 = TickerData + TickerHistory (GOOGLEFINANCE per ticker, not per pair)
+ *   5 = Initial credit cache computation (computeCreditCache)
  *   6 = Install hourly/daily triggers
  *   7 = DONE
  *
@@ -161,64 +161,37 @@ function setupAllBatched() {
       if (isTimeUp_(startTime)) { saveState_(props, state, 'Phase 3 done. Pausing before CreditLevels.'); return; }
     }
 
-    // --- PHASE 4: Credit Levels sheet ---
+    // --- PHASE 4: Ticker-level GOOGLEFINANCE sheets ---
+    // Instead of CreditLevels (1 GOOGLEFINANCE per pair = 30K+ calls), we build:
+    //   TickerData: ~200 tickers × 3 formulas = ~600 calls (live price, volumeavg, volume)
+    //   TickerHistory: ~200 tickers × 1 formula = ~200 calls (90-day historical prices)
+    // Then computeCreditCache() computes all pair stats from these ticker sheets.
     if (state.phase === 4) {
-      Logger.log('Phase 4: Building CreditLevels sheet...');
-      var cpSheet = ss.getSheetByName('CreditPairs');
-      if (!cpSheet || cpSheet.getLastRow() < 2) {
-        Logger.log('WARNING: CreditPairs empty. Skipping.');
-        state.phase = 6;
-      } else {
-        var pairs = cpSheet.getDataRange().getValues();
-        var numPairs = pairs.length - 1;
+      Logger.log('Phase 4: Building TickerData + TickerHistory sheets...');
+      var tickers = buildTickerDataSheet_(ss);
+      buildTickerHistorySheet_(ss, tickers);
+      SpreadsheetApp.flush();
+      Logger.log('Phase 4 complete: ' + tickers.length + ' tickers in TickerData + TickerHistory.');
 
-        var cLevels = getOrCreateSheet_(ss, 'CreditLevels');
-        cLevels.getRange(1, 1, 1, 7).setValues([['PairID', 'Mean', 'StDev', 'Lower_5', 'Upper_95', 'HistCount', 'Historical Spread Data →']]);
-        cLevels.getRange(1, 1, 1, 7).setFontWeight('bold').setBackground('#2d1a2e').setFontColor('#ffffff');
-
-        // Stats formulas — batch
-        var statsF = [];
-        for (var i = 0; i < numPairs; i++) {
-          var r = i + 2;
-          statsF.push([
-            '=CreditPairs!A' + (i + 2),
-            '=IFERROR(AVERAGE(G' + r + ':' + r + '), 0)',
-            '=IFERROR(STDEV(G' + r + ':' + r + '), 0.001)',
-            '=IFERROR(PERCENTILE(G' + r + ':' + r + ', 0.05), 0)',
-            '=IFERROR(PERCENTILE(G' + r + ':' + r + ', 0.95), 0)',
-            '=COUNTA(G' + r + ':' + r + ')'
-          ]);
-        }
-        cLevels.getRange(2, 1, statsF.length, 6).setFormulas(statsF);
-        SpreadsheetApp.flush();
-
-        // Historical spread formulas — BATCH
-        var histF = [];
-        for (var i = 0; i < numPairs; i++) {
-          var tA = String(pairs[i + 1][1]).trim();
-          var tB = String(pairs[i + 1][2]).trim();
-          if (!tA || !tB) { histF.push(['']); continue; }
-          histF.push([
-            '=IFERROR(TRANSPOSE(ARRAYFORMULA(QUERY(GOOGLEFINANCE("' + tA + '","price",TODAY()-120,TODAY()),"select Col2 offset 1",0)-QUERY(GOOGLEFINANCE("' + tB + '","price",TODAY()-120,TODAY()),"select Col2 offset 1",0))),)'
-          ]);
-        }
-        cLevels.getRange(2, 7, histF.length, 1).setFormulas(histF);
-        SpreadsheetApp.flush();
-        cLevels.setFrozenRows(1);
-        Logger.log('Phase 4 complete: ' + numPairs + ' credit Levels rows written (batched).');
-        state.phase = 5;
-      }
-      if (isTimeUp_(startTime)) { saveState_(props, state, 'Phase 4 done. Pausing before CreditLive.'); return; }
+      state.phase = 5;
+      if (isTimeUp_(startTime)) { saveState_(props, state, 'Phase 4 done. Pausing before credit cache.'); return; }
     }
 
-    // --- PHASE 5: Credit Live sheet ---
+    // --- PHASE 5: Initial credit cache computation ---
+    // TickerData/TickerHistory GOOGLEFINANCE formulas may not have resolved yet.
+    // computeCreditCache() will skip if no valid prices found.
+    // The 10-minute updateLivePrices trigger will retry automatically.
     if (state.phase === 5) {
-      Logger.log('Phase 5: Building CreditLive sheet...');
-      var cpSheet = ss.getSheetByName('CreditPairs');
-      var pairs = cpSheet.getDataRange().getValues();
-      var numPairs = pairs.length - 1;
-      buildLiveSheet_(ss, 'CreditLive', 'CreditPairs', 'CreditLevels', numPairs, pairs);
-      Logger.log('Phase 5 complete: CreditLive built with ' + numPairs + ' rows.');
+      Logger.log('Phase 5: Computing initial credit cache from ticker data...');
+      Utilities.sleep(5000); // Brief pause for GOOGLEFINANCE formulas to start loading
+      SpreadsheetApp.flush();
+      try {
+        computeCreditCache();
+      } catch (ccErr) {
+        Logger.log('Phase 5: Initial credit cache failed (GOOGLEFINANCE still loading): ' + ccErr.toString());
+        Logger.log('updateLivePrices trigger will compute it on the next 10-minute cycle.');
+      }
+      Logger.log('Phase 5 complete.');
 
       state.phase = 6;
       if (isTimeUp_(startTime)) { saveState_(props, state, 'Phase 5 done. Pausing before triggers.'); return; }
@@ -783,7 +756,7 @@ function projectNextDivDate_(divDate, today) {
 
 /**
  * Light update function. Runs every 10 minutes via trigger.
- * Reads computed GOOGLEFINANCE values from Live/CreditLive sheets
+ * Reads computed GOOGLEFINANCE values from Live sheet (intra)
  * and writes them as static values to WebCache/WebCacheCredit.
  * This decouples the API from GOOGLEFINANCE recalculation timing.
  * Target execution: <30 seconds.
@@ -793,68 +766,45 @@ function updateLivePrices() {
     var ss = SpreadsheetApp.getActive();
     var updated = 0;
 
-    var sources = [
-      { from: 'Live', to: 'WebCache' },
-      { from: 'CreditLive', to: 'WebCacheCredit' }
-    ];
-
-    for (var i = 0; i < sources.length; i++) {
-      var src = ss.getSheetByName(sources[i].from);
-      if (!src || src.getLastRow() <= 1) {
-        Logger.log('updateLivePrices: ' + sources[i].from + ' not found or empty, skipping.');
-        continue;
-      }
-
-      // Read all computed values (GOOGLEFINANCE formulas → resolved values)
+    // --- INTRA-COMPANY: snapshot Live → WebCache (unchanged, small dataset) ---
+    var src = ss.getSheetByName('Live');
+    if (src && src.getLastRow() > 1) {
       var data = src.getDataRange().getValues();
-      if (data.length <= 1) continue;
-
-      // Sanity check: at least some rows should have non-zero prices (col D = index 3)
-      // If GOOGLEFINANCE hasn't populated yet, don't overwrite existing WebCache
-      var validPrices = 0;
-      for (var r = 1; r < data.length && r < 20; r++) {
-        if (parseFloat(data[r][3]) > 0) validPrices++;
-      }
-      if (validPrices === 0) {
-        Logger.log('updateLivePrices: ' + sources[i].from + ' has no valid prices (GOOGLEFINANCE still loading?). Keeping existing cache.');
-        continue;
-      }
-
-      // Get or create target cache sheet
-      var cache = ss.getSheetByName(sources[i].to);
-      if (!cache) {
-        cache = ss.insertSheet(sources[i].to);
-      } else {
-        cache.clear();
-      }
-
-      // Write headers
-      cache.getRange(1, 1, 1, data[0].length).setValues([data[0]]);
-      cache.getRange(1, 1, 1, data[0].length).setFontWeight('bold');
-      SpreadsheetApp.flush();
-
-      // Write data rows in chunks of 500
-      var rows = data.slice(1);
-      if (rows.length === 0) continue;
-
-      var CHUNK = 500;
-      for (var c = 0; c < rows.length; c += CHUNK) {
-        var chunk = rows.slice(c, Math.min(c + CHUNK, rows.length));
-        try {
-          cache.getRange(c + 2, 1, chunk.length, data[0].length).setValues(chunk);
+      if (data.length > 1) {
+        // Sanity check: at least some rows should have non-zero prices
+        var validPrices = 0;
+        for (var r = 1; r < data.length && r < 20; r++) {
+          if (parseFloat(data[r][3]) > 0) validPrices++;
+        }
+        if (validPrices > 0) {
+          var cache = ss.getSheetByName('WebCache');
+          if (!cache) { cache = ss.insertSheet('WebCache'); } else { cache.clear(); }
+          cache.getRange(1, 1, 1, data[0].length).setValues([data[0]]);
+          cache.getRange(1, 1, 1, data[0].length).setFontWeight('bold');
+          var rows = data.slice(1);
+          var CHUNK = 500;
+          for (var c = 0; c < rows.length; c += CHUNK) {
+            var chunk = rows.slice(c, Math.min(c + CHUNK, rows.length));
+            cache.getRange(c + 2, 1, chunk.length, data[0].length).setValues(chunk);
+          }
           SpreadsheetApp.flush();
-        } catch (writeErr) {
-          Logger.log('updateLivePrices: write error at row ' + (c + 2) + ' in ' + sources[i].to + ': ' + writeErr.toString());
+          updated += rows.length;
+          Logger.log('updateLivePrices: cached ' + rows.length + ' intra rows (Live → WebCache)');
+        } else {
+          Logger.log('updateLivePrices: Live has no valid prices (GOOGLEFINANCE still loading?). Keeping existing WebCache.');
         }
       }
-
-      updated += rows.length;
-      Logger.log('updateLivePrices: cached ' + rows.length + ' rows from ' + sources[i].from + ' → ' + sources[i].to);
     }
+
+    // --- CREDIT: compute all pairs from ticker-level data → WebCacheCredit ---
+    // This replaces the old CreditLive → WebCacheCredit snapshot.
+    // computeCreditCache reads TickerData + TickerHistory (GOOGLEFINANCE per ticker)
+    // and computes ALL credit pair stats in GAS memory. No per-pair GOOGLEFINANCE needed.
+    computeCreditCache();
 
     // Store timestamp for diagnostics
     PropertiesService.getScriptProperties().setProperty('WEBCACHE_UPDATED', new Date().toISOString());
-    Logger.log('updateLivePrices: complete. ' + updated + ' total rows cached.');
+    Logger.log('updateLivePrices: complete.');
 
   } catch (e) {
     Logger.log('updateLivePrices ERROR: ' + e.toString());
@@ -939,12 +889,8 @@ function generateCreditPairsBatched_(ss) {
   var crossPairs = generateCrossRatingPairs_(groups, nonRated, companyOf, intraPairs, seen);
   allPairs = allPairs.concat(crossPairs);
 
-  // Cap total credit pairs to stay within GOOGLEFINANCE limits (~6 calls per pair in Live)
-  var MAX_TOTAL_CREDIT_PAIRS = 2000;
-  if (allPairs.length > MAX_TOTAL_CREDIT_PAIRS) {
-    Logger.log('CreditPairs capped from ' + allPairs.length + ' to ' + MAX_TOTAL_CREDIT_PAIRS);
-    allPairs = allPairs.slice(0, MAX_TOTAL_CREDIT_PAIRS);
-  }
+  // No pair cap needed — computeCreditCache() handles all pairs via ticker-level GOOGLEFINANCE
+  // (stats computed in GAS memory, not via per-pair sheet formulas)
 
   // Write to CreditPairs sheet
   var cpSheet = getOrCreateSheet_(ss, 'CreditPairs');
@@ -1069,14 +1015,10 @@ function generateCrossRatingPairs_(groups, nonRated, companyOf, intraPairs, seen
   for (var k in incBBm) { if (allValid[k]) bbMinusPool.push(allValid[k]); }
   var nr = nonRated || [];
 
-  var MAX_CROSS_PAIRS = 300;
   var pairs = [];
-  var capHit = false;
   var addPairs = function(poolA, poolB) {
-    if (capHit) return;
     for (var a = 0; a < poolA.length; a++) {
       for (var b = 0; b < poolB.length; b++) {
-        if (pairs.length >= MAX_CROSS_PAIRS) { capHit = true; return; }
         var tA = poolA[a], tB = poolB[b];
         if (tA.toUpperCase() === tB.toUpperCase()) continue;
         if (intraPairs[cleanId_(tA) + '_' + cleanId_(tB)]) continue;
@@ -1182,13 +1124,6 @@ function generateCreditPairs() {
   var crossPairs = generateCrossRatingPairs_(groups, nonRated, companyOf, intraPairs, seen);
   allPairs = allPairs.concat(crossPairs);
 
-  // Cap total credit pairs to stay within GOOGLEFINANCE limits
-  var MAX_TOTAL_CREDIT_PAIRS = 2000;
-  if (allPairs.length > MAX_TOTAL_CREDIT_PAIRS) {
-    Logger.log('CreditPairs capped from ' + allPairs.length + ' to ' + MAX_TOTAL_CREDIT_PAIRS);
-    allPairs = allPairs.slice(0, MAX_TOTAL_CREDIT_PAIRS);
-  }
-
   var cpSheet = getOrCreateSheet_(ss, 'CreditPairs');
   cpSheet.getRange(1, 1, 1, 4).setValues([['PairID', 'TickerA', 'TickerB', 'Sector']]);
   cpSheet.getRange(1, 1, 1, 4).setFontWeight('bold').setBackground('#2d1a2e').setFontColor('#ffffff');
@@ -1201,48 +1136,25 @@ function generateCreditPairs() {
   showMsg_('Generated ' + allPairs.length + ' credit arb pairs.\n\nBreakdown:\n' + summary.join('\n') + '\n\nNext: run setupCreditSheets().');
 }
 
-// 3. CREDIT SHEETS SETUP
+// 3. CREDIT SHEETS SETUP (now uses ticker-level approach)
 function setupCreditSheets() {
   var ss = SpreadsheetApp.getActive();
   var cpSheet = ss.getSheetByName('CreditPairs');
   if (!cpSheet) { showMsg_('ERROR: "CreditPairs" sheet not found. Run generateCreditPairs() first.'); return; }
-  var pairs = cpSheet.getDataRange().getValues();
-  var numPairs = pairs.length - 1;
+  var numPairs = cpSheet.getLastRow() - 1;
   if (numPairs < 1) { showMsg_('ERROR: CreditPairs is empty.'); return; }
 
-  var cLevels = getOrCreateSheet_(ss, 'CreditLevels');
-  cLevels.getRange(1, 1, 1, 7).setValues([['PairID', 'Mean', 'StDev', 'Lower_5', 'Upper_95', 'HistCount', 'Historical Spread Data →']]);
-  cLevels.getRange(1, 1, 1, 7).setFontWeight('bold').setBackground('#2d1a2e').setFontColor('#ffffff');
-  var statsF = [];
-  for (var i = 0; i < numPairs; i++) {
-    var r = i + 2;
-    statsF.push([
-      '=CreditPairs!A' + (i + 2),
-      '=IFERROR(AVERAGE(G' + r + ':' + r + '), 0)',
-      '=IFERROR(STDEV(G' + r + ':' + r + '), 0.001)',
-      '=IFERROR(PERCENTILE(G' + r + ':' + r + ', 0.05), 0)',
-      '=IFERROR(PERCENTILE(G' + r + ':' + r + ', 0.95), 0)',
-      '=COUNTA(G' + r + ':' + r + ')'
-    ]);
-  }
-  cLevels.getRange(2, 1, statsF.length, 6).setFormulas(statsF);
-
-  // Historical formulas — BATCH
-  var histF = [];
-  for (var i = 0; i < numPairs; i++) {
-    var tA = String(pairs[i + 1][1]).trim();
-    var tB = String(pairs[i + 1][2]).trim();
-    if (!tA || !tB) { histF.push(['']); continue; }
-    histF.push([
-      '=IFERROR(TRANSPOSE(ARRAYFORMULA(QUERY(GOOGLEFINANCE("' + tA + '","price",TODAY()-120,TODAY()),"select Col2 offset 1",0)-QUERY(GOOGLEFINANCE("' + tB + '","price",TODAY()-120,TODAY()),"select Col2 offset 1",0))),)'
-    ]);
-  }
-  cLevels.getRange(2, 7, histF.length, 1).setFormulas(histF);
-  cLevels.setFrozenRows(1);
-
-  buildLiveSheet_(ss, 'CreditLive', 'CreditPairs', 'CreditLevels', numPairs, pairs);
+  // Build ticker-level sheets (GOOGLEFINANCE per unique ticker, not per pair)
+  var tickers = buildTickerDataSheet_(ss);
+  buildTickerHistorySheet_(ss, tickers);
   SpreadsheetApp.flush();
-  showMsg_('Credit sheets built!\n\n• CreditLevels: ' + numPairs + ' pairs\n• CreditLive: ' + numPairs + ' pairs\n\nGOOGLEFINANCE may take 30-60s to populate.');
+
+  // Wait for GOOGLEFINANCE to start loading, then compute credit cache
+  Utilities.sleep(5000);
+  SpreadsheetApp.flush();
+  computeCreditCache();
+
+  showMsg_('Credit sheets built!\n\n• CreditPairs: ' + numPairs + ' pairs\n• TickerData: ' + tickers.length + ' tickers\n• TickerHistory: ' + tickers.length + ' tickers\n• WebCacheCredit: computed from ticker data\n\nAll pair stats computed in GAS — no per-pair GOOGLEFINANCE formulas needed.');
 }
 
 // 4. TRIGGERS
@@ -1268,7 +1180,7 @@ function snapshotZScores() {
     var now = new Date();
     var sheets = [
       { name: 'Live', source: 'intra' },
-      { name: 'CreditLive', source: 'credit' }
+      { name: 'WebCacheCredit', source: 'credit' }
     ];
     var logSheet = ss.getSheetByName('AlertsLog');
     var ageSheet = ss.getSheetByName('ZScoreAge');
@@ -1416,51 +1328,24 @@ function dailyCreditRefresh() {
     var crossPairs = generateCrossRatingPairs_(groups, nonRated, companyOf, intraPairs, seen);
     allPairs = allPairs.concat(crossPairs);
 
-    // Cap total credit pairs to stay within GOOGLEFINANCE limits
-    var MAX_TOTAL_CREDIT_PAIRS = 2000;
-    if (allPairs.length > MAX_TOTAL_CREDIT_PAIRS) {
-      Logger.log('dailyCreditRefresh: capped from ' + allPairs.length + ' to ' + MAX_TOTAL_CREDIT_PAIRS);
-      allPairs = allPairs.slice(0, MAX_TOTAL_CREDIT_PAIRS);
-    }
-
     var cpSheet = getOrCreateSheet_(ss, 'CreditPairs');
     cpSheet.getRange(1, 1, 1, 4).setValues([['PairID', 'TickerA', 'TickerB', 'Sector']]);
     if (allPairs.length > 0) { cpSheet.getRange(2, 1, allPairs.length, 4).setValues(allPairs); }
+    Logger.log('dailyCreditRefresh: wrote ' + allPairs.length + ' pairs to CreditPairs.');
 
-    var numPairs = allPairs.length;
-    if (numPairs < 1) return;
-
-    // CreditLevels — batch writes
-    var cLevels = getOrCreateSheet_(ss, 'CreditLevels');
-    cLevels.getRange(1, 1, 1, 7).setValues([['PairID', 'Mean', 'StDev', 'Lower_5', 'Upper_95', 'HistCount', 'Historical →']]);
-    var sf = [];
-    for (var i = 0; i < numPairs; i++) {
-      var r = i + 2;
-      sf.push([
-        '=CreditPairs!A' + (i + 2),
-        '=IFERROR(AVERAGE(G' + r + ':' + r + '),0)',
-        '=IFERROR(STDEV(G' + r + ':' + r + '),0.001)',
-        '=IFERROR(PERCENTILE(G' + r + ':' + r + ',0.05),0)',
-        '=IFERROR(PERCENTILE(G' + r + ':' + r + ',0.95),0)',
-        '=COUNTA(G' + r + ':' + r + ')'
-      ]);
-    }
-    cLevels.getRange(2, 1, sf.length, 6).setFormulas(sf);
-
-    // Historical formulas — BATCH
-    var histF = [];
-    for (var i = 0; i < numPairs; i++) {
-      var tA = String(allPairs[i][1]).trim();
-      var tB = String(allPairs[i][2]).trim();
-      if (!tA || !tB) { histF.push(['']); continue; }
-      histF.push([
-        '=IFERROR(TRANSPOSE(ARRAYFORMULA(QUERY(GOOGLEFINANCE("' + tA + '","price",TODAY()-120,TODAY()),"select Col2 offset 1",0)-QUERY(GOOGLEFINANCE("' + tB + '","price",TODAY()-120,TODAY()),"select Col2 offset 1",0))),)'
-      ]);
-    }
-    cLevels.getRange(2, 7, histF.length, 1).setFormulas(histF);
-
-    buildLiveSheet_(ss, 'CreditLive', 'CreditPairs', 'CreditLevels', numPairs, [['h']].concat(allPairs));
+    // Refresh TickerData + TickerHistory (picks up any new tickers added to Master)
+    var tickers = buildTickerDataSheet_(ss);
+    buildTickerHistorySheet_(ss, tickers);
     SpreadsheetApp.flush();
+
+    // Compute credit cache immediately (pair stats from ticker-level data)
+    // Note: TickerHistory GOOGLEFINANCE may need a moment to resolve for new tickers.
+    // The 10-minute updateLivePrices trigger will recompute anyway.
+    Utilities.sleep(3000);
+    SpreadsheetApp.flush();
+    computeCreditCache();
+
+    Logger.log('dailyCreditRefresh: complete. ' + allPairs.length + ' credit pairs, ' + tickers.length + ' tickers.');
   } catch (e) {
     console.error("dailyCreditRefresh error: " + e);
   }
@@ -1525,6 +1410,286 @@ function buildLiveSheet_(ss, sheetName, pairsRef, levelsRef, numPairs, pairsData
   }
   live.setFrozenRows(1);
 }
+// ============================================================
+// TICKER-LEVEL SHEETS — GOOGLEFINANCE per ticker, not per pair
+// ============================================================
+
+/**
+ * Builds TickerData sheet: one row per unique ticker with live GOOGLEFINANCE formulas.
+ * ~200 tickers × 3 formulas = ~600 GOOGLEFINANCE calls (vs 29K × 6 = 174K in CreditLive).
+ * Returns array of ticker strings for use by buildTickerHistorySheet_.
+ */
+function buildTickerDataSheet_(ss) {
+  var master = ss.getSheetByName('Master');
+  if (!master) return [];
+  var data = master.getDataRange().getValues();
+  var tickers = [];
+  for (var i = 1; i < data.length; i++) {
+    var t = String(data[i][0]).trim();
+    var coupon = data[i][2];
+    var curYield = data[i][3];
+    if (!t) continue;
+    if (coupon === '' || coupon === null || coupon === undefined) continue;
+    if (curYield === '' || curYield === null || curYield === undefined) continue;
+    tickers.push(t);
+  }
+  if (tickers.length === 0) return [];
+
+  var sheet = getOrCreateSheet_(ss, 'TickerData');
+  var headers = ['Ticker', 'Price', 'VolAvg', 'Volume'];
+  sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+  sheet.getRange(1, 1, 1, headers.length).setFontWeight('bold').setBackground('#1a1a2e').setFontColor('#ffffff');
+
+  // Column A: static ticker names
+  var tickerValues = tickers.map(function(t) { return [t]; });
+  sheet.getRange(2, 1, tickers.length, 1).setValues(tickerValues);
+
+  // Columns B-D: GOOGLEFINANCE formulas
+  var formulas = [];
+  for (var i = 0; i < tickers.length; i++) {
+    var r = i + 2;
+    formulas.push([
+      '=IFERROR(GOOGLEFINANCE(A' + r + '),0)',
+      '=IFERROR(GOOGLEFINANCE(A' + r + ',"volumeavg"),0)',
+      '=IFERROR(GOOGLEFINANCE(A' + r + ',"volume"),0)'
+    ]);
+  }
+  sheet.getRange(2, 2, tickers.length, 3).setFormulas(formulas);
+  sheet.setFrozenRows(1);
+  Logger.log('buildTickerDataSheet_: ' + tickers.length + ' tickers (' + (tickers.length * 3) + ' GOOGLEFINANCE calls)');
+  return tickers;
+}
+
+/**
+ * Builds TickerHistory sheet: one row per unique ticker with 90-day GOOGLEFINANCE historical prices.
+ * ~200 tickers × 1 formula = ~200 GOOGLEFINANCE calls.
+ * Each formula expands horizontally into ~90 price columns.
+ */
+function buildTickerHistorySheet_(ss, tickers) {
+  if (!tickers || tickers.length === 0) return;
+
+  var sheet = getOrCreateSheet_(ss, 'TickerHistory');
+  sheet.getRange(1, 1, 1, 2).setValues([['Ticker', 'Historical Prices →']]);
+  sheet.getRange(1, 1, 1, 2).setFontWeight('bold').setBackground('#1a1a2e').setFontColor('#ffffff');
+
+  // Column A: static ticker names
+  var tickerValues = tickers.map(function(t) { return [t]; });
+  sheet.getRange(2, 1, tickers.length, 1).setValues(tickerValues);
+
+  // Column B: GOOGLEFINANCE historical (expands horizontally)
+  var histFormulas = tickers.map(function(t, i) {
+    var r = i + 2;
+    return ['=IFERROR(TRANSPOSE(QUERY(GOOGLEFINANCE(A' + r + ',"price",TODAY()-120,TODAY()),"select Col2 offset 1",0)),)'];
+  });
+  sheet.getRange(2, 2, tickers.length, 1).setFormulas(histFormulas);
+  sheet.setFrozenRows(1);
+  Logger.log('buildTickerHistorySheet_: ' + tickers.length + ' tickers (' + tickers.length + ' GOOGLEFINANCE calls)');
+}
+
+/**
+ * Computes ALL credit pair statistics from ticker-level data and writes to WebCacheCredit.
+ * This replaces the CreditLevels + CreditLive formula approach entirely.
+ *
+ * Flow:
+ *   1. Read TickerData (live prices/volumes per ticker) — ~200 rows
+ *   2. Read TickerHistory (90-day prices per ticker) — ~200 rows × ~90 cols
+ *   3. Read Master (yields, coupons per ticker) — ~200 rows
+ *   4. Read CreditPairs (all pair definitions) — up to 30K rows
+ *   5. For each pair: compute spread, mean, stdev, Z-score, percentiles, vol spike
+ *   6. Write results to WebCacheCredit (same 24-column layout)
+ *
+ * Total GOOGLEFINANCE calls: ~800 (in TickerData + TickerHistory sheets)
+ * vs old approach: 29K × 8 = 232K (in CreditLevels + CreditLive sheets)
+ */
+function computeCreditCache() {
+  try {
+    var ss = SpreadsheetApp.getActive();
+
+    // 1. Read TickerData (live prices, volumes)
+    var tdSheet = ss.getSheetByName('TickerData');
+    if (!tdSheet || tdSheet.getLastRow() <= 1) {
+      Logger.log('computeCreditCache: TickerData not found or empty. Run setup first.');
+      return;
+    }
+    var tdData = tdSheet.getDataRange().getValues();
+    var tickerMap = {}; // {TICKER: {price, volAvg, volume}}
+    for (var i = 1; i < tdData.length; i++) {
+      var t = String(tdData[i][0]).trim().toUpperCase();
+      if (!t) continue;
+      tickerMap[t] = {
+        price: Number(tdData[i][1]) || 0,
+        volAvg: Number(tdData[i][2]) || 0,
+        volume: Number(tdData[i][3]) || 0
+      };
+    }
+
+    // 2. Read TickerHistory (90-day prices per ticker)
+    var thSheet = ss.getSheetByName('TickerHistory');
+    if (!thSheet || thSheet.getLastRow() <= 1) {
+      Logger.log('computeCreditCache: TickerHistory not found or empty. Run setup first.');
+      return;
+    }
+    var thData = thSheet.getDataRange().getValues();
+    var histMap = {}; // {TICKER: [price1, price2, ...]}
+    for (var i = 1; i < thData.length; i++) {
+      var t = String(thData[i][0]).trim().toUpperCase();
+      if (!t) continue;
+      var prices = [];
+      for (var j = 1; j < thData[i].length; j++) {
+        var v = thData[i][j];
+        if (v !== '' && v !== null && v !== undefined && !isNaN(v) && Number(v) !== 0) {
+          prices.push(Number(v));
+        }
+      }
+      histMap[t] = prices;
+    }
+
+    // 3. Read Master (yields, coupons)
+    var masterSheet = ss.getSheetByName('Master');
+    if (!masterSheet) {
+      Logger.log('computeCreditCache: Master sheet not found.');
+      return;
+    }
+    var masterData = masterSheet.getDataRange().getValues();
+    var masterMap = {}; // {TICKER: {coupon, curYield}}
+    for (var i = 1; i < masterData.length; i++) {
+      var t = String(masterData[i][0]).trim().toUpperCase();
+      if (!t) continue;
+      masterMap[t] = {
+        coupon: masterData[i][2],
+        curYield: masterData[i][3]
+      };
+    }
+
+    // 4. Read CreditPairs (all pair definitions)
+    var cpSheet = ss.getSheetByName('CreditPairs');
+    if (!cpSheet || cpSheet.getLastRow() <= 1) {
+      Logger.log('computeCreditCache: CreditPairs not found or empty.');
+      return;
+    }
+    var cpData = cpSheet.getDataRange().getValues();
+    Logger.log('computeCreditCache: processing ' + (cpData.length - 1) + ' pairs...');
+
+    // 5. Compute all pairs
+    var results = [];
+    var validPrices = 0;
+    for (var i = 1; i < cpData.length; i++) {
+      var pairId = cpData[i][0];
+      var tickerA = String(cpData[i][1]).trim();
+      var tickerB = String(cpData[i][2]).trim();
+      var sector = cpData[i][3] || '';
+      if (!tickerA || !tickerB) continue;
+
+      var tA = tickerA.toUpperCase();
+      var tB = tickerB.toUpperCase();
+      var dA = tickerMap[tA] || { price: 0, volAvg: 0, volume: 0 };
+      var dB = tickerMap[tB] || { price: 0, volAvg: 0, volume: 0 };
+      var mA = masterMap[tA] || { coupon: '', curYield: '' };
+      var mB = masterMap[tB] || { coupon: '', curYield: '' };
+
+      var priceA = dA.price;
+      var priceB = dB.price;
+      if (priceA > 0 && priceB > 0) validPrices++;
+      var spread = priceA - priceB;
+
+      // Historical spread computation
+      var hA = histMap[tA] || [];
+      var hB = histMap[tB] || [];
+      var minLen = Math.min(hA.length, hB.length);
+      var spreads = [];
+      for (var k = 0; k < minLen; k++) {
+        spreads.push(hA[k] - hB[k]);
+      }
+
+      var histCount = spreads.length;
+      var mean = 0, stdev = 0.001, lower = 0, upper = 0;
+      if (histCount > 0) {
+        // Mean
+        var sum = 0;
+        for (var k = 0; k < histCount; k++) sum += spreads[k];
+        mean = sum / histCount;
+
+        // StDev (sample)
+        var sumSq = 0;
+        for (var k = 0; k < histCount; k++) sumSq += (spreads[k] - mean) * (spreads[k] - mean);
+        stdev = histCount > 1 ? Math.sqrt(sumSq / (histCount - 1)) : 0.001;
+        if (stdev < 0.001) stdev = 0.001;
+
+        // Percentiles (5th and 95th)
+        var sorted = spreads.slice().sort(function(a, b) { return a - b; });
+        var idx5 = Math.floor(histCount * 0.05);
+        var idx95 = Math.floor(histCount * 0.95);
+        lower = sorted[Math.max(0, idx5)];
+        upper = sorted[Math.min(histCount - 1, idx95)];
+      }
+
+      var zScore = (spread - mean) / stdev;
+
+      var volAvgA = dA.volAvg;
+      var volAvgB = dB.volAvg;
+      var avgLiq = (volAvgA + volAvgB) / 2;
+      var curVolA = dA.volume;
+      var curVolB = dB.volume;
+      var curVol = (curVolA + curVolB) / 2;
+      var volSpike = (avgLiq > 0 && curVol > 1.5 * avgLiq);
+
+      results.push([
+        pairId, tickerA, tickerB, priceA, priceB, spread,
+        mA.curYield !== '' ? mA.curYield : '', mB.curYield !== '' ? mB.curYield : '',
+        mA.coupon !== '' ? mA.coupon : '', mB.coupon !== '' ? mB.coupon : '',
+        mean, stdev, zScore, lower, upper,
+        sector, histCount,
+        volAvgA, volAvgB, avgLiq, curVolA, curVolB, curVol, volSpike
+      ]);
+    }
+
+    // Sanity check: if TickerData hasn't loaded yet, don't overwrite
+    if (validPrices === 0) {
+      Logger.log('computeCreditCache: no valid prices found (TickerData still loading?). Skipping write.');
+      return;
+    }
+
+    // 6. Write to WebCacheCredit (overwrite, don't clear first to minimize downtime)
+    var wcSheet = ss.getSheetByName('WebCacheCredit');
+    if (!wcSheet) {
+      wcSheet = ss.insertSheet('WebCacheCredit');
+    }
+    var headers = [
+      'PairID', 'TickerA', 'TickerB', 'PriceA', 'PriceB', 'Spread',
+      'YieldA', 'YieldB', 'CouponA', 'CouponB',
+      'Mean', 'StDev', 'Z-Score', 'Lower', 'Upper',
+      'Sector', 'HistCount',
+      'AvgLiqA', 'AvgLiqB', 'AvgLiq', 'CurVolA', 'CurVolB', 'CurVol', 'VolSpike'
+    ];
+    wcSheet.getRange(1, 1, 1, 24).setValues([headers]);
+    wcSheet.getRange(1, 1, 1, 24).setFontWeight('bold');
+
+    if (results.length > 0) {
+      // Write in chunks of 5000 rows
+      var CHUNK = 5000;
+      for (var c = 0; c < results.length; c += CHUNK) {
+        var chunk = results.slice(c, Math.min(c + CHUNK, results.length));
+        wcSheet.getRange(c + 2, 1, chunk.length, 24).setValues(chunk);
+      }
+    }
+
+    // Clear leftover rows from previous run (if pair count decreased)
+    var lastRow = wcSheet.getLastRow();
+    if (lastRow > results.length + 1) {
+      wcSheet.getRange(results.length + 2, 1, lastRow - results.length - 1, 24).clearContent();
+    }
+
+    SpreadsheetApp.flush();
+    Logger.log('computeCreditCache: computed ' + results.length + ' pairs (' + validPrices + ' with valid prices), wrote to WebCacheCredit.');
+
+  } catch (e) {
+    Logger.log('computeCreditCache ERROR: ' + e.toString());
+  }
+}
+
+// ============================================================
+// SHARED HELPERS
+// ============================================================
 function getOrCreateSheet_(ss, name) {
   var sheet = ss.getSheetByName(name);
   if (sheet) { sheet.clear(); return sheet; }

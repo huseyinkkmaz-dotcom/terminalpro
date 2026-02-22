@@ -23,12 +23,14 @@ function doGet(e) {
   try {
     setupMacroSheet();
     if (action === 'getData') {
-      // Failsafe: check WebCache first (fast snapshot), then Live (GOOGLEFINANCE formulas)
+      // WebCache/WebCacheCredit = primary data source (static values, fast).
+      // For intra: falls back to Live (GOOGLEFINANCE formulas).
+      // For credit: no fallback needed (computeCreditCache writes directly to WebCacheCredit).
       var cacheName = (mode === 'credit') ? 'WebCacheCredit' : 'WebCache';
-      var liveName = (mode === 'credit') ? 'CreditLive' : 'Live';
+      var liveName = (mode === 'credit') ? null : 'Live';
       var ss = SpreadsheetApp.getActive();
       var targetSheet = ss.getSheetByName(cacheName);
-      if (!targetSheet || targetSheet.getLastRow() <= 1) {
+      if ((!targetSheet || targetSheet.getLastRow() <= 1) && liveName) {
         targetSheet = ss.getSheetByName(liveName);
       }
       if (!targetSheet || targetSheet.getLastRow() <= 1) {
@@ -211,14 +213,16 @@ function parseTickerInfo(rawId) {
 // ALERT DATA — supports mode switching
 // ============================================================
 function getAlertData(mode) {
-  // Prefer WebCache (static snapshot, fast) over Live (GOOGLEFINANCE formulas)
+  // WebCache/WebCacheCredit = primary data source.
+  // For intra: falls back to Live sheet (GOOGLEFINANCE formulas).
+  // For credit: WebCacheCredit is the only source (computed by computeCreditCache).
   var cacheName = (mode === 'credit') ? 'WebCacheCredit' : 'WebCache';
-  var liveName = (mode === 'credit') ? 'CreditLive' : 'Live';
+  var liveName = (mode === 'credit') ? null : 'Live';
 
   try {
     var ss = SpreadsheetApp.getActive();
     var liveSheet = ss.getSheetByName(cacheName);
-    if (!liveSheet || liveSheet.getLastRow() <= 1) {
+    if ((!liveSheet || liveSheet.getLastRow() <= 1) && liveName) {
       liveSheet = ss.getSheetByName(liveName);
     }
     if (!liveSheet) return [];
@@ -394,7 +398,6 @@ function getOpenTrades() {
     var intra = ss.getSheetByName('WebCache');
     if (!intra || intra.getLastRow() <= 1) intra = ss.getSheetByName('Live');
     var credit = ss.getSheetByName('WebCacheCredit');
-    if (!credit || credit.getLastRow() <= 1) credit = ss.getSheetByName('CreditLive');
     var sources = [intra, credit];
     for (var s = 0; s < sources.length; s++) {
       var ls = sources[s];
@@ -473,8 +476,8 @@ function saveTradeToSheet(trade) {
   var curZ = 0;
   var cleanTradeId = cleanId(trade.id);
   var realId = trade.id;
-  // Check both Live and CreditLive
-  var sheets = ['Live','CreditLive'];
+  // Check Live (intra formulas) + WebCacheCredit (credit computed cache)
+  var sheets = ['Live','WebCacheCredit'];
   for (var s = 0; s < sheets.length; s++) {
     var ls = ss.getSheetByName(sheets[s]);
     if (!ls) continue;
@@ -522,7 +525,7 @@ function saveToWatchlist(id, mode) {
   }
   // Look up current Z-score
   var curZ = 0;
-  var sheets = ['WebCache', 'WebCacheCredit', 'Live', 'CreditLive'];
+  var sheets = ['WebCache', 'WebCacheCredit', 'Live'];
   for (var s = 0; s < sheets.length; s++) {
     var ls = ss.getSheetByName(sheets[s]);
     if (!ls || ls.getLastRow() <= 1) continue;
@@ -555,7 +558,7 @@ function getWatchlistData() {
     var liveMap = {}; // cleanId → row array
     var cacheSheets = [
       { name: 'WebCache', fallback: 'Live' },
-      { name: 'WebCacheCredit', fallback: 'CreditLive' }
+      { name: 'WebCacheCredit', fallback: null }
     ];
     for (var c = 0; c < cacheSheets.length; c++) {
       var ls = ss.getSheetByName(cacheSheets[c].name);
