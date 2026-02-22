@@ -842,25 +842,26 @@ function generateCreditPairsBatched_(ss) {
     }
   }
 
-  // Group by credit rating (collect nonRated for cross-rating pairs)
+  // Group by credit rating
+  // FIX: String(undefined) returns "undefined" (truthy) — must guard against it.
+  // Also exclude "Non-Rated" tickers entirely from credit arb pairing.
   var groups = {};
-  var nonRated = [];
   for (var i = 1; i < data.length; i++) {
     var ticker = String(data[i][0]).trim();
     var coupon = data[i][2];
     var curYield = data[i][3];
-    var rating = String(data[i][4]).trim();
+    var rawRating = data[i][4];
+    var rating = (rawRating != null && rawRating !== '') ? String(rawRating).trim() : '';
+    if (rating === 'undefined' || rating === 'null') rating = '';
     if (!ticker) continue;
     if (coupon === "" || coupon === null || coupon === undefined) continue;
     if (curYield === "" || curYield === null || curYield === undefined) continue;
     var upper = ticker.toUpperCase();
     if (!companyOf[upper]) companyOf[upper] = upper.replace(/-.*/, '');
-    if (rating) {
-      if (!groups[rating]) groups[rating] = [];
-      groups[rating].push(ticker);
-    } else {
-      nonRated.push(ticker);
-    }
+    // Skip non-rated tickers entirely — too much noise in cross-rating comparison
+    if (!rating || rating === 'Non-Rated' || rating === 'NR') continue;
+    if (!groups[rating]) groups[rating] = [];
+    groups[rating].push(ticker);
   }
 
   // Same-rating pairs (with dedup map)
@@ -886,7 +887,7 @@ function generateCreditPairsBatched_(ss) {
   }
 
   // Cross-rating pairs (OTHER sector) — matches generateCreditPairs() and dailyCreditRefresh()
-  var crossPairs = generateCrossRatingPairs_(groups, nonRated, companyOf, intraPairs, seen);
+  var crossPairs = generateCrossRatingPairs_(groups, companyOf, intraPairs, seen);
   allPairs = allPairs.concat(crossPairs);
 
   // No pair cap needed — computeCreditCache() handles all pairs via ticker-level GOOGLEFINANCE
@@ -977,7 +978,7 @@ function setupDashboard() {
 }
 
 // ── Cross-Credit-Rating Pair Generator (hardcoded tier rules) ──
-function generateCrossRatingPairs_(groups, nonRated, companyOf, intraPairs, seen) {
+function generateCrossRatingPairs_(groups, companyOf, intraPairs, seen) {
   var toSet = function(arr) {
     var s = {};
     for (var i = 0; i < arr.length; i++) s[arr[i].toUpperCase()] = true;
@@ -997,12 +998,11 @@ function generateCrossRatingPairs_(groups, nonRated, companyOf, intraPairs, seen
     return (arr || []).filter(function(t) { return !ex[t.toUpperCase()]; });
   };
 
-  // Build set of all valid tickers across all tiers + non-rated
+  // Build set of all valid tickers across all rated groups
   var allValid = {};
   for (var r in groups) {
     for (var i = 0; i < groups[r].length; i++) allValid[groups[r][i].toUpperCase()] = groups[r][i];
   }
-  for (var i = 0; i < nonRated.length; i++) allValid[nonRated[i].toUpperCase()] = nonRated[i];
 
   var bbbPlus = groups['BBB+'] || [];
   var bbb = filt(groups['BBB'], exBBB);
@@ -1013,7 +1013,6 @@ function generateCrossRatingPairs_(groups, nonRated, companyOf, intraPairs, seen
   for (var k in incBBp) { if (allValid[k]) bbPlusPool.push(allValid[k]); }
   var bbMinusPool = [];
   for (var k in incBBm) { if (allValid[k]) bbMinusPool.push(allValid[k]); }
-  var nr = nonRated || [];
 
   var pairs = [];
   var addPairs = function(poolA, poolB) {
@@ -1044,10 +1043,10 @@ function generateCrossRatingPairs_(groups, nonRated, companyOf, intraPairs, seen
   addPairs(bbb, bb);                  // 8. BBB vs BB
   addPairs(bbbMinus, bb);             // 9. BBB- vs BB
   addPairs(bbPlusPool, bb);           // 10. BB+ (include-only) vs BB
-  // 11. BB- (include-only) vs everything except BBB+
-  var rule11Pool = bbb.concat(bbbMinus).concat(bbPlusPool).concat(bb).concat(nr);
+  // 11. BB- (include-only) vs BBB, BBB-, BB+ (include-only), BB — NO Non-Rated
+  var rule11Pool = bbb.concat(bbbMinus).concat(bbPlusPool).concat(bb);
   addPairs(bbMinusPool, rule11Pool);
-  addPairs(nr, nr);                   // 12. Non-Rated vs Non-Rated
+  // Rule 12 (Non-Rated vs Non-Rated) DELETED — too much noise
 
   Logger.log('generateCrossRatingPairs_: ' + pairs.length + ' cross-rating pairs');
   return pairs;
@@ -1082,21 +1081,20 @@ function generateCreditPairs() {
   }
 
   var groups = {};
-  var nonRated = [];
   for (var i = 1; i < data.length; i++) {
     var ticker = String(data[i][0]).trim();
-    var coupon = data[i][2]; var curYield = data[i][3]; var rating = String(data[i][4]).trim();
+    var coupon = data[i][2]; var curYield = data[i][3];
+    var rawRating = data[i][4];
+    var rating = (rawRating != null && rawRating !== '') ? String(rawRating).trim() : '';
+    if (rating === 'undefined' || rating === 'null') rating = '';
     if (!ticker) continue;
     if (coupon === "" || coupon === null || coupon === undefined) continue;
     if (curYield === "" || curYield === null || curYield === undefined) continue;
     var upper = ticker.toUpperCase();
     if (!companyOf[upper]) companyOf[upper] = upper.replace(/-.*/, '');
-    if (rating) {
-      if (!groups[rating]) groups[rating] = [];
-      groups[rating].push(ticker);
-    } else {
-      nonRated.push(ticker);
-    }
+    if (!rating || rating === 'Non-Rated' || rating === 'NR') continue;
+    if (!groups[rating]) groups[rating] = [];
+    groups[rating].push(ticker);
   }
 
   // Same-rating pairs
@@ -1121,7 +1119,7 @@ function generateCreditPairs() {
   }
 
   // Cross-rating pairs (OTHER sector)
-  var crossPairs = generateCrossRatingPairs_(groups, nonRated, companyOf, intraPairs, seen);
+  var crossPairs = generateCrossRatingPairs_(groups, companyOf, intraPairs, seen);
   allPairs = allPairs.concat(crossPairs);
 
   var cpSheet = getOrCreateSheet_(ss, 'CreditPairs');
@@ -1286,21 +1284,20 @@ function dailyCreditRefresh() {
     }
 
     var groups = {};
-    var nonRated = [];
     for (var i = 1; i < data.length; i++) {
       var ticker = String(data[i][0]).trim();
-      var coupon = data[i][2]; var curYield = data[i][3]; var rating = String(data[i][4]).trim();
+      var coupon = data[i][2]; var curYield = data[i][3];
+      var rawRating = data[i][4];
+      var rating = (rawRating != null && rawRating !== '') ? String(rawRating).trim() : '';
+      if (rating === 'undefined' || rating === 'null') rating = '';
       if (!ticker) continue;
       if (coupon === "" || coupon === null || coupon === undefined) continue;
       if (curYield === "" || curYield === null || curYield === undefined) continue;
       var upper = ticker.toUpperCase();
       if (!companyOf[upper]) companyOf[upper] = upper.replace(/-.*/, '');
-      if (rating) {
-        if (!groups[rating]) groups[rating] = [];
-        groups[rating].push(ticker);
-      } else {
-        nonRated.push(ticker);
-      }
+      if (!rating || rating === 'Non-Rated' || rating === 'NR') continue;
+      if (!groups[rating]) groups[rating] = [];
+      groups[rating].push(ticker);
     }
 
     // Same-rating pairs
@@ -1325,7 +1322,7 @@ function dailyCreditRefresh() {
     }
 
     // Cross-rating pairs (OTHER sector)
-    var crossPairs = generateCrossRatingPairs_(groups, nonRated, companyOf, intraPairs, seen);
+    var crossPairs = generateCrossRatingPairs_(groups, companyOf, intraPairs, seen);
     allPairs = allPairs.concat(crossPairs);
 
     var cpSheet = getOrCreateSheet_(ss, 'CreditPairs');

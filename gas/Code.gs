@@ -228,8 +228,11 @@ function getAlertData(mode) {
     if (!liveSheet) return [];
     var data = liveSheet.getDataRange().getValues();
     if (data.length <= 1) return [];
-    // Load AlertsLog for trend ribbons — pre-build map for O(1) lookups
-    var logMap = {};
+    // Load AlertsLog for trend ribbons — group by DATE for daily Z-trend
+    // BUG FIX: snapshotZScores runs hourly, so AlertsLog has ~24 entries per pair per day.
+    // Old code did slice(-7) on raw entries = last 7 HOURS, not days.
+    // Fix: group by date, keep last Z per day, then slice last 7 days.
+    var logMap = {}; // {cleanId: {dateStr: lastZForThatDay}}
     var logSheet = ss.getSheetByName('AlertsLog');
     if (logSheet) {
       var lastRow = logSheet.getLastRow();
@@ -237,12 +240,20 @@ function getAlertData(mode) {
         var startRow = Math.max(2, lastRow - 15000);
         var logData = logSheet.getRange(startRow, 1, lastRow - startRow + 1, 4).getValues();
         for (var k = 0; k < logData.length; k++) {
+          var ts = logData[k][0];
           var lcid = cleanId(logData[k][1]);
           if (!lcid) continue;
           var zVal = parseFloat(logData[k][2]);
           if (isNaN(zVal)) continue;
-          if (!logMap[lcid]) logMap[lcid] = [];
-          logMap[lcid].push(zVal);
+          // Group by date — last Z per day wins (most recent hourly snapshot)
+          var dateKey = '';
+          if (ts instanceof Date) {
+            var mm = ts.getMonth() + 1;
+            var dd = ts.getDate();
+            dateKey = ts.getFullYear() + '-' + (mm < 10 ? '0' : '') + mm + '-' + (dd < 10 ? '0' : '') + dd;
+          }
+          if (!logMap[lcid]) logMap[lcid] = {};
+          logMap[lcid][dateKey] = zVal;
         }
       }
     }
@@ -335,10 +346,12 @@ function getAlertData(mode) {
       _diag.passed++;
       var info = parseTickerInfo(rawId);
       var cid = cleanId(rawId);
-      // TREND from AlertsLog (O(1) map lookup)
-      var zHistory = logMap[cid] || [];
-      var trend = zHistory.slice(-7).map(function(v) { return v.toFixed(1); });
-      trend.push(currentZ.toFixed(1));
+      // TREND from AlertsLog — daily Z-scores (last 7 calendar days + today's live)
+      var zDateMap = logMap[cid] || {};
+      var dates = Object.keys(zDateMap).sort(); // sorted YYYY-MM-DD strings
+      var recentDates = dates.slice(-7);        // last 7 days with data
+      var trend = recentDates.map(function(d) { return zDateMap[d].toFixed(1); });
+      trend.push(currentZ.toFixed(1));          // append today's live Z
       // AGE from ZScoreAge (Task 1)
       var ageDays = ageMap[cid] || 0;
       // Range
