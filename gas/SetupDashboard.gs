@@ -939,6 +939,13 @@ function generateCreditPairsBatched_(ss) {
   var crossPairs = generateCrossRatingPairs_(groups, nonRated, companyOf, intraPairs, seen);
   allPairs = allPairs.concat(crossPairs);
 
+  // Cap total credit pairs to stay within GOOGLEFINANCE limits (~6 calls per pair in Live)
+  var MAX_TOTAL_CREDIT_PAIRS = 2000;
+  if (allPairs.length > MAX_TOTAL_CREDIT_PAIRS) {
+    Logger.log('CreditPairs capped from ' + allPairs.length + ' to ' + MAX_TOTAL_CREDIT_PAIRS);
+    allPairs = allPairs.slice(0, MAX_TOTAL_CREDIT_PAIRS);
+  }
+
   // Write to CreditPairs sheet
   var cpSheet = getOrCreateSheet_(ss, 'CreditPairs');
   cpSheet.getRange(1, 1, 1, 4).setValues([['PairID', 'TickerA', 'TickerB', 'Sector']]);
@@ -1062,10 +1069,14 @@ function generateCrossRatingPairs_(groups, nonRated, companyOf, intraPairs, seen
   for (var k in incBBm) { if (allValid[k]) bbMinusPool.push(allValid[k]); }
   var nr = nonRated || [];
 
+  var MAX_CROSS_PAIRS = 300;
   var pairs = [];
+  var capHit = false;
   var addPairs = function(poolA, poolB) {
+    if (capHit) return;
     for (var a = 0; a < poolA.length; a++) {
       for (var b = 0; b < poolB.length; b++) {
+        if (pairs.length >= MAX_CROSS_PAIRS) { capHit = true; return; }
         var tA = poolA[a], tB = poolB[b];
         if (tA.toUpperCase() === tB.toUpperCase()) continue;
         if (intraPairs[cleanId_(tA) + '_' + cleanId_(tB)]) continue;
@@ -1170,6 +1181,13 @@ function generateCreditPairs() {
   // Cross-rating pairs (OTHER sector)
   var crossPairs = generateCrossRatingPairs_(groups, nonRated, companyOf, intraPairs, seen);
   allPairs = allPairs.concat(crossPairs);
+
+  // Cap total credit pairs to stay within GOOGLEFINANCE limits
+  var MAX_TOTAL_CREDIT_PAIRS = 2000;
+  if (allPairs.length > MAX_TOTAL_CREDIT_PAIRS) {
+    Logger.log('CreditPairs capped from ' + allPairs.length + ' to ' + MAX_TOTAL_CREDIT_PAIRS);
+    allPairs = allPairs.slice(0, MAX_TOTAL_CREDIT_PAIRS);
+  }
 
   var cpSheet = getOrCreateSheet_(ss, 'CreditPairs');
   cpSheet.getRange(1, 1, 1, 4).setValues([['PairID', 'TickerA', 'TickerB', 'Sector']]);
@@ -1397,6 +1415,13 @@ function dailyCreditRefresh() {
     // Cross-rating pairs (OTHER sector)
     var crossPairs = generateCrossRatingPairs_(groups, nonRated, companyOf, intraPairs, seen);
     allPairs = allPairs.concat(crossPairs);
+
+    // Cap total credit pairs to stay within GOOGLEFINANCE limits
+    var MAX_TOTAL_CREDIT_PAIRS = 2000;
+    if (allPairs.length > MAX_TOTAL_CREDIT_PAIRS) {
+      Logger.log('dailyCreditRefresh: capped from ' + allPairs.length + ' to ' + MAX_TOTAL_CREDIT_PAIRS);
+      allPairs = allPairs.slice(0, MAX_TOTAL_CREDIT_PAIRS);
+    }
 
     var cpSheet = getOrCreateSheet_(ss, 'CreditPairs');
     cpSheet.getRange(1, 1, 1, 4).setValues([['PairID', 'TickerA', 'TickerB', 'Sector']]);
