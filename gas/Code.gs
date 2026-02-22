@@ -224,14 +224,22 @@ function getAlertData(mode) {
     if (!liveSheet) return [];
     var data = liveSheet.getDataRange().getValues();
     if (data.length <= 1) return [];
-    // Load AlertsLog for trend ribbons
-    var logData = [];
+    // Load AlertsLog for trend ribbons — pre-build map for O(1) lookups
+    var logMap = {};
     var logSheet = ss.getSheetByName('AlertsLog');
     if (logSheet) {
       var lastRow = logSheet.getLastRow();
       if (lastRow > 1) {
-        var startRow = Math.max(2, lastRow - 2000);
-        logData = logSheet.getRange(startRow, 1, lastRow - startRow + 1, 4).getValues();
+        var startRow = Math.max(2, lastRow - 15000);
+        var logData = logSheet.getRange(startRow, 1, lastRow - startRow + 1, 4).getValues();
+        for (var k = 0; k < logData.length; k++) {
+          var lcid = cleanId(logData[k][1]);
+          if (!lcid) continue;
+          var zVal = parseFloat(logData[k][2]);
+          if (isNaN(zVal)) continue;
+          if (!logMap[lcid]) logMap[lcid] = [];
+          logMap[lcid].push(zVal);
+        }
       }
     }
     // Load ZScoreAge for age column (Task 1)
@@ -323,15 +331,9 @@ function getAlertData(mode) {
       _diag.passed++;
       var info = parseTickerInfo(rawId);
       var cid = cleanId(rawId);
-      // TREND from AlertsLog
-      var zHistory = [];
-      for (var k = 0; k < logData.length; k++) {
-        if (cleanId(logData[k][1]) === cid) {
-          var zVal = parseFloat(logData[k][2]);
-          if (!isNaN(zVal)) zHistory.push(zVal.toFixed(1));
-        }
-      }
-      var trend = zHistory.slice(-7);
+      // TREND from AlertsLog (O(1) map lookup)
+      var zHistory = logMap[cid] || [];
+      var trend = zHistory.slice(-7).map(function(v) { return v.toFixed(1); });
       trend.push(currentZ.toFixed(1));
       // AGE from ZScoreAge (Task 1)
       var ageDays = ageMap[cid] || 0;

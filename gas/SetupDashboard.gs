@@ -892,24 +892,30 @@ function generateCreditPairsBatched_(ss) {
     }
   }
 
-  // Group by credit rating
+  // Group by credit rating (collect nonRated for cross-rating pairs)
   var groups = {};
+  var nonRated = [];
   for (var i = 1; i < data.length; i++) {
     var ticker = String(data[i][0]).trim();
     var coupon = data[i][2];
     var curYield = data[i][3];
     var rating = String(data[i][4]).trim();
-    if (!ticker || !rating) continue;
+    if (!ticker) continue;
     if (coupon === "" || coupon === null || coupon === undefined) continue;
     if (curYield === "" || curYield === null || curYield === undefined) continue;
     var upper = ticker.toUpperCase();
     if (!companyOf[upper]) companyOf[upper] = upper.replace(/-.*/, '');
-    if (!groups[rating]) groups[rating] = [];
-    groups[rating].push(ticker);
+    if (rating) {
+      if (!groups[rating]) groups[rating] = [];
+      groups[rating].push(ticker);
+    } else {
+      nonRated.push(ticker);
+    }
   }
 
-  // Generate combinations — no cap
+  // Same-rating pairs (with dedup map)
   var allPairs = [];
+  var seen = {};
   for (var rating in groups) {
     var tickers = groups[rating];
     if (tickers.length < 2) continue;
@@ -921,10 +927,17 @@ function generateCreditPairsBatched_(ss) {
         var coA = companyOf[tA.toUpperCase()] || tA.toUpperCase().replace(/-.*/, '');
         var coB = companyOf[tB.toUpperCase()] || tB.toUpperCase().replace(/-.*/, '');
         if (coA === coB) continue;
-        allPairs.push([tA + "|" + tB, tA, tB, "CreditArb:" + rating]);
+        var key = tA + "|" + tB;
+        if (seen[key]) continue;
+        seen[key] = true;
+        allPairs.push([key, tA, tB, "CreditArb:" + rating]);
       }
     }
   }
+
+  // Cross-rating pairs (OTHER sector) — matches generateCreditPairs() and dailyCreditRefresh()
+  var crossPairs = generateCrossRatingPairs_(groups, nonRated, companyOf, intraPairs, seen);
+  allPairs = allPairs.concat(crossPairs);
 
   // Write to CreditPairs sheet
   var cpSheet = getOrCreateSheet_(ss, 'CreditPairs');
@@ -1278,7 +1291,11 @@ function snapshotZScores() {
         var zScore = parseFloat(row[12]) || 0;
         var spread = parseFloat(row[5]) || 0;
         var cid = cleanId_(String(pairId));
-        logRows.push([now, String(pairId), zScore, spread]);
+        // Only log pairs with |Z| >= 1.0 to keep AlertsLog volume manageable
+        // (trend ribbons only display for pairs at |Z| >= 1.8 anyway)
+        if (Math.abs(zScore) >= 1.0) {
+          logRows.push([now, String(pairId), zScore, spread]);
+        }
         var isActive = Math.abs(zScore) >= 1.8;
         var existing = ageMap[cid];
         if (isActive && !existing) {
@@ -1301,7 +1318,7 @@ function snapshotZScores() {
     if (newAgeRows.length > 0) { ageSheet.getRange(ageSheet.getLastRow() + 1, 1, newAgeRows.length, 3).setValues(newAgeRows); }
 
     var totalRows = logSheet.getLastRow();
-    if (totalRows > 5500) { logSheet.deleteRows(2, totalRows - 5000); }
+    if (totalRows > 25000) { logSheet.deleteRows(2, totalRows - 20000); }
   } catch (e) {
     console.error("snapshotZScores error: " + e);
   }
