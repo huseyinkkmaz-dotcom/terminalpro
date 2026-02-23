@@ -230,8 +230,8 @@ function getAlertData(mode) {
     if (data.length <= 1) return [];
     // Load AlertsLog for trend ribbons — group by DATE for daily Z-trend
     // snapshotZScores runs hourly → ~24 entries per pair per day.
-    // Group by date, keep last Z per day, then take last 7 PREVIOUS days.
-    // Today is excluded because we always append the current live Z at the end.
+    // Group by date, keep last Z per day. Today excluded (live Z appended later).
+    // Final array capped at 5 most recent daily Z-scores (including today).
     var logMap = {}; // {cleanId: {dateStr: lastZForThatDay}}
     var now = new Date();
     var tMM = now.getMonth() + 1;
@@ -354,12 +354,12 @@ function getAlertData(mode) {
       _diag.passed++;
       var info = parseTickerInfo(rawId);
       var cid = cleanId(rawId);
-      // TREND from AlertsLog — daily Z-scores (last 7 calendar days + today's live)
+      // TREND from AlertsLog — last 5 daily Z-scores (including today's live)
       var zDateMap = logMap[cid] || {};
       var dates = Object.keys(zDateMap).sort(); // sorted YYYY-MM-DD strings
-      var recentDates = dates.slice(-7);        // last 7 days with data
-      var trend = recentDates.map(function(d) { return zDateMap[d].toFixed(1); });
-      trend.push(currentZ.toFixed(1));          // append today's live Z
+      var historicalZScores = dates.map(function(d) { return zDateMap[d].toFixed(1); });
+      historicalZScores.push(currentZ.toFixed(1)); // append today's live Z
+      var trend = historicalZScores.slice(-5);     // strictly last 5 ribbons
       // AGE from ZScoreAge (Task 1)
       var ageDays = ageMap[cid] || 0;
       // Range
