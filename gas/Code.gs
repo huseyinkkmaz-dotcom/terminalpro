@@ -296,7 +296,7 @@ function getAlertData(mode) {
     }
     var output = [];
     var _diag = {totalRows: data.length - 1, noId: 0, noPrice: 0, noHistory: 0, noCoupon: 0, lowZ: 0,
-                 blacklisted: 0, intraOnly: 0, passed: 0,
+                 blacklisted: 0, intraOnly: 0, divTooFar: 0, passed: 0,
                  sheetUsed: liveSheet.getName(), sampleRows: []};
     // Capture first 5 rows raw data for debugging
     for (var s = 1; s < Math.min(6, data.length); s++) {
@@ -351,6 +351,14 @@ function getAlertData(mode) {
 
       // FILTER: |z| >= 1.8
       if (Math.abs(currentZ) < 1.8) { _diag.lowZ++; continue; }
+
+      // FILTER: Div date proximity — exclude pairs where ex-div dates are >45 days apart
+      var divA = divMap[tickerA] || null;
+      var divB = divMap[tickerB] || null;
+      if (divA && divB) {
+        var divDiffDays = Math.abs(divA.getTime() - divB.getTime()) / 86400000;
+        if (divDiffDays > 45) { _diag.divTooFar++; continue; }
+      }
       _diag.passed++;
       var info = parseTickerInfo(rawId);
       var cid = cleanId(rawId);
@@ -374,9 +382,7 @@ function getAlertData(mode) {
       var avgLiq = parseFloat(row[19]) || 0;
       var curVol = parseFloat(row[22]) || 0;
       var volSpike = (row[23] === true || row[23] === "TRUE");
-      // DIV DATES — send both legs' ex-dividend dates (uses 'now' from line ~239)
-      var divA = divMap[tickerA] || null;
-      var divB = divMap[tickerB] || null;
+      // DIV DATES — divA/divB already resolved above (proximity filter)
       output.push({
         id: info.id,
         tA: row[1] || info.tA,
