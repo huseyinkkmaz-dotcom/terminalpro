@@ -509,9 +509,9 @@ function saveTradeToSheet(trade) {
   var cleanTradeId = cleanId(trade.id);
   var realId = trade.id;
   // Check Live (intra formulas) + WebCacheCredit (credit computed cache)
-  var sheets = ['Live','WebCacheCredit'];
-  for (var s = 0; s < sheets.length; s++) {
-    var ls = ss.getSheetByName(sheets[s]);
+  var liveSheets = ['Live','WebCacheCredit'];
+  for (var s = 0; s < liveSheets.length; s++) {
+    var ls = ss.getSheetByName(liveSheets[s]);
     if (!ls) continue;
     var live = ls.getDataRange().getValues();
     for (var i = 1; i < live.length; i++) {
@@ -523,6 +523,30 @@ function saveTradeToSheet(trade) {
     }
     if (curZ !== 0) break;
   }
+  // Check if position already exists — scale into it (weighted avg prices, sum sizes)
+  var openData = sheet.getDataRange().getValues();
+  var targetClean = cleanId(realId);
+  for (var i = 1; i < openData.length; i++) {
+    if (cleanId(openData[i][0]) === targetClean) {
+      var oldPA = parseMoney(openData[i][2]);
+      var oldPB = parseMoney(openData[i][3]);
+      var oldSA = parseMoney(openData[i][4]);
+      var oldSB = parseMoney(openData[i][5]);
+      var newPA = parseMoney(trade.priceA);
+      var newPB = parseMoney(trade.priceB);
+      var newSA = parseMoney(trade.sizeA);
+      var newSB = parseMoney(trade.sizeB);
+      var totalSA = oldSA + newSA;
+      var totalSB = oldSB + newSB;
+      // Weighted average entry prices
+      var avgPA = totalSA !== 0 ? ((oldPA * oldSA) + (newPA * newSA)) / totalSA : newPA;
+      var avgPB = totalSB !== 0 ? ((oldPB * oldSB) + (newPB * newSB)) / totalSB : newPB;
+      // Update existing row in-place (sheet rows are 1-indexed)
+      sheet.getRange(i + 1, 3, 1, 4).setValues([[avgPA, avgPB, totalSA, totalSB]]);
+      return true;
+    }
+  }
+  // No existing position — create new row
   sheet.appendRow([realId, curZ, trade.priceA, trade.priceB, trade.sizeA, trade.sizeB, new Date()]);
   return true;
 }
