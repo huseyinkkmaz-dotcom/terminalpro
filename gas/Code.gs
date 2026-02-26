@@ -383,13 +383,18 @@ function getAlertData(mode) {
       var curVol = parseFloat(row[22]) || 0;
       var volSpike = (row[23] === true || row[23] === "TRUE");
       // DIV DATES — divA/divB already resolved above (proximity filter)
+      // Expected Profit = |Current Spread - 90-Day Mean| (distance to mean reversion)
+      var spread = parseFloat(row[5]) || 0;
+      var mean = parseFloat(row[10]) || 0;
+      var expProfit = Math.abs(spread - mean);
       output.push({
         id: info.id,
         tA: row[1] || info.tA,
         tB: row[2] || info.tB,
         rng: lower.toFixed(2) + " / " + upper.toFixed(2),
         sec: row[15] || "",
-        spr: (parseFloat(row[5]) || 0).toFixed(2),
+        spr: spread.toFixed(2),
+        expProfit: expProfit.toFixed(2),
         yA: yA,
         yB: yB,
         z: currentZ.toFixed(2),
