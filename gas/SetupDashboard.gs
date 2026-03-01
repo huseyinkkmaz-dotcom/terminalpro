@@ -129,7 +129,7 @@ function setupAllBatched() {
     if (state.phase === 2) {
       Logger.log('Phase 2: Ensuring supporting sheets...');
       ensureSheet_(ss, 'OpenTrades', ['PairID', 'EntryZ', 'CostA', 'CostB', 'SizeA', 'SizeB', 'Timestamp']);
-      ensureSheet_(ss, 'ClosedTrades', ['PairID', 'EntryZ', 'CostA', 'CostB', 'SizeA', 'SizeB', 'OpenDate', 'CloseDate', 'PnL']);
+      ensureSheet_(ss, 'ClosedTrades', ['PairID', 'EntryZ', 'CostA', 'CostB', 'SizeA', 'SizeB', 'OpenDate', 'CloseDate', 'PnL', 'ExitPriceA', 'ExitPriceB', 'ExitZ', 'CloseType']);
       ensureSheet_(ss, 'AlertsLog', ['Timestamp', 'PairID', 'Z-Score', 'Spread']);
       var ageSheet = ss.getSheetByName('ZScoreAge');
       if (!ageSheet) {
@@ -138,7 +138,7 @@ function setupAllBatched() {
         ageSheet.getRange(1, 1, 1, 3).setFontWeight('bold');
       }
       ensureSheet_(ss, 'DivDates', ['Ticker', 'ExDivDate', 'LastFetched']);
-      ensureSheet_(ss, 'Watchlist', ['PairID', 'AddedDate', 'AddedZ', 'Mode']);
+      ensureSheet_(ss, 'Watchlist', ['PairID', 'AddedDate', 'AddedZ', 'Mode', 'AddedExpProfit', 'AddedSpread']);
       ensureSheet_(ss, 'TreasuryHist', ['Date', 'US2Y', 'US5Y', 'US7Y', 'US10Y', 'US30Y']);
       Logger.log('Phase 2 complete: Supporting sheets ready.');
 
@@ -963,7 +963,7 @@ function setupDashboard() {
 
   // --- SUPPORTING SHEETS ---
   ensureSheet_(ss, 'OpenTrades', ['PairID', 'EntryZ', 'CostA', 'CostB', 'SizeA', 'SizeB', 'Timestamp']);
-  ensureSheet_(ss, 'ClosedTrades', ['PairID', 'EntryZ', 'CostA', 'CostB', 'SizeA', 'SizeB', 'OpenDate', 'CloseDate', 'PnL']);
+  ensureSheet_(ss, 'ClosedTrades', ['PairID', 'EntryZ', 'CostA', 'CostB', 'SizeA', 'SizeB', 'OpenDate', 'CloseDate', 'PnL', 'ExitPriceA', 'ExitPriceB', 'ExitZ', 'CloseType']);
   ensureSheet_(ss, 'AlertsLog', ['Timestamp', 'PairID', 'Z-Score', 'Spread']);
 
   var ageSheet = ss.getSheetByName('ZScoreAge');

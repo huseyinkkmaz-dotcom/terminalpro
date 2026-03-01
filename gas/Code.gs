@@ -83,6 +83,14 @@ function doGet(e) {
       closeTradeInSheet(e.parameter.id || "");
       result = { ok: true, message: "Trade closed" };
     }
+    else if (action === 'partialClose') {
+      partialCloseTradeInSheet(e.parameter.id || "", e.parameter.reduceA || 0, e.parameter.reduceB || 0);
+      result = { ok: true, message: "Partial close recorded" };
+    }
+    else if (action === 'clearHistory') {
+      clearHistory();
+      result = { ok: true, message: "History cleared" };
+    }
     else if (action === 'getWatchlist') {
       result = { ok: true, watchlistData: getWatchlistData() };
     }
@@ -494,14 +502,68 @@ function getClosedTrades() {
     var output = [];
     for (var i = 1; i < rows.length; i++) {
       var r = rows[i]; var info = parseTickerInfo(r[0]);
-      output.push({ id:info.id, closeDate: r[7] instanceof Date ? r[7].toLocaleDateString() : "---", pnl: r[8]||0 });
+      var openDate = r[6] instanceof Date ? r[6] : null;
+      var closeDate = r[7] instanceof Date ? r[7] : null;
+      var holdDays = (openDate && closeDate) ? Math.floor((closeDate.getTime() - openDate.getTime()) / 86400000) : 0;
+      var costA = parseFloat(r[2]) || 0;
+      var costB = parseFloat(r[3]) || 0;
+      var sizeA = parseFloat(r[4]) || 0;
+      var sizeB = parseFloat(r[5]) || 0;
+      var pnl = parseFloat(r[8]) || 0;
+      var exitPriceA = parseFloat(r[9]) || 0;
+      var exitPriceB = parseFloat(r[10]) || 0;
+      var exitZ = parseFloat(r[11]) || 0;
+      var closeType = r[12] || 'FULL';
+      var entryCost = Math.abs(costA * sizeA) + Math.abs(costB * sizeB);
+      var returnPct = entryCost > 0 ? (pnl / entryCost * 100) : 0;
+      output.push({
+        id: info.id, tA: info.tA, tB: info.tB,
+        entryZ: parseFloat(r[1]) || 0, exitZ: exitZ,
+        costA: costA.toFixed(2), costB: costB.toFixed(2),
+        exitPriceA: exitPriceA.toFixed(2), exitPriceB: exitPriceB.toFixed(2),
+        sizeA: sizeA, sizeB: sizeB,
+        openDate: openDate ? openDate.toLocaleDateString() : '---',
+        closeDate: closeDate ? closeDate.toLocaleDateString() : '---',
+        holdDays: holdDays,
+        pnl: pnl.toFixed(2),
+        returnPct: returnPct.toFixed(2),
+        closeType: closeType
+      });
     }
     return output.reverse();
   } catch(e) { return []; }
 }
+function clearHistory() {
+  var ss = SpreadsheetApp.getActive();
+  var sheet = ss.getSheetByName('ClosedTrades');
+  if (!sheet || sheet.getLastRow() <= 1) return;
+  sheet.deleteRows(2, sheet.getLastRow() - 1);
+}
 // ============================================================
 // WRITE OPERATIONS
 // ============================================================
+// Helper: look up live prices and Z-score for a pair
+function getLivePairData_(ss, pairId) {
+  var cleanTarget = cleanId(pairId);
+  var sheets = ['WebCache', 'WebCacheCredit', 'Live'];
+  for (var s = 0; s < sheets.length; s++) {
+    var ls = ss.getSheetByName(sheets[s]);
+    if (!ls || ls.getLastRow() <= 1) continue;
+    var data = ls.getDataRange().getValues();
+    for (var i = 1; i < data.length; i++) {
+      if (cleanId(data[i][0]) === cleanTarget) {
+        return {
+          priceA: parseFloat(data[i][3]) || 0,
+          priceB: parseFloat(data[i][4]) || 0,
+          spread: parseFloat(data[i][5]) || 0,
+          mean: parseFloat(data[i][10]) || 0,
+          z: parseFloat(data[i][12]) || 0
+        };
+      }
+    }
+  }
+  return null;
+}
 function saveTradeToSheet(trade) {
   var ss = SpreadsheetApp.getActive();
   var sheet = ss.getSheetByName('OpenTrades');
@@ -551,12 +613,87 @@ function saveTradeToSheet(trade) {
   return true;
 }
 function closeTradeInSheet(id) {
-  var sheet = SpreadsheetApp.getActive().getSheetByName('OpenTrades');
+  var ss = SpreadsheetApp.getActive();
+  var sheet = ss.getSheetByName('OpenTrades');
   var data = sheet.getDataRange().getValues();
   var cleanTarget = cleanId(id);
-  for (var i = data.length-1; i >= 1; i--) {
+  for (var i = data.length - 1; i >= 1; i--) {
     var rowId = cleanId(data[i][0]);
-    if (rowId.includes(cleanTarget) || cleanTarget.includes(rowId)) { sheet.deleteRow(i+1); break; }
+    if (rowId.includes(cleanTarget) || cleanTarget.includes(rowId)) {
+      var pairId = data[i][0];
+      var entryZ = data[i][1];
+      var costA = parseMoney(data[i][2]);
+      var costB = parseMoney(data[i][3]);
+      var sA = parseMoney(data[i][4]);
+      var sB = parseMoney(data[i][5]);
+      var openDate = data[i][6];
+      // Look up live exit prices
+      var live = getLivePairData_(ss, pairId);
+      var exitA = live ? live.priceA : costA;
+      var exitB = live ? live.priceB : costB;
+      var exitZ = live ? live.z : 0;
+      var pnl = ((exitA - costA) * sA) + ((exitB - costB) * sB);
+      // Write to ClosedTrades
+      var closed = ss.getSheetByName('ClosedTrades');
+      if (!closed) {
+        closed = ss.insertSheet('ClosedTrades');
+        closed.getRange(1, 1, 1, 13).setValues([['PairID','EntryZ','CostA','CostB','SizeA','SizeB','OpenDate','CloseDate','PnL','ExitPriceA','ExitPriceB','ExitZ','CloseType']]);
+      }
+      closed.appendRow([pairId, entryZ, costA, costB, sA, sB, openDate, new Date(), pnl, exitA, exitB, exitZ, 'FULL']);
+      sheet.deleteRow(i + 1);
+      break;
+    }
+  }
+  return true;
+}
+function partialCloseTradeInSheet(id, reduceA, reduceB) {
+  var ss = SpreadsheetApp.getActive();
+  var sheet = ss.getSheetByName('OpenTrades');
+  var data = sheet.getDataRange().getValues();
+  var cleanTarget = cleanId(id);
+  reduceA = Math.abs(parseFloat(reduceA) || 0);
+  reduceB = Math.abs(parseFloat(reduceB) || 0);
+  if (reduceA === 0 && reduceB === 0) return true;
+  for (var i = data.length - 1; i >= 1; i--) {
+    var rowId = cleanId(data[i][0]);
+    if (rowId.includes(cleanTarget) || cleanTarget.includes(rowId)) {
+      var pairId = data[i][0];
+      var entryZ = data[i][1];
+      var costA = parseMoney(data[i][2]);
+      var costB = parseMoney(data[i][3]);
+      var sA = parseMoney(data[i][4]);
+      var sB = parseMoney(data[i][5]);
+      var openDate = data[i][6];
+      // Clamp reduce amounts to position size
+      var closedA = Math.min(reduceA, Math.abs(sA));
+      var closedB = Math.min(reduceB, Math.abs(sB));
+      // Preserve sign (long=+, short=-)
+      var signA = sA >= 0 ? 1 : -1;
+      var signB = sB >= 0 ? 1 : -1;
+      // Look up live exit prices
+      var live = getLivePairData_(ss, pairId);
+      var exitA = live ? live.priceA : costA;
+      var exitB = live ? live.priceB : costB;
+      var exitZ = live ? live.z : 0;
+      // PnL only on the closed portion
+      var pnl = ((exitA - costA) * closedA * signA) + ((exitB - costB) * closedB * signB);
+      // Write closed portion to ClosedTrades
+      var closed = ss.getSheetByName('ClosedTrades');
+      if (!closed) {
+        closed = ss.insertSheet('ClosedTrades');
+        closed.getRange(1, 1, 1, 13).setValues([['PairID','EntryZ','CostA','CostB','SizeA','SizeB','OpenDate','CloseDate','PnL','ExitPriceA','ExitPriceB','ExitZ','CloseType']]);
+      }
+      closed.appendRow([pairId, entryZ, costA, costB, closedA * signA, closedB * signB, openDate, new Date(), pnl, exitA, exitB, exitZ, 'PARTIAL']);
+      // Update remaining position
+      var remainA = sA - (closedA * signA);
+      var remainB = sB - (closedB * signB);
+      if (Math.abs(remainA) < 0.01 && Math.abs(remainB) < 0.01) {
+        sheet.deleteRow(i + 1);
+      } else {
+        sheet.getRange(i + 1, 5, 1, 2).setValues([[remainA, remainB]]);
+      }
+      break;
+    }
   }
   return true;
 }
@@ -568,8 +705,14 @@ function saveToWatchlist(id, mode) {
   var sheet = ss.getSheetByName('Watchlist');
   if (!sheet) {
     sheet = ss.insertSheet('Watchlist');
-    sheet.getRange(1, 1, 1, 4).setValues([['PairID', 'AddedDate', 'AddedZ', 'Mode']]);
-    sheet.getRange(1, 1, 1, 4).setFontWeight('bold');
+    sheet.getRange(1, 1, 1, 6).setValues([['PairID', 'AddedDate', 'AddedZ', 'Mode', 'AddedExpProfit', 'AddedSpread']]);
+    sheet.getRange(1, 1, 1, 6).setFontWeight('bold');
+  }
+  // Ensure new columns exist on old sheets
+  var headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+  if (headers.length < 6) {
+    sheet.getRange(1, 5).setValue('AddedExpProfit');
+    sheet.getRange(1, 6).setValue('AddedSpread');
   }
   // Check for duplicate
   var cleanTarget = cleanId(id);
@@ -579,19 +722,25 @@ function saveToWatchlist(id, mode) {
       if (cleanId(existing[i][0]) === cleanTarget) return; // already exists
     }
   }
-  // Look up current Z-score
-  var curZ = 0;
-  var sheets = ['WebCache', 'WebCacheCredit', 'Live'];
-  for (var s = 0; s < sheets.length; s++) {
-    var ls = ss.getSheetByName(sheets[s]);
+  // Look up current Z-score, spread, and mean from live data
+  var curZ = 0, curSpread = 0, curMean = 0;
+  var cacheSheets = ['WebCache', 'WebCacheCredit', 'Live'];
+  for (var s = 0; s < cacheSheets.length; s++) {
+    var ls = ss.getSheetByName(cacheSheets[s]);
     if (!ls || ls.getLastRow() <= 1) continue;
     var data = ls.getDataRange().getValues();
     for (var i = 1; i < data.length; i++) {
-      if (cleanId(data[i][0]) === cleanTarget) { curZ = parseFloat(data[i][12]) || 0; break; }
+      if (cleanId(data[i][0]) === cleanTarget) {
+        curZ = parseFloat(data[i][12]) || 0;
+        curSpread = parseFloat(data[i][5]) || 0;
+        curMean = parseFloat(data[i][10]) || 0;
+        break;
+      }
     }
     if (curZ !== 0) break;
   }
-  sheet.appendRow([id, new Date(), curZ, mode]);
+  var expProfit = Math.abs(curSpread - curMean);
+  sheet.appendRow([id, new Date(), curZ, mode, expProfit, curSpread]);
 }
 function removeFromWatchlist(id) {
   var ss = SpreadsheetApp.getActive();
@@ -608,7 +757,8 @@ function getWatchlistData() {
     var ss = SpreadsheetApp.getActive();
     var sheet = ss.getSheetByName('Watchlist');
     if (!sheet || sheet.getLastRow() <= 1) return [];
-    var watchRows = sheet.getRange(2, 1, sheet.getLastRow() - 1, 4).getValues();
+    var colCount = Math.max(sheet.getLastColumn(), 6);
+    var watchRows = sheet.getRange(2, 1, sheet.getLastRow() - 1, colCount).getValues();
 
     // Build unified live lookup from both caches
     var liveMap = {}; // cleanId → row array
@@ -662,6 +812,8 @@ function getWatchlistData() {
       var addedDate = watchRows[w][1];
       var addedZ = parseFloat(watchRows[w][2]) || 0;
       var wMode = watchRows[w][3] || 'intra';
+      var addedExpProfit = parseFloat(watchRows[w][4]) || 0;
+      var addedSpread = parseFloat(watchRows[w][5]) || 0;
       var cid = cleanId(pairId);
       var row = liveMap[cid];
 
@@ -675,6 +827,8 @@ function getWatchlistData() {
           liq: 0, volSpike: false, daysWatching: 0,
           addedDate: addedDate instanceof Date ? addedDate.toISOString().split('T')[0] : '',
           zHistory: [], converging: false, exDivA: null, exDivB: null,
+          addedExpProfit: addedExpProfit.toFixed(2), curExpProfit: '0.00',
+          addedSpread: addedSpread.toFixed(2),
           target: 'Data unavailable — pair may have been removed'
         });
         continue;
@@ -743,6 +897,7 @@ function getWatchlistData() {
         target = tA + ' should be $' + Math.abs(mean).toFixed(2) + ' lower than ' + tB;
       }
 
+      var curExpProfit = Math.abs(spread - mean);
       output.push({
         id: String(pairId),
         tA: tA, tB: tB, sec: sector, mode: wMode,
@@ -763,6 +918,9 @@ function getWatchlistData() {
         converging: converging,
         exDivA: (divA && divA >= now) ? divA.toISOString().split('T')[0] : null,
         exDivB: (divB && divB >= now) ? divB.toISOString().split('T')[0] : null,
+        addedExpProfit: addedExpProfit.toFixed(2),
+        curExpProfit: curExpProfit.toFixed(2),
+        addedSpread: addedSpread.toFixed(2),
         target: target
       });
     }
