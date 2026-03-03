@@ -18,12 +18,12 @@ Google Sheets (Data Layer)
     ├── Levels sheet        → Auto: 90-day stats via GOOGLEFINANCE formulas
     ├── Live sheet          → Auto: real-time prices, Z-scores, liquidity
     ├── CreditPairs sheet   → Auto: generated inter-company pairs by rating
-    ├── CreditLevels sheet  → Auto: 90-day stats for credit pairs
-    ├── CreditLive sheet    → Auto: real-time data for credit pairs
+    ├── TickerData sheet    → Auto: per-ticker GOOGLEFINANCE prices/volumes
+    ├── TickerHistory sheet → Auto: per-ticker 90-day historical data
     ├── WebCache sheet      → Auto: static snapshot of Live (updated every 10 min)
-    ├── WebCacheCredit sheet→ Auto: static snapshot of CreditLive (updated every 10 min)
+    ├── WebCacheCredit sheet→ Auto: computed credit pair cache (from TickerData + TickerHistory)
     ├── DivDates sheet      → Auto: ex-dividend dates fetched from Yahoo Finance
-    ├── ZScoreAge sheet     → Auto: timestamps when Z-scores first cross ±1.5
+    ├── ZScoreAge sheet     → Auto: timestamps when Z-scores first cross ±1.8
     ├── AlertsLog sheet     → Auto: hourly Z-score snapshots (trend ribbons)
     ├── OpenTrades sheet    → Trade journal (active)
     ├── ClosedTrades sheet  → Trade journal (closed)
@@ -48,9 +48,9 @@ Vercel (Frontend)
 - **WebCache failsafe** — API prefers `WebCache` / `WebCacheCredit` (static snapshots) over `Live` / `CreditLive` (GOOGLEFINANCE formulas). Faster responses, decoupled from formula recalculation.
 - **getAlertData(mode)** reads WebCache (or Live fallback) sheet. Filters:
   - Skips pairs with missing/zero prices
-  - Skips pairs with < 60 trading days of history (HistCount column Q/index 16)
+  - Skips pairs with < 40 trading days of history (HistCount column Q/index 16)
   - Skips pairs where either ticker has empty Coupon Yield (columns I,J / index 8,9)
-  - Only returns pairs with |Z-Score| >= 1.5
+  - Only returns pairs with |Z-Score| >= 1.8
   - Enriches each pair with `divDate` and `divLeg` from the DivDates sheet (nearest upcoming ex-div from either leg)
 - **getOpenTrades()** merges Live + CreditLive for unified portfolio lookup
 - **saveTradeToSheet() / closeTradeInSheet()** check both Live and CreditLive
@@ -143,7 +143,7 @@ Populated by `fetchDividendDates()` via Yahoo Finance. 20-hour cache — tickers
 5. **GAS deployment** — Every code change requires: Manage Deployments → New Version → Deploy. The URL stays the same but the version must increment.
 6. **GOOGLEFINANCE limits** — ~1000 GOOGLEFINANCE calls per sheet. Each pair uses ~6 calls in Live (price×2, volumeavg×2, volume×2) + 2 in Levels (historical). With 500+ credit pairs, sheets may load slowly (30-60s).
 7. **Frontend is a single file** — All HTML, CSS, and JS live in `index.html`. No build step. Deploy via `vercel --prod` from the `frontend/` directory.
-8. **ZScoreAge tracking** — The hourly trigger manages this. If |z| >= 1.5 and no timestamp exists → creates one. If |z| < 1.5 and timestamp exists → deletes it. Age = days since first crossing.
+8. **ZScoreAge tracking** — The hourly trigger manages this. If |z| >= 1.8 and no timestamp exists → creates one. If |z| < 1.8 and timestamp exists → deletes it. Age = days since first crossing.
 9. **DivDates fetch** — Yahoo Finance has rate limits. The 20-hour cache in LastFetched prevents hammering. Phase 1 (batch API) handles most tickers; Phase 2 (chart fallback) catches the rest.
 
 ## Deployment

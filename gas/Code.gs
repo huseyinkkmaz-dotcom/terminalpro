@@ -21,7 +21,9 @@ function doGet(e) {
   var mode = (e && e.parameter && e.parameter.mode) ? e.parameter.mode : 'intra';
   var result = {};
   try {
-    setupMacroSheet();
+    if (action === 'getData' || action === 'getMacroValuation') {
+      setupMacroSheet();
+    }
     if (action === 'getData') {
       // WebCache/WebCacheCredit = primary data source (static values, fast).
       // For intra: falls back to Live (GOOGLEFINANCE formulas).
@@ -567,17 +569,18 @@ function getLivePairData_(ss, pairId) {
 function saveTradeToSheet(trade) {
   var ss = SpreadsheetApp.getActive();
   var sheet = ss.getSheetByName('OpenTrades');
+  if (!sheet) throw new Error('OpenTrades sheet not found. Run setupAllBatched() first.');
   var curZ = 0;
   var cleanTradeId = cleanId(trade.id);
   var realId = trade.id;
-  // Check Live (intra formulas) + WebCacheCredit (credit computed cache)
-  var liveSheets = ['Live','WebCacheCredit'];
+  // Check WebCache/Live (intra) + WebCacheCredit (credit computed cache)
+  var liveSheets = ['WebCache','WebCacheCredit','Live'];
   for (var s = 0; s < liveSheets.length; s++) {
     var ls = ss.getSheetByName(liveSheets[s]);
-    if (!ls) continue;
+    if (!ls || ls.getLastRow() <= 1) continue;
     var live = ls.getDataRange().getValues();
     for (var i = 1; i < live.length; i++) {
-      if (cleanId(live[i][0]).includes(cleanTradeId) || cleanTradeId.includes(cleanId(live[i][0]))) {
+      if (cleanId(live[i][0]) === cleanTradeId) {
         curZ = live[i][12]; // M: Z-Score
         realId = live[i][0];
         break;
@@ -615,11 +618,12 @@ function saveTradeToSheet(trade) {
 function closeTradeInSheet(id) {
   var ss = SpreadsheetApp.getActive();
   var sheet = ss.getSheetByName('OpenTrades');
+  if (!sheet || sheet.getLastRow() <= 1) return true;
   var data = sheet.getDataRange().getValues();
   var cleanTarget = cleanId(id);
   for (var i = data.length - 1; i >= 1; i--) {
     var rowId = cleanId(data[i][0]);
-    if (rowId.includes(cleanTarget) || cleanTarget.includes(rowId)) {
+    if (rowId === cleanTarget) {
       var pairId = data[i][0];
       var entryZ = data[i][1];
       var costA = parseMoney(data[i][2]);
@@ -649,6 +653,7 @@ function closeTradeInSheet(id) {
 function partialCloseTradeInSheet(id, reduceA, reduceB) {
   var ss = SpreadsheetApp.getActive();
   var sheet = ss.getSheetByName('OpenTrades');
+  if (!sheet || sheet.getLastRow() <= 1) return true;
   var data = sheet.getDataRange().getValues();
   var cleanTarget = cleanId(id);
   reduceA = Math.abs(parseFloat(reduceA) || 0);
@@ -656,7 +661,7 @@ function partialCloseTradeInSheet(id, reduceA, reduceB) {
   if (reduceA === 0 && reduceB === 0) return true;
   for (var i = data.length - 1; i >= 1; i--) {
     var rowId = cleanId(data[i][0]);
-    if (rowId.includes(cleanTarget) || cleanTarget.includes(rowId)) {
+    if (rowId === cleanTarget) {
       var pairId = data[i][0];
       var entryZ = data[i][1];
       var costA = parseMoney(data[i][2]);
