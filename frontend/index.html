@@ -159,6 +159,29 @@ td:last-child{border-radius:0 10px 10px 0;border-right:1px solid var(--border)}
 #divModal .div-submit{color:white}
 #divModal .div-submit.paid{background:var(--high)}
 #divModal .div-submit.rcvd{background:var(--low)}
+.note-btn{padding:3px 8px;border:1px solid var(--border);border-radius:4px;background:transparent;color:var(--subtext);font-size:8px;font-weight:900;cursor:pointer;text-transform:uppercase;letter-spacing:.3px;transition:.15s;white-space:nowrap}
+.note-btn:hover{border-color:var(--accent);color:var(--accent)}
+.note-btn.has-note{border-color:var(--low);color:var(--low)}
+.journal-overlay{position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.5);z-index:1100;opacity:0;visibility:hidden;transition:opacity .3s ease}
+.journal-overlay.open{opacity:1;visibility:visible}
+.journal-drawer{position:fixed;top:0;right:0;width:420px;max-width:90vw;height:100%;background:var(--card);border-left:1px solid var(--border);z-index:1101;transform:translateX(100%);transition:transform .3s cubic-bezier(.4,0,.2,1);display:flex;flex-direction:column;overflow:hidden}
+.journal-drawer.open{transform:translateX(0)}
+.journal-header{padding:20px 24px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:flex-start}
+.journal-close{background:none;border:none;color:var(--subtext);font-size:22px;cursor:pointer;padding:0;line-height:1;transition:.15s}
+.journal-close:hover{color:white}
+.journal-body{flex:1;overflow-y:auto;padding:24px}
+.journal-detail{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:24px}
+.journal-detail-item{padding:10px;background:rgba(255,255,255,.03);border-radius:8px;border:1px solid var(--border)}
+.journal-detail-label{font-size:9px;font-weight:900;color:var(--subtext);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px}
+.journal-detail-val{font-family:'JetBrains Mono';font-size:13px;font-weight:900;color:white}
+.journal-textarea{width:100%;min-height:200px;padding:16px;background:var(--bg);border:1px solid var(--border);border-radius:10px;color:white;font-family:'JetBrains Mono';font-size:12px;line-height:1.6;resize:vertical;box-sizing:border-box;outline:none;transition:border-color .15s}
+.journal-textarea:focus{border-color:var(--accent)}
+.journal-textarea::placeholder{color:rgba(255,255,255,.2)}
+.journal-save{width:100%;padding:14px;background:var(--accent);color:var(--bg);border:none;border-radius:10px;font-weight:900;font-size:13px;cursor:pointer;margin-top:16px;transition:.15s;text-transform:uppercase;letter-spacing:.5px}
+.journal-save:hover{opacity:.9}
+.journal-save:disabled{opacity:.5;cursor:not-allowed}
+.journal-saved{color:var(--low);font-size:11px;font-weight:900;text-align:center;margin-top:10px;opacity:0;transition:opacity .3s}
+.journal-saved.show{opacity:1}
 </style>
 </head>
 <body>
@@ -201,6 +224,20 @@ td:last-child{border-radius:0 10px 10px 0;border-right:1px solid var(--border)}
 <button class="div-submit" id="divSubmitBtn" onclick="submitDividend()">Save</button>
 </div>
 </div></div>
+<div class="journal-overlay" id="journalOverlay" onclick="closeJournal()"></div>
+<div class="journal-drawer" id="journalDrawer">
+<div class="journal-header">
+<div><div style="font-weight:900;font-size:18px;color:var(--accent)" id="journalPairId"></div><div style="font-size:10px;color:var(--subtext);margin-top:4px">Trade Journal</div></div>
+<button class="journal-close" onclick="closeJournal()">&times;</button>
+</div>
+<div class="journal-body">
+<div class="journal-detail" id="journalDetails"></div>
+<label style="font-size:10px;font-weight:900;color:var(--subtext);text-transform:uppercase;letter-spacing:.5px;display:block;margin-bottom:8px">Notes</label>
+<textarea class="journal-textarea" id="journalNote" placeholder="Write your trade review, lessons learned, market context..."></textarea>
+<button class="journal-save" id="journalSaveBtn" onclick="saveJournalNote()">Save Note</button>
+<div class="journal-saved" id="journalSaved">Saved</div>
+</div>
+</div>
 <div class="nav-bar">
 <div class="nav-item active" onclick="tab('alerts',this)">Market Alerts</div>
 <div class="nav-item" onclick="tab('portfolio',this)">Active Portfolio</div>
@@ -268,7 +305,7 @@ td:last-child{border-radius:0 10px 10px 0;border-right:1px solid var(--border)}
 </div>
 <div id="historySummary" style="display:flex;gap:15px;margin-bottom:20px"></div>
 <div style="overflow-x:auto">
-<table id="historyTable"><thead><tr><th>Instrument</th><th>Type</th><th>Entry</th><th>Exit</th><th>Size</th><th>Open</th><th>Close</th><th>Hold</th><th class="mono-data">Cap Gains</th><th class="mono-data">Net Div</th><th class="mono-data">Net PnL</th><th>Return</th></tr></thead><tbody></tbody></table>
+<table id="historyTable"><thead><tr><th>Instrument</th><th>Type</th><th>Entry</th><th>Exit</th><th>Size</th><th>Open</th><th>Close</th><th>Hold</th><th class="mono-data">Cap Gains</th><th class="mono-data">Net Div</th><th class="mono-data">Net PnL</th><th>Return</th><th>Journal</th></tr></thead><tbody></tbody></table>
 </div>
 </div>
 </div>
@@ -318,6 +355,10 @@ var divTargetId='',divType='';
 function openDivModal(id,type){divTargetId=id;divType=type;document.getElementById('divAmount').value='';var btn=document.getElementById('divSubmitBtn');if(type==='paid'){document.getElementById('divModalTitle').innerText='Add Paid Dividend';document.getElementById('divModalSub').innerText='Short leg dividend owed — enters as cost';btn.className='div-submit paid';btn.innerText='Record Paid Div';}else{document.getElementById('divModalTitle').innerText='Add Received Dividend';document.getElementById('divModalSub').innerText='Long leg dividend received — enters as income';btn.className='div-submit rcvd';btn.innerText='Record Received Div';}document.getElementById('divModal').style.display='flex';}
 function closeDivModal(){document.getElementById('divModal').style.display='none';}
 async function submitDividend(){var amt=parseFloat(document.getElementById('divAmount').value)||0;if(amt<=0){alert('Enter a positive dollar amount.');return;}closeDivModal();try{await apiGet('addDividend',{id:divTargetId,type:divType,amount:amt});refreshData();}catch(e){alert('Failed to record dividend.');}}
+var journalRowIdx=0;
+function openJournal(rowIdx,id,pnl,openDate,closeDate,holdDays,entryZ,exitZ,capGains,netDiv,note){journalRowIdx=rowIdx;document.getElementById('journalPairId').innerText=id;var pnlF=parseFloat(pnl)||0;var pnlClr=pnlF>=0?'var(--low)':'var(--high)';var cgF=parseFloat(capGains)||0;var cgClr=cgF>=0?'var(--low)':'var(--high)';var ndF=parseFloat(netDiv)||0;var ndClr=ndF>=0?'var(--low)':'var(--high)';document.getElementById('journalDetails').innerHTML='<div class="journal-detail-item"><div class="journal-detail-label">Net PnL</div><div class="journal-detail-val" style="color:'+pnlClr+'">'+(pnlF>=0?'+':'')+pnl+'$</div></div>'+'<div class="journal-detail-item"><div class="journal-detail-label">Cap Gains</div><div class="journal-detail-val" style="color:'+cgClr+'">'+(cgF>=0?'+':'')+capGains+'$</div></div>'+'<div class="journal-detail-item"><div class="journal-detail-label">Net Div</div><div class="journal-detail-val" style="color:'+ndClr+'">'+(ndF>=0?'+':'')+netDiv+'$</div></div>'+'<div class="journal-detail-item"><div class="journal-detail-label">Hold</div><div class="journal-detail-val">'+holdDays+'d</div></div>'+'<div class="journal-detail-item"><div class="journal-detail-label">Entry → Exit</div><div class="journal-detail-val">'+openDate+' → '+closeDate+'</div></div>'+'<div class="journal-detail-item"><div class="journal-detail-label">Z-Score</div><div class="journal-detail-val">'+parseFloat(entryZ).toFixed(2)+'σ → '+parseFloat(exitZ).toFixed(2)+'σ</div></div>';document.getElementById('journalNote').value=note||'';document.getElementById('journalSaved').classList.remove('show');document.getElementById('journalOverlay').classList.add('open');document.getElementById('journalDrawer').classList.add('open');}
+function closeJournal(){document.getElementById('journalOverlay').classList.remove('open');document.getElementById('journalDrawer').classList.remove('open');}
+async function saveJournalNote(){var btn=document.getElementById('journalSaveBtn');var note=document.getElementById('journalNote').value;btn.disabled=true;btn.innerText='SAVING...';try{await apiGet('saveNote',{row:journalRowIdx,note:note});document.getElementById('journalSaved').classList.add('show');btn.innerText='SAVE NOTE';btn.disabled=false;var noteBtn=document.getElementById('nbtn-'+journalRowIdx);if(noteBtn){noteBtn.innerText=note?'Edit Note':'Add Note';noteBtn.className=note?'note-btn has-note':'note-btn';}}catch(e){btn.innerText='SAVE NOTE';btn.disabled=false;alert('Failed to save note.');}}
 async function doClearHistory(){if(!confirm('Clear all history? This cannot be undone.'))return;try{await apiGet("clearHistory");refreshData();}catch(e){alert('Failed to clear history.');}}
 var activeSector='';
 function applyFilters(){var q=document.getElementById('sInput').value.toLowerCase();var ex=(document.getElementById('excludeInput').value||'').toUpperCase().trim();var exTokens=ex?ex.split(/[,\s]+/).filter(function(t){return t.length>0;}):[];document.querySelectorAll('.alert-row').forEach(r=>{var textOk=!q||r.getAttribute('data-s').includes(q);var secOk=!activeSector||r.getAttribute('data-sec')===activeSector;var excludeOk=true;if(exTokens.length>0){var tickers=r.getAttribute('data-tickers')||'';for(var e=0;e<exTokens.length;e++){if(tickers.indexOf(exTokens[e])!==-1){excludeOk=false;break;}}}r.style.display=(textOk&&secOk&&excludeOk)?'':'none';});}
@@ -389,7 +430,7 @@ var totalPnl=0,wins=0,losses=0;hd.forEach(function(h){var p=parseFloat(h.pnl)||0
 var wr=hd.length>0?((wins/hd.length)*100).toFixed(0):'0';
 var pnlClr=totalPnl>=0?'var(--low)':'var(--high)';var pnlSign=totalPnl>=0?'+':'';
 document.getElementById('historySummary').innerHTML='<div class="macro-pill"><span style="color:var(--accent)">TRADES</span><span class="mp-count" style="color:var(--accent)">'+hd.length+'</span></div><div class="macro-pill"><span style="color:'+pnlClr+'">TOTAL PNL</span><span class="mp-count" style="color:'+pnlClr+'">'+pnlSign+totalPnl.toFixed(2)+'$</span></div><div class="macro-pill"><span style="color:var(--low)">WINS</span><span class="mp-count" style="color:var(--low)">'+wins+'</span></div><div class="macro-pill"><span style="color:var(--high)">LOSSES</span><span class="mp-count" style="color:var(--high)">'+losses+'</span></div><div class="macro-pill"><span style="color:var(--subtext)">WIN RATE</span><span class="mp-count" style="color:var(--subtext)">'+wr+'%</span></div>';
-var hh='<tbody>';hd.forEach(function(h){var p=parseFloat(h.pnl)||0;var pc=p>=0?'var(--low)':'var(--high)';var rc=parseFloat(h.returnPct)||0;var typeClr=h.closeType==='PARTIAL'?'var(--yellow)':'var(--subtext)';var cg=parseFloat(h.capGains)||0;var cgc=cg>=0?'var(--low)':'var(--high)';var nd=parseFloat(h.netDiv)||0;var ndc=nd>=0?'var(--low)':'var(--high)';var ndStr=nd!==0?((nd>=0?'+':'')+nd.toFixed(2)+'$'):'—';hh+='<tr><td><div style="font-weight:900;color:var(--accent)">'+h.id+'</div><div style="font-size:10px;color:var(--subtext);margin-top:2px">Z: '+h.entryZ.toFixed(2)+'σ → '+h.exitZ.toFixed(2)+'σ</div></td><td><div class="action-tag" style="color:'+typeClr+';border-color:'+typeClr+';font-size:8px">'+h.closeType+'</div></td><td><div class="mono-data" style="font-size:11px">$'+h.costA+' / $'+h.costB+'</div></td><td><div class="mono-data" style="font-size:11px">$'+h.exitPriceA+' / $'+h.exitPriceB+'</div></td><td><div class="mono-data" style="font-size:11px">'+h.sizeA+' / '+h.sizeB+'</div></td><td>'+h.openDate+'</td><td>'+h.closeDate+'</td><td>'+h.holdDays+'d</td><td><div class="mono-data" style="color:'+cgc+'">'+(cg>=0?'+':'')+cg.toFixed(2)+'$</div></td><td><div class="mono-data" style="color:'+ndc+'">'+ndStr+'</div></td><td><div class="mono-data" style="color:'+pc+';font-weight:900">'+(p>=0?'+':'')+h.pnl+'$</div></td><td><div class="mono-data" style="color:'+pc+'">'+(rc>=0?'+':'')+rc.toFixed(1)+'%</div></td></tr>';});hh+='</tbody>';document.getElementById('historyTable').querySelector('tbody').outerHTML=hh;}
+var hh='<tbody>';hd.forEach(function(h){var p=parseFloat(h.pnl)||0;var pc=p>=0?'var(--low)':'var(--high)';var rc=parseFloat(h.returnPct)||0;var typeClr=h.closeType==='PARTIAL'?'var(--yellow)':'var(--subtext)';var cg=parseFloat(h.capGains)||0;var cgc=cg>=0?'var(--low)':'var(--high)';var nd=parseFloat(h.netDiv)||0;var ndc=nd>=0?'var(--low)':'var(--high)';var ndStr=nd!==0?((nd>=0?'+':'')+nd.toFixed(2)+'$'):'—';var hn=String(h.note||'').replace(/'/g,"\\'").replace(/\n/g,'\\n');var nbCls=h.note?'note-btn has-note':'note-btn';var nbLbl=h.note?'Edit Note':'Add Note';hh+='<tr><td><div style="font-weight:900;color:var(--accent)">'+h.id+'</div><div style="font-size:10px;color:var(--subtext);margin-top:2px">Z: '+h.entryZ.toFixed(2)+'σ → '+h.exitZ.toFixed(2)+'σ</div></td><td><div class="action-tag" style="color:'+typeClr+';border-color:'+typeClr+';font-size:8px">'+h.closeType+'</div></td><td><div class="mono-data" style="font-size:11px">$'+h.costA+' / $'+h.costB+'</div></td><td><div class="mono-data" style="font-size:11px">$'+h.exitPriceA+' / $'+h.exitPriceB+'</div></td><td><div class="mono-data" style="font-size:11px">'+h.sizeA+' / '+h.sizeB+'</div></td><td>'+h.openDate+'</td><td>'+h.closeDate+'</td><td>'+h.holdDays+'d</td><td><div class="mono-data" style="color:'+cgc+'">'+(cg>=0?'+':'')+cg.toFixed(2)+'$</div></td><td><div class="mono-data" style="color:'+ndc+'">'+ndStr+'</div></td><td><div class="mono-data" style="color:'+pc+';font-weight:900">'+(p>=0?'+':'')+h.pnl+'$</div></td><td><div class="mono-data" style="color:'+pc+'">'+(rc>=0?'+':'')+rc.toFixed(1)+'%</div></td><td><button class="'+nbCls+'" id="nbtn-'+h.rowIdx+'" onclick="openJournal('+h.rowIdx+',\''+h.id.replace(/'/g,"\\'")+'\',\''+h.pnl+'\',\''+h.openDate+'\',\''+h.closeDate+'\',\''+h.holdDays+'\',\''+h.entryZ+'\',\''+h.exitZ+'\',\''+h.capGains+'\',\''+h.netDiv+'\',\''+hn+'\')">'+nbLbl+'</button></td></tr>';});hh+='</tbody>';document.getElementById('historyTable').querySelector('tbody').outerHTML=hh;}
 // ── MACRO VALUATION ──
 var macroData=[];var macroCreditAvg={};var macroSortAsc=true;var macroCurrentSignal='all';var macroCurrentSec='';var macroCurrentCredit='';
 function zHeatColor(z){if(z>=2.5)return'rgba(16,185,129,0.35)';if(z>=1.5)return'rgba(16,185,129,0.18)';if(z<=-2.5)return'rgba(239,68,68,0.35)';if(z<=-1.5)return'rgba(239,68,68,0.18)';return'transparent';}

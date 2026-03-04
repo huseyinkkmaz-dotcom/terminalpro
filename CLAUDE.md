@@ -44,7 +44,7 @@ Vercel (Frontend)
 
 ### `gas/Code.gs` — API Backend (V23)
 
-- **doGet()** routes `?action=getData|saveTrade|closeTrade|addDividend` with optional `&mode=intra|credit`
+- **doGet()** routes `?action=getData|saveTrade|closeTrade|addDividend|saveNote` with optional `&mode=intra|credit`
 - **WebCache failsafe** — API prefers `WebCache` / `WebCacheCredit` (static snapshots) over `Live` / `CreditLive` (GOOGLEFINANCE formulas). Faster responses, decoupled from formula recalculation.
 - **getAlertData(mode)** reads WebCache (or Live fallback) sheet. Filters:
   - Skips pairs with missing/zero prices
@@ -56,6 +56,7 @@ Vercel (Frontend)
 - **saveTradeToSheet() / closeTradeInSheet()** check both Live and CreditLive
 - **addDividendToTrade(id, type, amount)** accumulates dividend cash flows on open positions. `type` is `paid` (short leg owes) or `received` (long leg earns). Amounts are additive (accumulator pattern).
 - **PnL formula** — `Net PnL = Capital Gains + Received Div - Paid Div`. Applied in both open trade display and closed trade history.
+- **saveTradeNote(row, note)** saves a journal note to a specific ClosedTrades row. Uses 1-indexed sheet row number (returned as `rowIdx` from `getClosedTrades`). Notes column = P (col 16).
 
 ### `gas/SetupDashboard.gs` — Setup & Automation (V23.1)
 
@@ -162,7 +163,7 @@ Populated by `fetchDividendDates()` via Yahoo Finance. 20-hour cache — tickers
 | 7 | H | PaidDiv | Accumulated dividends paid (short leg) |
 | 8 | I | ReceivedDiv | Accumulated dividends received (long leg) |
 
-## ClosedTrades Sheet Column Map (15 columns, 0-indexed)
+## ClosedTrades Sheet Column Map (16 columns, 0-indexed)
 
 | Index | Col | Name | Description |
 |-------|-----|------|-------------|
@@ -175,6 +176,7 @@ Populated by `fetchDividendDates()` via Yahoo Finance. 20-hour cache — tickers
 | 12 | M | CloseType | FULL or PARTIAL |
 | 13 | N | PaidDiv | Total dividends paid |
 | 14 | O | ReceivedDiv | Total dividends received |
+| 15 | P | Notes | Trade journal notes (free text) |
 
 ## Deployment
 

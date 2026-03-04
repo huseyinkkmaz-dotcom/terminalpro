@@ -93,6 +93,10 @@ function doGet(e) {
       addDividendToTrade(e.parameter.id || "", e.parameter.type || "", parseFloat(e.parameter.amount) || 0);
       result = { ok: true, message: "Dividend recorded" };
     }
+    else if (action === 'saveNote') {
+      saveTradeNote(parseInt(e.parameter.row) || 0, e.parameter.note || "");
+      result = { ok: true, message: "Note saved" };
+    }
     else if (action === 'clearHistory') {
       clearHistory();
       result = { ok: true, message: "History cleared" };
@@ -528,6 +532,7 @@ function getClosedTrades() {
       var closeType = r[12] || 'FULL';
       var paidDiv = parseFloat(r[13]) || 0;
       var rcvdDiv = parseFloat(r[14]) || 0;
+      var note = (r[15] !== undefined && r[15] !== null) ? String(r[15]) : '';
       // capGains = netPnl - rcvdDiv + paidDiv (reverse the formula to extract capital gains)
       var capGains = pnl - rcvdDiv + paidDiv;
       var netDiv = rcvdDiv - paidDiv;
@@ -535,6 +540,7 @@ function getClosedTrades() {
       var returnPct = entryCost > 0 ? (pnl / entryCost * 100) : 0;
       output.push({
         id: info.id, tA: info.tA, tB: info.tB,
+        rowIdx: i + 1, // 1-indexed sheet row for saveTradeNote
         entryZ: parseFloat(r[1]) || 0, exitZ: exitZ,
         costA: costA.toFixed(2), costB: costB.toFixed(2),
         exitPriceA: exitPriceA.toFixed(2), exitPriceB: exitPriceB.toFixed(2),
@@ -548,7 +554,8 @@ function getClosedTrades() {
         rcvdDiv: rcvdDiv.toFixed(2),
         netDiv: netDiv.toFixed(2),
         returnPct: returnPct.toFixed(2),
-        closeType: closeType
+        closeType: closeType,
+        note: note
       });
     }
     return output.reverse();
@@ -663,7 +670,7 @@ function closeTradeInSheet(id) {
       var closed = ss.getSheetByName('ClosedTrades');
       if (!closed) {
         closed = ss.insertSheet('ClosedTrades');
-        closed.getRange(1, 1, 1, 15).setValues([['PairID','EntryZ','CostA','CostB','SizeA','SizeB','OpenDate','CloseDate','PnL','ExitPriceA','ExitPriceB','ExitZ','CloseType','PaidDiv','ReceivedDiv']]);
+        closed.getRange(1, 1, 1, 16).setValues([['PairID','EntryZ','CostA','CostB','SizeA','SizeB','OpenDate','CloseDate','PnL','ExitPriceA','ExitPriceB','ExitZ','CloseType','PaidDiv','ReceivedDiv','Notes']]);
       }
       closed.appendRow([pairId, entryZ, costA, costB, sA, sB, openDate, new Date(), pnl, exitA, exitB, exitZ, 'FULL', paidDiv, rcvdDiv]);
       sheet.deleteRow(i + 1);
@@ -717,7 +724,7 @@ function partialCloseTradeInSheet(id, reduceA, reduceB) {
       var closed = ss.getSheetByName('ClosedTrades');
       if (!closed) {
         closed = ss.insertSheet('ClosedTrades');
-        closed.getRange(1, 1, 1, 15).setValues([['PairID','EntryZ','CostA','CostB','SizeA','SizeB','OpenDate','CloseDate','PnL','ExitPriceA','ExitPriceB','ExitZ','CloseType','PaidDiv','ReceivedDiv']]);
+        closed.getRange(1, 1, 1, 16).setValues([['PairID','EntryZ','CostA','CostB','SizeA','SizeB','OpenDate','CloseDate','PnL','ExitPriceA','ExitPriceB','ExitZ','CloseType','PaidDiv','ReceivedDiv','Notes']]);
       }
       closed.appendRow([pairId, entryZ, costA, costB, closedA * signA, closedB * signB, openDate, new Date(), pnl, exitA, exitB, exitZ, 'PARTIAL', closedPaidDiv, closedRcvdDiv]);
       // Update remaining position — subtract proportional div amounts
@@ -758,6 +765,18 @@ function addDividendToTrade(id, type, amount) {
     }
   }
   throw new Error('Trade not found: ' + id);
+}
+// Saves a journal note to a specific ClosedTrades row.
+// row = 1-indexed sheet row number (from getClosedTrades rowIdx field)
+function saveTradeNote(row, note) {
+  if (!row || row < 2) throw new Error('Invalid row number');
+  var ss = SpreadsheetApp.getActive();
+  var sheet = ss.getSheetByName('ClosedTrades');
+  if (!sheet) throw new Error('ClosedTrades sheet not found');
+  if (row > sheet.getLastRow()) throw new Error('Row does not exist');
+  // Notes column = P (col 16)
+  sheet.getRange(row, 16).setValue(note);
+  return true;
 }
 // ============================================================
 // WATCHLIST

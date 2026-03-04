@@ -129,7 +129,7 @@ function setupAllBatched() {
     if (state.phase === 2) {
       Logger.log('Phase 2: Ensuring supporting sheets...');
       ensureSheet_(ss, 'OpenTrades', ['PairID', 'EntryZ', 'CostA', 'CostB', 'SizeA', 'SizeB', 'Timestamp', 'PaidDiv', 'ReceivedDiv']);
-      ensureSheet_(ss, 'ClosedTrades', ['PairID', 'EntryZ', 'CostA', 'CostB', 'SizeA', 'SizeB', 'OpenDate', 'CloseDate', 'PnL', 'ExitPriceA', 'ExitPriceB', 'ExitZ', 'CloseType', 'PaidDiv', 'ReceivedDiv']);
+      ensureSheet_(ss, 'ClosedTrades', ['PairID', 'EntryZ', 'CostA', 'CostB', 'SizeA', 'SizeB', 'OpenDate', 'CloseDate', 'PnL', 'ExitPriceA', 'ExitPriceB', 'ExitZ', 'CloseType', 'PaidDiv', 'ReceivedDiv', 'Notes']);
       ensureSheet_(ss, 'AlertsLog', ['Timestamp', 'PairID', 'Z-Score', 'Spread']);
       var ageSheet = ss.getSheetByName('ZScoreAge');
       if (!ageSheet) {
@@ -963,7 +963,7 @@ function setupDashboard() {
 
   // --- SUPPORTING SHEETS ---
   ensureSheet_(ss, 'OpenTrades', ['PairID', 'EntryZ', 'CostA', 'CostB', 'SizeA', 'SizeB', 'Timestamp', 'PaidDiv', 'ReceivedDiv']);
-  ensureSheet_(ss, 'ClosedTrades', ['PairID', 'EntryZ', 'CostA', 'CostB', 'SizeA', 'SizeB', 'OpenDate', 'CloseDate', 'PnL', 'ExitPriceA', 'ExitPriceB', 'ExitZ', 'CloseType', 'PaidDiv', 'ReceivedDiv']);
+  ensureSheet_(ss, 'ClosedTrades', ['PairID', 'EntryZ', 'CostA', 'CostB', 'SizeA', 'SizeB', 'OpenDate', 'CloseDate', 'PnL', 'ExitPriceA', 'ExitPriceB', 'ExitZ', 'CloseType', 'PaidDiv', 'ReceivedDiv', 'Notes']);
   ensureSheet_(ss, 'AlertsLog', ['Timestamp', 'PairID', 'Z-Score', 'Spread']);
 
   var ageSheet = ss.getSheetByName('ZScoreAge');
