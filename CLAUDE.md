@@ -44,7 +44,7 @@ Vercel (Frontend)
 
 ### `gas/Code.gs` — API Backend (V23)
 
-- **doGet()** routes `?action=getData|saveTrade|closeTrade` with optional `&mode=intra|credit`
+- **doGet()** routes `?action=getData|saveTrade|closeTrade|addDividend` with optional `&mode=intra|credit`
 - **WebCache failsafe** — API prefers `WebCache` / `WebCacheCredit` (static snapshots) over `Live` / `CreditLive` (GOOGLEFINANCE formulas). Faster responses, decoupled from formula recalculation.
 - **getAlertData(mode)** reads WebCache (or Live fallback) sheet. Filters:
   - Skips pairs with missing/zero prices
@@ -52,8 +52,10 @@ Vercel (Frontend)
   - Skips pairs where either ticker has empty Coupon Yield (columns I,J / index 8,9)
   - Only returns pairs with |Z-Score| >= 1.8
   - Enriches each pair with `divDate` and `divLeg` from the DivDates sheet (nearest upcoming ex-div from either leg)
-- **getOpenTrades()** merges Live + CreditLive for unified portfolio lookup
+- **getOpenTrades()** merges Live + CreditLive for unified portfolio lookup, returns PaidDiv/ReceivedDiv totals
 - **saveTradeToSheet() / closeTradeInSheet()** check both Live and CreditLive
+- **addDividendToTrade(id, type, amount)** accumulates dividend cash flows on open positions. `type` is `paid` (short leg owes) or `received` (long leg earns). Amounts are additive (accumulator pattern).
+- **PnL formula** — `Net PnL = Capital Gains + Received Div - Paid Div`. Applied in both open trade display and closed trade history.
 
 ### `gas/SetupDashboard.gs` — Setup & Automation (V23.1)
 
@@ -145,6 +147,34 @@ Populated by `fetchDividendDates()` via Yahoo Finance. 20-hour cache — tickers
 7. **Frontend is a single file** — All HTML, CSS, and JS live in `index.html`. No build step. Deploy via `vercel --prod` from the `frontend/` directory.
 8. **ZScoreAge tracking** — The hourly trigger manages this. If |z| >= 1.8 and no timestamp exists → creates one. If |z| < 1.8 and timestamp exists → deletes it. Age = days since first crossing.
 9. **DivDates fetch** — Yahoo Finance has rate limits. The 20-hour cache in LastFetched prevents hammering. Phase 1 (batch API) handles most tickers; Phase 2 (chart fallback) catches the rest.
+
+## OpenTrades Sheet Column Map (9 columns, 0-indexed)
+
+| Index | Col | Name | Description |
+|-------|-----|------|-------------|
+| 0 | A | PairID | Pair identifier |
+| 1 | B | EntryZ | Z-score at entry |
+| 2 | C | CostA | Entry price leg A |
+| 3 | D | CostB | Entry price leg B |
+| 4 | E | SizeA | Quantity leg A (+ long, - short) |
+| 5 | F | SizeB | Quantity leg B (+ long, - short) |
+| 6 | G | Timestamp | Trade open date |
+| 7 | H | PaidDiv | Accumulated dividends paid (short leg) |
+| 8 | I | ReceivedDiv | Accumulated dividends received (long leg) |
+
+## ClosedTrades Sheet Column Map (15 columns, 0-indexed)
+
+| Index | Col | Name | Description |
+|-------|-----|------|-------------|
+| 0-6 | A-G | Same as OpenTrades | PairID through OpenDate |
+| 7 | H | CloseDate | Trade close date |
+| 8 | I | PnL | Net PnL (CapGains + RcvdDiv - PaidDiv) |
+| 9 | J | ExitPriceA | Exit price leg A |
+| 10 | K | ExitPriceB | Exit price leg B |
+| 11 | L | ExitZ | Z-score at exit |
+| 12 | M | CloseType | FULL or PARTIAL |
+| 13 | N | PaidDiv | Total dividends paid |
+| 14 | O | ReceivedDiv | Total dividends received |
 
 ## Deployment
 

@@ -89,6 +89,10 @@ function doGet(e) {
       partialCloseTradeInSheet(e.parameter.id || "", e.parameter.reduceA || 0, e.parameter.reduceB || 0);
       result = { ok: true, message: "Partial close recorded" };
     }
+    else if (action === 'addDividend') {
+      addDividendToTrade(e.parameter.id || "", e.parameter.type || "", parseFloat(e.parameter.amount) || 0);
+      result = { ok: true, message: "Dividend recorded" };
+    }
     else if (action === 'clearHistory') {
       clearHistory();
       result = { ok: true, message: "History cleared" };
@@ -464,6 +468,8 @@ function getOpenTrades() {
         var costB = parseMoney(openData[j][3]);
         var sA = parseMoney(openData[j][4]);
         var sB = parseMoney(openData[j][5]);
+        var paidDiv = parseMoney(openData[j][7]);
+        var rcvdDiv = parseMoney(openData[j][8]);
         if (pair) {
           if (pair[1] && String(pair[1]).length > 1) tA_Name = String(pair[1]);
           if (pair[2] && String(pair[2]).length > 1) tB_Name = String(pair[2]);
@@ -471,22 +477,26 @@ function getOpenTrades() {
           var meanTarget = parseFloat(pair[10])||0;
           var livePriceA = parseFloat(pair[3])||0;
           var livePriceB = parseFloat(pair[4])||0;
-          var pnl = ((livePriceA-costA)*sA) + ((livePriceB-costB)*sB);
+          var capGains = ((livePriceA-costA)*sA) + ((livePriceB-costB)*sB);
+          var netPnl = capGains + rcvdDiv - paidDiv;
           results.push({
             id: displayId, tA: tA_Name, tB: tB_Name,
             spr: liveSpr.toFixed(2), target: meanTarget.toFixed(2),
             sA: sA, sB: sB, pA: costA.toFixed(2), pB: costB.toFixed(2),
-            dollarPnL: pnl.toFixed(2),
+            dollarPnL: netPnl.toFixed(2), capGains: capGains.toFixed(2),
+            paidDiv: paidDiv.toFixed(2), rcvdDiv: rcvdDiv.toFixed(2),
             centGoal: (Math.abs((costA-costB)-meanTarget)*100).toFixed(0),
             centRem: (Math.abs(liveSpr-meanTarget)*100).toFixed(0),
-            isWinning: pnl > 0, entryZ: openData[j][1]
+            isWinning: netPnl > 0, entryZ: openData[j][1]
           });
         } else {
           results.push({
             id: displayId+" [WAITING]", tA: tA_Name, tB: tB_Name,
             spr:"0.00", target:"0.00", sA:sA, sB:sB,
             pA:costA.toFixed(2), pB:costB.toFixed(2),
-            dollarPnL:"0.00", centGoal:"0", centRem:"0",
+            dollarPnL:"0.00", capGains:"0.00",
+            paidDiv: paidDiv.toFixed(2), rcvdDiv: rcvdDiv.toFixed(2),
+            centGoal:"0", centRem:"0",
             isWinning:false, entryZ:"0"
           });
         }
@@ -516,6 +526,11 @@ function getClosedTrades() {
       var exitPriceB = parseFloat(r[10]) || 0;
       var exitZ = parseFloat(r[11]) || 0;
       var closeType = r[12] || 'FULL';
+      var paidDiv = parseFloat(r[13]) || 0;
+      var rcvdDiv = parseFloat(r[14]) || 0;
+      // capGains = netPnl - rcvdDiv + paidDiv (reverse the formula to extract capital gains)
+      var capGains = pnl - rcvdDiv + paidDiv;
+      var netDiv = rcvdDiv - paidDiv;
       var entryCost = Math.abs(costA * sizeA) + Math.abs(costB * sizeB);
       var returnPct = entryCost > 0 ? (pnl / entryCost * 100) : 0;
       output.push({
@@ -528,6 +543,10 @@ function getClosedTrades() {
         closeDate: closeDate ? closeDate.toLocaleDateString() : '---',
         holdDays: holdDays,
         pnl: pnl.toFixed(2),
+        capGains: capGains.toFixed(2),
+        paidDiv: paidDiv.toFixed(2),
+        rcvdDiv: rcvdDiv.toFixed(2),
+        netDiv: netDiv.toFixed(2),
         returnPct: returnPct.toFixed(2),
         closeType: closeType
       });
@@ -611,8 +630,8 @@ function saveTradeToSheet(trade) {
       return true;
     }
   }
-  // No existing position — create new row
-  sheet.appendRow([realId, curZ, trade.priceA, trade.priceB, trade.sizeA, trade.sizeB, new Date()]);
+  // No existing position — create new row (cols: PairID, EntryZ, CostA, CostB, SizeA, SizeB, Timestamp, PaidDiv, ReceivedDiv)
+  sheet.appendRow([realId, curZ, trade.priceA, trade.priceB, trade.sizeA, trade.sizeB, new Date(), 0, 0]);
   return true;
 }
 function closeTradeInSheet(id) {
@@ -631,19 +650,22 @@ function closeTradeInSheet(id) {
       var sA = parseMoney(data[i][4]);
       var sB = parseMoney(data[i][5]);
       var openDate = data[i][6];
+      var paidDiv = parseMoney(data[i][7]);
+      var rcvdDiv = parseMoney(data[i][8]);
       // Look up live exit prices
       var live = getLivePairData_(ss, pairId);
       var exitA = live ? live.priceA : costA;
       var exitB = live ? live.priceB : costB;
       var exitZ = live ? live.z : 0;
-      var pnl = ((exitA - costA) * sA) + ((exitB - costB) * sB);
+      var capGains = ((exitA - costA) * sA) + ((exitB - costB) * sB);
+      var pnl = capGains + rcvdDiv - paidDiv;
       // Write to ClosedTrades
       var closed = ss.getSheetByName('ClosedTrades');
       if (!closed) {
         closed = ss.insertSheet('ClosedTrades');
-        closed.getRange(1, 1, 1, 13).setValues([['PairID','EntryZ','CostA','CostB','SizeA','SizeB','OpenDate','CloseDate','PnL','ExitPriceA','ExitPriceB','ExitZ','CloseType']]);
+        closed.getRange(1, 1, 1, 15).setValues([['PairID','EntryZ','CostA','CostB','SizeA','SizeB','OpenDate','CloseDate','PnL','ExitPriceA','ExitPriceB','ExitZ','CloseType','PaidDiv','ReceivedDiv']]);
       }
-      closed.appendRow([pairId, entryZ, costA, costB, sA, sB, openDate, new Date(), pnl, exitA, exitB, exitZ, 'FULL']);
+      closed.appendRow([pairId, entryZ, costA, costB, sA, sB, openDate, new Date(), pnl, exitA, exitB, exitZ, 'FULL', paidDiv, rcvdDiv]);
       sheet.deleteRow(i + 1);
       break;
     }
@@ -669,38 +691,73 @@ function partialCloseTradeInSheet(id, reduceA, reduceB) {
       var sA = parseMoney(data[i][4]);
       var sB = parseMoney(data[i][5]);
       var openDate = data[i][6];
+      var totalPaidDiv = parseMoney(data[i][7]);
+      var totalRcvdDiv = parseMoney(data[i][8]);
       // Clamp reduce amounts to position size
       var closedA = Math.min(reduceA, Math.abs(sA));
       var closedB = Math.min(reduceB, Math.abs(sB));
       // Preserve sign (long=+, short=-)
       var signA = sA >= 0 ? 1 : -1;
       var signB = sB >= 0 ? 1 : -1;
+      // Proportionally split div amounts between closed and remaining portions
+      var totalSize = Math.abs(sA) + Math.abs(sB);
+      var closedSize = closedA + closedB;
+      var divRatio = totalSize > 0 ? closedSize / totalSize : 1;
+      var closedPaidDiv = Math.round(totalPaidDiv * divRatio * 100) / 100;
+      var closedRcvdDiv = Math.round(totalRcvdDiv * divRatio * 100) / 100;
       // Look up live exit prices
       var live = getLivePairData_(ss, pairId);
       var exitA = live ? live.priceA : costA;
       var exitB = live ? live.priceB : costB;
       var exitZ = live ? live.z : 0;
-      // PnL only on the closed portion
-      var pnl = ((exitA - costA) * closedA * signA) + ((exitB - costB) * closedB * signB);
+      // PnL: capital gains on closed portion + proportional dividends
+      var capGains = ((exitA - costA) * closedA * signA) + ((exitB - costB) * closedB * signB);
+      var pnl = capGains + closedRcvdDiv - closedPaidDiv;
       // Write closed portion to ClosedTrades
       var closed = ss.getSheetByName('ClosedTrades');
       if (!closed) {
         closed = ss.insertSheet('ClosedTrades');
-        closed.getRange(1, 1, 1, 13).setValues([['PairID','EntryZ','CostA','CostB','SizeA','SizeB','OpenDate','CloseDate','PnL','ExitPriceA','ExitPriceB','ExitZ','CloseType']]);
+        closed.getRange(1, 1, 1, 15).setValues([['PairID','EntryZ','CostA','CostB','SizeA','SizeB','OpenDate','CloseDate','PnL','ExitPriceA','ExitPriceB','ExitZ','CloseType','PaidDiv','ReceivedDiv']]);
       }
-      closed.appendRow([pairId, entryZ, costA, costB, closedA * signA, closedB * signB, openDate, new Date(), pnl, exitA, exitB, exitZ, 'PARTIAL']);
-      // Update remaining position
+      closed.appendRow([pairId, entryZ, costA, costB, closedA * signA, closedB * signB, openDate, new Date(), pnl, exitA, exitB, exitZ, 'PARTIAL', closedPaidDiv, closedRcvdDiv]);
+      // Update remaining position — subtract proportional div amounts
       var remainA = sA - (closedA * signA);
       var remainB = sB - (closedB * signB);
+      var remainPaidDiv = totalPaidDiv - closedPaidDiv;
+      var remainRcvdDiv = totalRcvdDiv - closedRcvdDiv;
       if (Math.abs(remainA) < 0.01 && Math.abs(remainB) < 0.01) {
         sheet.deleteRow(i + 1);
       } else {
         sheet.getRange(i + 1, 5, 1, 2).setValues([[remainA, remainB]]);
+        sheet.getRange(i + 1, 8, 1, 2).setValues([[remainPaidDiv, remainRcvdDiv]]);
       }
       break;
     }
   }
   return true;
+}
+// ============================================================
+// DIVIDEND TRACKING
+// ============================================================
+// OpenTrades columns: A(0):PairID B(1):EntryZ C(2):CostA D(3):CostB E(4):SizeA F(5):SizeB G(6):Timestamp H(7):PaidDiv I(8):ReceivedDiv
+function addDividendToTrade(id, type, amount) {
+  if (!id || !type || !amount || amount <= 0) throw new Error('Invalid dividend input');
+  var ss = SpreadsheetApp.getActive();
+  var sheet = ss.getSheetByName('OpenTrades');
+  if (!sheet || sheet.getLastRow() <= 1) throw new Error('No open trades found');
+  var data = sheet.getDataRange().getValues();
+  var cleanTarget = cleanId(id);
+  // Determine column: PaidDiv=col H (index 7, sheet col 8), ReceivedDiv=col I (index 8, sheet col 9)
+  var colIndex = (type === 'paid') ? 7 : 8;
+  var sheetCol = colIndex + 1; // 1-indexed
+  for (var i = 1; i < data.length; i++) {
+    if (cleanId(data[i][0]) === cleanTarget) {
+      var existing = parseMoney(data[i][colIndex]);
+      sheet.getRange(i + 1, sheetCol).setValue(existing + amount);
+      return true;
+    }
+  }
+  throw new Error('Trade not found: ' + id);
 }
 // ============================================================
 // WATCHLIST
