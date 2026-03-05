@@ -618,7 +618,7 @@ h+='<div class="pa-banner-stat"><span class="pa-banner-label">Legs</span><span c
 h+='<div class="pa-banner-stat"><span class="pa-banner-label">Valid Legs</span><span class="pa-banner-val" style="color:var(--text)">'+(m.validLegs||0)+'</span></div>';
 h+='<div class="pa-banner-stat"><span class="pa-banner-label">History</span><span class="pa-banner-val" style="color:var(--subtext)">'+(m.historyDays||0)+'d</span></div>';
 var ns=m.netSpread||0;var nsClr=ns>=0?'var(--low)':'var(--high)';
-h+='<div class="pa-banner-stat"><span class="pa-banner-label">Net Spread</span><span class="pa-banner-val" style="color:'+nsClr+'">'+(ns>=0?'+':'')+ns.toFixed(2)+'</span></div>';
+h+='<div class="pa-banner-stat"><span class="pa-banner-label">Net Spread</span><span class="pa-banner-val" style="color:'+nsClr+'">'+(ns>=0?'+':'')+'$'+Math.abs(ns).toFixed(2)+'</span></div>';
 h+='<div class="pa-banner-stat"><span class="pa-banner-label">Long $</span><span class="pa-banner-val" style="color:var(--low)">$'+(m.grossLong||0).toLocaleString()+'</span></div>';
 h+='<div class="pa-banner-stat"><span class="pa-banner-label">Short $</span><span class="pa-banner-val" style="color:var(--high)">$'+(m.grossShort||0).toLocaleString()+'</span></div>';
 h+='<div class="pa-banner-stat"><span class="pa-banner-label">Gross Exposure</span><span class="pa-banner-val" style="color:var(--text)">$'+(m.grossExposure||0).toLocaleString()+'</span></div>';
@@ -627,7 +627,7 @@ h+='</div>';
 if(ad.mode==='live'&&m.entrySpread!==undefined){
 var cgClr=m.capitalGains>=0?'var(--low)':'var(--high)';var ndClr=m.netDividends>=0?'var(--low)':'var(--high)';var pnlClr=m.totalPnL>=0?'var(--low)':'var(--high)';
 h+='<div class="pa-pnl-bar">';
-h+='<div class="pa-pnl-card"><div class="pa-pnl-label">Entry Spread</div><div class="pa-pnl-val" style="color:var(--text)">'+(m.entrySpread>=0?'+':'')+m.entrySpread.toFixed(2)+'</div></div>';
+h+='<div class="pa-pnl-card"><div class="pa-pnl-label">Entry Spread</div><div class="pa-pnl-val" style="color:var(--text)">'+(m.entrySpread>=0?'+':'')+'$'+Math.abs(m.entrySpread).toFixed(2)+'</div></div>';
 h+='<div class="pa-pnl-card"><div class="pa-pnl-label">Capital Gains</div><div class="pa-pnl-val" style="color:'+cgClr+'">'+(m.capitalGains>=0?'+':'')+m.capitalGains.toFixed(2)+'$</div></div>';
 h+='<div class="pa-pnl-card"><div class="pa-pnl-label">Net Dividends</div><div class="pa-pnl-val" style="color:'+ndClr+'">'+(m.netDividends>=0?'+':'')+m.netDividends.toFixed(2)+'$</div></div>';
 h+='<div class="pa-pnl-card"><div class="pa-pnl-label">Total PnL</div><div class="pa-pnl-val" style="color:'+pnlClr+'">'+(m.totalPnL>=0?'+':'')+m.totalPnL.toFixed(2)+'$</div></div>';
@@ -640,9 +640,9 @@ h+='<div style="background:rgba(245,158,11,.08);border:1px solid var(--yellow);b
 if(ad.mode==='sandbox'&&m.hypotheticalSpread!==undefined){
 var hSpreadDelta=(m.netSpread||0)-(m.hypotheticalSpread||0);var hDClr=hSpreadDelta>=0?'var(--low)':'var(--high)';
 h+='<div class="pa-pnl-bar">';
-h+='<div class="pa-pnl-card"><div class="pa-pnl-label">Entry Spread</div><div class="pa-pnl-val" style="color:var(--text)">'+(m.hypotheticalSpread>=0?'+':'')+m.hypotheticalSpread.toFixed(2)+'</div></div>';
-h+='<div class="pa-pnl-card"><div class="pa-pnl-label">Current Spread</div><div class="pa-pnl-val" style="color:var(--text)">'+(ns>=0?'+':'')+ns.toFixed(2)+'</div></div>';
-h+='<div class="pa-pnl-card"><div class="pa-pnl-label">Spread Change</div><div class="pa-pnl-val" style="color:'+hDClr+'">'+(hSpreadDelta>=0?'+':'')+hSpreadDelta.toFixed(2)+'</div></div>';
+h+='<div class="pa-pnl-card"><div class="pa-pnl-label">Entry Spread</div><div class="pa-pnl-val" style="color:var(--text)">'+(m.hypotheticalSpread>=0?'+':'')+'$'+Math.abs(m.hypotheticalSpread).toFixed(2)+'</div></div>';
+h+='<div class="pa-pnl-card"><div class="pa-pnl-label">Current Spread</div><div class="pa-pnl-val" style="color:var(--text)">'+(ns>=0?'+':'')+'$'+Math.abs(ns).toFixed(2)+'</div></div>';
+h+='<div class="pa-pnl-card"><div class="pa-pnl-label">Spread Change</div><div class="pa-pnl-val" style="color:'+hDClr+'">'+(hSpreadDelta>=0?'+':'')+'$'+Math.abs(hSpreadDelta).toFixed(2)+'</div></div>';
 h+='<div class="pa-pnl-card"><div class="pa-pnl-label">Entry Gross $</div><div class="pa-pnl-val" style="color:var(--text)">$'+(m.hypotheticalGrossExposure||0).toLocaleString()+'</div></div>';
 h+='</div>';}
 // 30/60/90 window cards
@@ -660,9 +660,9 @@ h+='<div class="pa-window-card">';
 h+='<div class="pa-window-label">'+windows[i].l+'<span class="pa-window-badge">'+(hasData?w.dataPoints+'d data':'insufficient data')+'</span></div>';
 if(hasData){
 h+='<div class="pa-metric-row"><span class="pa-metric-label">Z-Score</span><span class="pa-metric-val big" style="color:'+zs.c+'">'+(z>=0?'+':'')+z.toFixed(2)+'&sigma;</span></div>';
-h+='<div class="pa-metric-row"><span class="pa-metric-label">Exp. Profit (Mean Reversion)</span><span class="pa-metric-val" style="color:'+epClr+'">'+(ep>=0?'+':'')+ep.toFixed(2)+'$</span></div>';
-h+='<div class="pa-metric-row"><span class="pa-metric-label">Spread Mean</span><span class="pa-metric-val" style="color:var(--subtext)">'+(w.mean>=0?'+':'')+w.mean.toFixed(2)+'</span></div>';
-h+='<div class="pa-metric-row"><span class="pa-metric-label">Spread Std Dev</span><span class="pa-metric-val" style="color:var(--subtext)">'+w.std.toFixed(2)+'</span></div>';
+h+='<div class="pa-metric-row"><span class="pa-metric-label">Exp. Profit (Mean Reversion)</span><span class="pa-metric-val" style="color:'+epClr+'">'+(ep>=0?'+':'')+'$'+Math.abs(ep).toFixed(2)+'</span></div>';
+h+='<div class="pa-metric-row"><span class="pa-metric-label">Spread Mean</span><span class="pa-metric-val" style="color:var(--subtext)">'+(w.mean>=0?'+':'')+'$'+Math.abs(w.mean).toFixed(2)+'</span></div>';
+h+='<div class="pa-metric-row"><span class="pa-metric-label">Spread Std Dev</span><span class="pa-metric-val" style="color:var(--subtext)">$'+w.std.toFixed(2)+'</span></div>';
 }else{
 h+='<div style="text-align:center;padding:20px;color:var(--subtext);font-weight:700">Need '+windows[i].k.replace('d','')+' days of history</div>';}
 // Sparkline (use daily values trimmed to this window)
