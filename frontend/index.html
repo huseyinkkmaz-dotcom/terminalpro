@@ -408,7 +408,7 @@ td:last-child{border-radius:0 10px 10px 0;border-right:1px solid var(--border)}
 </div>
 <div id="paSandboxSection" style="display:none">
 <div class="sb-form" id="sbForm">
-<div class="sb-header"><span>Ticker</span><span>Direction</span><span>Size</span><span>Entry $</span><span></span></div>
+<div class="sb-header"><span>Ticker</span><span>Direction</span><span>Size</span><span>Price</span><span></span></div>
 <div id="sbLegs"></div>
 <div class="sb-actions">
 <button class="sb-add-btn" onclick="sbAddLeg()">+ Add Leg</button>
@@ -616,13 +616,17 @@ h+='<div class="pa-banner-stat"><span class="pa-banner-label">Legs</span><span c
 }
 h+='<div class="pa-banner-stat"><span class="pa-banner-label">Valid Legs</span><span class="pa-banner-val" style="color:var(--text)">'+(m.validLegs||0)+'</span></div>';
 h+='<div class="pa-banner-stat"><span class="pa-banner-label">History</span><span class="pa-banner-val" style="color:var(--subtext)">'+(m.historyDays||0)+'d</span></div>';
-h+='<div class="pa-banner-stat"><span class="pa-banner-label">Current Value</span><span class="pa-banner-val" style="color:var(--text)">$'+(m.currentValue||0).toLocaleString()+'</span></div>';
+var ns=m.netSpread||0;var nsClr=ns>=0?'var(--low)':'var(--high)';
+h+='<div class="pa-banner-stat"><span class="pa-banner-label">Net Spread</span><span class="pa-banner-val" style="color:'+nsClr+'">'+(ns>=0?'+':'')+ns.toFixed(2)+'</span></div>';
+h+='<div class="pa-banner-stat"><span class="pa-banner-label">Long $</span><span class="pa-banner-val" style="color:var(--low)">$'+(m.grossLong||0).toLocaleString()+'</span></div>';
+h+='<div class="pa-banner-stat"><span class="pa-banner-label">Short $</span><span class="pa-banner-val" style="color:var(--high)">$'+(m.grossShort||0).toLocaleString()+'</span></div>';
+h+='<div class="pa-banner-stat"><span class="pa-banner-label">Gross Exposure</span><span class="pa-banner-val" style="color:var(--text)">$'+(m.grossExposure||0).toLocaleString()+'</span></div>';
 h+='</div>';
 // PnL bar (live mode only)
-if(ad.mode==='live'&&m.entryValue!==undefined){
+if(ad.mode==='live'&&m.entrySpread!==undefined){
 var cgClr=m.capitalGains>=0?'var(--low)':'var(--high)';var ndClr=m.netDividends>=0?'var(--low)':'var(--high)';var pnlClr=m.totalPnL>=0?'var(--low)':'var(--high)';
 h+='<div class="pa-pnl-bar">';
-h+='<div class="pa-pnl-card"><div class="pa-pnl-label">Entry Value</div><div class="pa-pnl-val" style="color:var(--text)">$'+m.entryValue.toLocaleString()+'</div></div>';
+h+='<div class="pa-pnl-card"><div class="pa-pnl-label">Entry Spread</div><div class="pa-pnl-val" style="color:var(--text)">'+(m.entrySpread>=0?'+':'')+m.entrySpread.toFixed(2)+'</div></div>';
 h+='<div class="pa-pnl-card"><div class="pa-pnl-label">Capital Gains</div><div class="pa-pnl-val" style="color:'+cgClr+'">'+(m.capitalGains>=0?'+':'')+m.capitalGains.toFixed(2)+'$</div></div>';
 h+='<div class="pa-pnl-card"><div class="pa-pnl-label">Net Dividends</div><div class="pa-pnl-val" style="color:'+ndClr+'">'+(m.netDividends>=0?'+':'')+m.netDividends.toFixed(2)+'$</div></div>';
 h+='<div class="pa-pnl-card"><div class="pa-pnl-label">Total PnL</div><div class="pa-pnl-val" style="color:'+pnlClr+'">'+(m.totalPnL>=0?'+':'')+m.totalPnL.toFixed(2)+'$</div></div>';
@@ -632,10 +636,13 @@ h+='</div>';
 if(m.missingTickers&&m.missingTickers.length>0){
 h+='<div style="background:rgba(245,158,11,.08);border:1px solid var(--yellow);border-radius:8px;padding:12px 16px;margin-bottom:24px;font-size:11px;color:var(--yellow);font-weight:700">Missing history for: '+m.missingTickers.join(', ')+' — these legs are excluded from calculations.</div>';}
 // Hypothetical entry (sandbox)
-if(ad.mode==='sandbox'&&m.hypotheticalEntry!==undefined){
-h+='<div class="pa-pnl-bar" style="grid-template-columns:1fr 1fr">';
-h+='<div class="pa-pnl-card"><div class="pa-pnl-label">Hypothetical Entry Value</div><div class="pa-pnl-val" style="color:var(--text)">$'+m.hypotheticalEntry.toLocaleString()+'</div></div>';
-h+='<div class="pa-pnl-card"><div class="pa-pnl-label">Current Market Value</div><div class="pa-pnl-val" style="color:var(--text)">$'+(m.currentValue||0).toLocaleString()+'</div></div>';
+if(ad.mode==='sandbox'&&m.hypotheticalSpread!==undefined){
+var hSpreadDelta=(m.netSpread||0)-(m.hypotheticalSpread||0);var hDClr=hSpreadDelta>=0?'var(--low)':'var(--high)';
+h+='<div class="pa-pnl-bar">';
+h+='<div class="pa-pnl-card"><div class="pa-pnl-label">Entry Spread</div><div class="pa-pnl-val" style="color:var(--text)">'+(m.hypotheticalSpread>=0?'+':'')+m.hypotheticalSpread.toFixed(2)+'</div></div>';
+h+='<div class="pa-pnl-card"><div class="pa-pnl-label">Current Spread</div><div class="pa-pnl-val" style="color:var(--text)">'+(ns>=0?'+':'')+ns.toFixed(2)+'</div></div>';
+h+='<div class="pa-pnl-card"><div class="pa-pnl-label">Spread Change</div><div class="pa-pnl-val" style="color:'+hDClr+'">'+(hSpreadDelta>=0?'+':'')+hSpreadDelta.toFixed(2)+'</div></div>';
+h+='<div class="pa-pnl-card"><div class="pa-pnl-label">Entry Gross $</div><div class="pa-pnl-val" style="color:var(--text)">$'+(m.hypotheticalGrossExposure||0).toLocaleString()+'</div></div>';
 h+='</div>';}
 // 30/60/90 window cards
 var rz=m.rollingZ||{};
@@ -652,9 +659,9 @@ h+='<div class="pa-window-card">';
 h+='<div class="pa-window-label">'+windows[i].l+'<span class="pa-window-badge">'+(hasData?w.dataPoints+'d data':'insufficient data')+'</span></div>';
 if(hasData){
 h+='<div class="pa-metric-row"><span class="pa-metric-label">Z-Score</span><span class="pa-metric-val big" style="color:'+zs.c+'">'+(z>=0?'+':'')+z.toFixed(2)+'&sigma;</span></div>';
-h+='<div class="pa-metric-row"><span class="pa-metric-label">Expected Profit</span><span class="pa-metric-val" style="color:'+epClr+'">'+(ep>=0?'+':'')+ep.toFixed(2)+'$</span></div>';
-h+='<div class="pa-metric-row"><span class="pa-metric-label">Mean</span><span class="pa-metric-val" style="color:var(--subtext)">$'+w.mean.toLocaleString()+'</span></div>';
-h+='<div class="pa-metric-row"><span class="pa-metric-label">Std Dev</span><span class="pa-metric-val" style="color:var(--subtext)">$'+w.std.toLocaleString()+'</span></div>';
+h+='<div class="pa-metric-row"><span class="pa-metric-label">Exp. Profit (Mean Reversion)</span><span class="pa-metric-val" style="color:'+epClr+'">'+(ep>=0?'+':'')+ep.toFixed(2)+'$</span></div>';
+h+='<div class="pa-metric-row"><span class="pa-metric-label">Spread Mean</span><span class="pa-metric-val" style="color:var(--subtext)">'+(w.mean>=0?'+':'')+w.mean.toFixed(2)+'</span></div>';
+h+='<div class="pa-metric-row"><span class="pa-metric-label">Spread Std Dev</span><span class="pa-metric-val" style="color:var(--subtext)">'+w.std.toFixed(2)+'</span></div>';
 }else{
 h+='<div style="text-align:center;padding:20px;color:var(--subtext);font-weight:700">Need '+windows[i].k.replace('d','')+' days of history</div>';}
 // Sparkline (use daily values trimmed to this window)
@@ -682,7 +689,7 @@ var line=pts.join(' ');
 var area='M'+pts[0]+' L'+line+' L'+(w-pad).toFixed(1)+','+ht+' L'+pad+','+ht+' Z';
 return'<svg viewBox="0 0 '+w+' '+ht+'" preserveAspectRatio="none"><defs><linearGradient id="'+gid+'" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="'+color+'" stop-opacity="0.3"/><stop offset="100%" stop-color="'+color+'" stop-opacity="0"/></linearGradient></defs><path d="'+area+'" fill="url(#'+gid+')"/><polyline points="'+line+'" fill="none" stroke="'+color+'" stroke-width="1.5" stroke-linejoin="round"/><circle cx="'+pts[pts.length-1].split(',')[0]+'" cy="'+pts[pts.length-1].split(',')[1]+'" r="2.5" fill="'+color+'"/></svg>';}
 // ── Sandbox form ──
-function sbAddLeg(){sbLegCounter++;var div=document.createElement('div');div.className='sb-leg-row';div.id='sbLeg-'+sbLegCounter;div.innerHTML='<input type="text" placeholder="e.g. BAC-B" class="sb-ticker" spellcheck="false"><select class="sb-dir"><option value="1">LONG</option><option value="-1">SHORT</option></select><input type="number" placeholder="Shares" class="sb-size" min="1"><input type="number" placeholder="Entry $" class="sb-entry" step="0.01" min="0"><button class="sb-remove-btn" onclick="sbRemoveLeg(\'sbLeg-'+sbLegCounter+'\')">&times;</button>';document.getElementById('sbLegs').appendChild(div);}
+function sbAddLeg(){sbLegCounter++;var div=document.createElement('div');div.className='sb-leg-row';div.id='sbLeg-'+sbLegCounter;div.innerHTML='<input type="text" placeholder="e.g. BAC-B" class="sb-ticker" spellcheck="false"><select class="sb-dir"><option value="1">LONG</option><option value="-1">SHORT</option></select><input type="number" placeholder="Shares" class="sb-size" min="1"><input type="number" placeholder="Price" class="sb-entry" step="0.01" min="0"><button class="sb-remove-btn" onclick="sbRemoveLeg(\'sbLeg-'+sbLegCounter+'\')">&times;</button>';document.getElementById('sbLegs').appendChild(div);}
 function sbRemoveLeg(id){var el=document.getElementById(id);if(el)el.remove();}
 async function sbCalculate(){var rows=document.querySelectorAll('.sb-leg-row');var legs=[];rows.forEach(function(r){var tk=r.querySelector('.sb-ticker').value.trim();var dir=r.querySelector('.sb-dir').value;var sz=r.querySelector('.sb-size').value;var ep=r.querySelector('.sb-entry').value;if(tk&&sz){legs.push({ticker:tk,direction:parseFloat(dir),size:parseFloat(sz),entryPrice:parseFloat(ep)||0});}});
 if(legs.length===0){alert('Add at least one leg with a ticker and size.');return;}

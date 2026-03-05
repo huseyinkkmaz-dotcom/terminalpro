@@ -853,9 +853,21 @@ function computeBasketMetrics_(legs, histMap) {
     }
   }
 
+  // Compute gross exposure (long $ + short $) from most recent prices
+  var grossLong = 0, grossShort = 0;
+  for (var j = 0; j < validLegs.length; j++) {
+    var leg = validLegs[j];
+    var latestPrice = leg.hist[leg.hist.length - 1];
+    var legVal = leg.size * latestPrice;
+    if (leg.dir > 0) grossLong += legVal; else grossShort += legVal;
+  }
+
   return {
     rollingZ: rollingZ,
-    currentValue: parseFloat(currentValue.toFixed(2)),
+    netSpread: parseFloat(currentValue.toFixed(2)),
+    grossLong: parseFloat(grossLong.toFixed(2)),
+    grossShort: parseFloat(grossShort.toFixed(2)),
+    grossExposure: parseFloat((grossLong + grossShort).toFixed(2)),
     dailyValues: dailyValues.length > 0 ? dailyValues.slice(-90).map(function(v) { return parseFloat(v.toFixed(2)); }) : [],
     validLegs: validLegs.length,
     historyDays: maxDays
@@ -893,7 +905,7 @@ function getPortfolioAnalytics(mode, legsJson) {
         }
       }
 
-      var entryValue = 0;
+      var entrySpread = 0, entryGrossLong = 0, entryGrossShort = 0;
       for (var j = 1; j < openData.length; j++) {
         var rawId = openData[j][0];
         if (!rawId) continue;
@@ -906,11 +918,13 @@ function getPortfolioAnalytics(mode, legsJson) {
         // Each open trade has two legs: A and B, with signed sizes
         if (sA !== 0) {
           legs.push({ ticker: info.tA, size: Math.abs(sA), direction: sA > 0 ? 1 : -1 });
-          entryValue += sA * costA; // signed: long adds, short subtracts
+          entrySpread += sA * costA; // signed: long adds, short subtracts
+          if (sA > 0) entryGrossLong += Math.abs(sA) * costA; else entryGrossShort += Math.abs(sA) * costA;
         }
         if (sB !== 0) {
           legs.push({ ticker: info.tB, size: Math.abs(sB), direction: sB > 0 ? 1 : -1 });
-          entryValue += sB * costB;
+          entrySpread += sB * costB;
+          if (sB > 0) entryGrossLong += Math.abs(sB) * costB; else entryGrossShort += Math.abs(sB) * costB;
         }
       }
 
@@ -941,11 +955,14 @@ function getPortfolioAnalytics(mode, legsJson) {
         totalRcvdDiv += parseMoney(openData[j][8]);
       }
 
-      metrics.entryValue = parseFloat(entryValue.toFixed(2));
-      metrics.currentLiveValue = parseFloat(currentLiveValue.toFixed(2));
-      metrics.capitalGains = parseFloat((currentLiveValue - entryValue).toFixed(2));
+      metrics.entrySpread = parseFloat(entrySpread.toFixed(2));
+      metrics.entryGrossLong = parseFloat(entryGrossLong.toFixed(2));
+      metrics.entryGrossShort = parseFloat(entryGrossShort.toFixed(2));
+      metrics.entryGrossExposure = parseFloat((entryGrossLong + entryGrossShort).toFixed(2));
+      metrics.currentLiveSpread = parseFloat(currentLiveValue.toFixed(2));
+      metrics.capitalGains = parseFloat((currentLiveValue - entrySpread).toFixed(2));
       metrics.netDividends = parseFloat((totalRcvdDiv - totalPaidDiv).toFixed(2));
-      metrics.totalPnL = parseFloat((currentLiveValue - entryValue + totalRcvdDiv - totalPaidDiv).toFixed(2));
+      metrics.totalPnL = parseFloat((currentLiveValue - entrySpread + totalRcvdDiv - totalPaidDiv).toFixed(2));
 
       return { mode: 'live', trades: openData.length - 1, legs: legs.length, metrics: metrics };
     }
@@ -963,16 +980,20 @@ function getPortfolioAnalytics(mode, legsJson) {
 
       var metrics = computeBasketMetrics_(legs, histMap);
 
-      // Compute hypothetical entry value from provided prices
-      var hypotheticalEntry = 0;
+      // Compute hypothetical entry spread + gross exposure from provided prices
+      var hypotheticalSpread = 0, hypotheticalGrossLong = 0, hypotheticalGrossShort = 0;
       for (var i = 0; i < userLegs.length; i++) {
         var ul = userLegs[i];
         var sz = Math.abs(parseFloat(ul.size) || 0);
         var dir = parseFloat(ul.direction) > 0 ? 1 : -1;
         var ep = parseFloat(ul.entryPrice) || 0;
-        hypotheticalEntry += dir * sz * ep;
+        hypotheticalSpread += dir * sz * ep;
+        if (dir > 0) hypotheticalGrossLong += sz * ep; else hypotheticalGrossShort += sz * ep;
       }
-      metrics.hypotheticalEntry = parseFloat(hypotheticalEntry.toFixed(2));
+      metrics.hypotheticalSpread = parseFloat(hypotheticalSpread.toFixed(2));
+      metrics.hypotheticalGrossLong = parseFloat(hypotheticalGrossLong.toFixed(2));
+      metrics.hypotheticalGrossShort = parseFloat(hypotheticalGrossShort.toFixed(2));
+      metrics.hypotheticalGrossExposure = parseFloat((hypotheticalGrossLong + hypotheticalGrossShort).toFixed(2));
 
       // Flag which tickers are missing history
       var missing = [];
