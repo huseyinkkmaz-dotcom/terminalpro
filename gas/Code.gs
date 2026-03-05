@@ -787,7 +787,7 @@ function readTickerHistMap_(ss) {
  *
  * @param {Array} legs - [{ticker, size, direction}] where direction=+1 (long) or -1 (short)
  * @param {Object} histMap - {TICKER: [price0..priceN]} oldest-first
- * @returns {Object} {rollingZ, dailyValues, currentValue, legDetails}
+ * @returns {Object} {rollingZ, netSpread, grossLong, grossShort, grossExposure, dailyValues, validLegs, historyDays}
  */
 function computeBasketMetrics_(legs, histMap) {
   if (!legs || legs.length === 0) return { error: 'No legs provided', dailyValues: [] };
@@ -814,7 +814,6 @@ function computeBasketMetrics_(legs, histMap) {
   // Build synthetic daily portfolio value array (oldest first)
   var dailyValues = [];
   for (var day = 0; day < maxDays; day++) {
-    var dayIdx = validLegs[0].hist.length - maxDays + day; // align from end
     var val = 0;
     for (var j = 0; j < validLegs.length; j++) {
       var leg = validLegs[j];
