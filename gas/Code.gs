@@ -459,6 +459,14 @@ function getOpenTrades() {
         liveRows = liveRows.concat(rows);
       }
     }
+    // Pre-read credit pair IDs for strategy detection
+    var creditIds = {};
+    if (credit && credit.getLastRow() > 1) {
+      var creditPairCol = credit.getRange(2, 1, credit.getLastRow()-1, 1).getValues();
+      for (var ci = 0; ci < creditPairCol.length; ci++) {
+        if (creditPairCol[ci][0]) creditIds[cleanId(creditPairCol[ci][0])] = true;
+      }
+    }
     var results = [];
     for (var j = 1; j < openData.length; j++) {
       try {
@@ -471,6 +479,7 @@ function getOpenTrades() {
         for (var k = 0; k < liveRows.length; k++) {
           if (liveRows[k][0] && cleanId(liveRows[k][0]) === openAnchor) { pair = liveRows[k]; break; }
         }
+        var strategy = creditIds[openAnchor] ? 'credit' : 'intra';
         var costA = parseMoney(openData[j][2]);
         var costB = parseMoney(openData[j][3]);
         var sA = parseMoney(openData[j][4]);
@@ -497,7 +506,7 @@ function getOpenTrades() {
             centGoal: (Math.abs((costA-costB)-meanTarget)*100).toFixed(0),
             centRem: (Math.abs(liveSpr-meanTarget)*100).toFixed(0),
             isWinning: netPnl > 0, entryZ: openData[j][1],
-            currentZ: currentZ, sector: sector
+            currentZ: currentZ, sector: sector, strategy: strategy
           });
         } else {
           results.push({
@@ -508,7 +517,7 @@ function getOpenTrades() {
             paidDiv: paidDiv.toFixed(2), rcvdDiv: rcvdDiv.toFixed(2),
             centGoal:"0", centRem:"0",
             isWinning:false, entryZ:"0",
-            currentZ: 0, sector: ''
+            currentZ: 0, sector: '', strategy: strategy
           });
         }
       } catch(err) { console.error(err); }
@@ -605,6 +614,14 @@ function getBasketAnalytics() {
 
     // Build trade list: ticker pairs + weights
     var trades = [];
+    // Pre-read credit pair IDs to avoid repeated sheet reads in the loop
+    var creditIds = {};
+    if (credit && credit.getLastRow() > 1) {
+      var creditPairCol = credit.getRange(2, 1, credit.getLastRow()-1, 1).getValues();
+      for (var cr = 0; cr < creditPairCol.length; cr++) {
+        if (creditPairCol[cr][0]) creditIds[cleanId(creditPairCol[cr][0])] = true;
+      }
+    }
     for (var j = 1; j < openData.length; j++) {
       var rawId = openData[j][0];
       if (!rawId) continue;
@@ -616,14 +633,7 @@ function getBasketAnalytics() {
       for (var k = 0; k < liveRows.length; k++) {
         if (liveRows[k][0] && cleanId(liveRows[k][0]) === openAnchor) { pair = liveRows[k]; break; }
       }
-      // Determine if intra or credit by checking which sheet the pair came from
-      var isCredit = false;
-      if (credit && credit.getLastRow() > 1) {
-        var creditRows = credit.getRange(2, 1, credit.getLastRow()-1, 1).getValues();
-        for (var cr = 0; cr < creditRows.length; cr++) {
-          if (creditRows[cr][0] && cleanId(creditRows[cr][0]) === openAnchor) { isCredit = true; break; }
-        }
-      }
+      var isCredit = !!creditIds[openAnchor];
       trades.push({
         id: rawId,
         tA: info.tA,
@@ -646,7 +656,6 @@ function getBasketAnalytics() {
       var histData = histSheet.getDataRange().getValues();
       // TickerHistory: Row 1 = headers (Ticker, Date1, Date2, ...)
       // Row N = [Ticker, Price1, Price2, ...]
-      var dates = histData[0].slice(1); // date headers
       for (var h = 1; h < histData.length; h++) {
         var ticker = String(histData[h][0]).trim();
         if (!ticker) continue;

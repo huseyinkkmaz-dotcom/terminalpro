@@ -501,10 +501,7 @@ portfolioData.forEach(function(p){
 var w=Math.abs(parseFloat(p.sA)||0);var z=parseFloat(p.currentZ)||0;
 wSum+=w*z;wTot+=w;
 var sec=p.sector||'Unknown';sectorMap[sec]=(sectorMap[sec]||0)+w;
-// Detect strategy by checking if pair is credit (has | separator with different company roots)
-var tA=String(p.tA||''),tB=String(p.tB||'');
-var rootA=tA.replace(/-[A-Z]$/,'').replace(/[A-Z]$/,''),rootB=tB.replace(/-[A-Z]$/,'').replace(/[A-Z]$/,'');
-if(rootA!==rootB)stratMap.credit++;else stratMap.intra++;
+var strat=p.strategy||'intra';if(strat==='credit')stratMap.credit++;else stratMap.intra++;
 });
 var avgZ=wTot>0?(wSum/wTot):0;
 var style=healthZColor(avgZ);
