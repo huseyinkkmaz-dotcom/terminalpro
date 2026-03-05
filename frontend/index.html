@@ -210,6 +210,49 @@ td:last-child{border-radius:0 10px 10px 0;border-right:1px solid var(--border)}
 .strat-mix-label{font-size:9px;font-weight:900;text-transform:uppercase;color:var(--subtext);margin-bottom:4px}
 .strat-mix-val{font-family:'JetBrains Mono';font-weight:900;font-size:18px}
 .health-loading{font-size:10px;color:var(--subtext);font-weight:900;text-transform:uppercase;letter-spacing:1px;padding:8px 0}
+/* ── PORTFOLIO ANALYTICS TAB ── */
+.pa-mode-switch{display:flex;gap:0;margin-bottom:30px}
+.pa-mode-pill{padding:14px 36px;font-size:10px;font-weight:900;text-transform:uppercase;letter-spacing:1.5px;cursor:pointer;border:1.5px solid var(--border);color:var(--subtext);transition:.2s;background:transparent}
+.pa-mode-pill:first-child{border-radius:8px 0 0 8px}
+.pa-mode-pill:last-child{border-radius:0 8px 8px 0}
+.pa-mode-pill.active-live{background:rgba(14,165,233,.1);color:var(--accent);border-color:var(--accent)}
+.pa-mode-pill.active-sandbox{background:rgba(168,85,247,.1);color:var(--purple);border-color:var(--purple)}
+.pa-banner{display:flex;gap:16px;flex-wrap:wrap;padding:16px 20px;background:var(--card);border:1px solid var(--border);border-radius:12px;margin-bottom:24px;align-items:center}
+.pa-banner-stat{display:flex;align-items:baseline;gap:6px;padding:6px 14px;background:rgba(255,255,255,.03);border-radius:6px}
+.pa-banner-label{font-size:9px;font-weight:900;color:var(--subtext);text-transform:uppercase}
+.pa-banner-val{font-family:'JetBrains Mono';font-weight:900;font-size:15px}
+.pa-windows{display:grid;grid-template-columns:1fr 1fr 1fr;gap:20px;margin-bottom:24px}
+.pa-window-card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:20px;position:relative;overflow:hidden}
+.pa-window-label{font-size:10px;font-weight:900;text-transform:uppercase;letter-spacing:1px;color:var(--subtext);margin-bottom:16px;display:flex;justify-content:space-between;align-items:center}
+.pa-window-badge{font-size:9px;padding:3px 8px;border-radius:4px;border:1px solid var(--border);color:var(--subtext)}
+.pa-metric-row{display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid rgba(255,255,255,.04)}
+.pa-metric-row:last-child{border-bottom:none}
+.pa-metric-label{font-size:10px;font-weight:700;color:var(--subtext);text-transform:uppercase}
+.pa-metric-val{font-family:'JetBrains Mono';font-weight:900;font-size:14px}
+.pa-metric-val.big{font-size:22px}
+.pa-sparkline-wrap{margin-top:14px;height:50px;position:relative}
+.pa-sparkline-wrap svg{width:100%;height:100%}
+.pa-pnl-bar{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:24px}
+.pa-pnl-card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px;text-align:center}
+.pa-pnl-label{font-size:9px;font-weight:900;text-transform:uppercase;letter-spacing:1px;color:var(--subtext);margin-bottom:8px}
+.pa-pnl-val{font-family:'JetBrains Mono';font-weight:900;font-size:20px}
+.pa-empty{text-align:center;padding:80px 20px;color:var(--subtext)}
+.pa-empty-icon{font-size:40px;margin-bottom:16px}
+.pa-empty-title{font-weight:900;font-size:16px;margin-bottom:8px;color:var(--text)}
+/* Sandbox */
+.sb-form{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:24px;margin-bottom:24px}
+.sb-leg-row{display:grid;grid-template-columns:1fr 100px 100px 100px 40px;gap:12px;align-items:center;margin-bottom:10px}
+.sb-leg-row input,.sb-leg-row select{background:var(--bg);border:1px solid var(--border);color:white;padding:12px;border-radius:8px;font-family:'Inter',sans-serif;font-size:12px;box-sizing:border-box}
+.sb-leg-row select{appearance:none;cursor:pointer}
+.sb-remove-btn{background:none;border:1px solid rgba(239,68,68,.3);color:var(--high);width:32px;height:32px;border-radius:6px;cursor:pointer;font-size:16px;display:flex;align-items:center;justify-content:center;transition:.2s}
+.sb-remove-btn:hover{background:rgba(239,68,68,.1)}
+.sb-actions{display:flex;gap:12px;margin-top:16px}
+.sb-add-btn{background:rgba(14,165,233,.05);border:1.5px solid var(--accent);color:var(--accent);padding:12px 24px;border-radius:8px;font-weight:900;font-size:11px;cursor:pointer;text-transform:uppercase}
+.sb-calc-btn{background:var(--purple);color:white;border:none;padding:12px 32px;border-radius:8px;font-weight:900;font-size:11px;cursor:pointer;text-transform:uppercase}
+.sb-calc-btn:disabled{opacity:.4;cursor:not-allowed}
+.sb-header{display:grid;grid-template-columns:1fr 100px 100px 100px 40px;gap:12px;margin-bottom:8px;padding:0 0 8px;border-bottom:1px solid var(--border)}
+.sb-header span{font-size:9px;font-weight:900;text-transform:uppercase;letter-spacing:.5px;color:var(--subtext)}
+.pa-loading{text-align:center;padding:40px;font-size:11px;font-weight:900;color:var(--subtext);text-transform:uppercase;letter-spacing:1px}
 </style>
 </head>
 <body>
@@ -271,6 +314,7 @@ td:last-child{border-radius:0 10px 10px 0;border-right:1px solid var(--border)}
 <div class="nav-item" onclick="tab('portfolio',this)">Active Portfolio</div>
 <div class="nav-item" onclick="tabWatchlist(this)">Watchlist <span id="watchCount"></span></div>
 <div class="nav-item" onclick="tabMacro(this)">Macro Value</div>
+<div class="nav-item" onclick="tabAnalytics(this)">Analytics</div>
 <div class="nav-item" onclick="tab('history',this)">History</div>
 <div class="live-switch"><span class="switch-label">Live (5m)</span><label><input type="checkbox" class="switch-input" id="autoRefresh" onchange="toggleLive()"><div class="switch-slider"></div></label></div>
 <div class="conn-dot loading" id="connDot" title="API Status"></div>
@@ -352,6 +396,26 @@ td:last-child{border-radius:0 10px 10px 0;border-right:1px solid var(--border)}
 <th class="sortable" onclick="macroSort('avgz')">Avg Z ⇅</th>
 <th>Signal</th>
 </tr></thead><tbody id="macroBody"></tbody></table>
+</div>
+</div>
+<div id="analytics" class="tab-content">
+<div class="pa-mode-switch">
+<div class="pa-mode-pill active-live" id="paModeLive" onclick="switchPaMode('live')">Live Portfolio</div>
+<div class="pa-mode-pill" id="paModeSandbox" onclick="switchPaMode('sandbox')">Sandbox Calculator</div>
+</div>
+<div id="paLiveSection">
+<div id="paLiveContent"><div class="pa-loading">Loading portfolio analytics...</div></div>
+</div>
+<div id="paSandboxSection" style="display:none">
+<div class="sb-form" id="sbForm">
+<div class="sb-header"><span>Ticker</span><span>Direction</span><span>Size</span><span>Entry $</span><span></span></div>
+<div id="sbLegs"></div>
+<div class="sb-actions">
+<button class="sb-add-btn" onclick="sbAddLeg()">+ Add Leg</button>
+<button class="sb-calc-btn" id="sbCalcBtn" onclick="sbCalculate()">Calculate Basket</button>
+</div>
+</div>
+<div id="paSandboxResult"></div>
 </div>
 </div>
 <div id="history" class="tab-content">
@@ -534,6 +598,97 @@ for(var i=0;i<windows.length;i++){var w=bd.rollingZ[windows[i]];var el=document.
 if(!w||w.insufficient){el.innerText='—';el.style.color='var(--subtext)';sub.innerText=w?w.dataPoints+'d data':'no data';}
 else{el.innerText=(w.z>=0?'+':'')+w.z.toFixed(2)+'σ';var s=healthZColor(w.z);el.style.color=s.c;sub.innerText=w.dataPoints+'d window';}}}catch(e){console.log('[TerminalPro] Basket analytics fetch error:',e.message);}}
 function toggleHealthBar(){var bar=document.getElementById('healthBar');if(bar.classList.contains('collapsed')){bar.classList.remove('collapsed');bar.classList.add('expanded');}else{bar.classList.remove('expanded');bar.classList.add('collapsed');}}
+// ── PORTFOLIO ANALYTICS TAB ──
+var paCurrentMode='live';
+var sbLegCounter=0;
+async function tabAnalytics(el){document.querySelectorAll('.tab-content').forEach(x=>x.classList.remove('active'));document.querySelectorAll('.nav-item').forEach(x=>x.classList.remove('active'));document.getElementById('analytics').classList.add('active');el.classList.add('active');if(paCurrentMode==='live')await loadLiveAnalytics();}
+function switchPaMode(mode){paCurrentMode=mode;var liveBtn=document.getElementById('paModeLive'),sbBtn=document.getElementById('paModeSandbox');var liveEl=document.getElementById('paLiveSection'),sbEl=document.getElementById('paSandboxSection');liveBtn.className='pa-mode-pill'+(mode==='live'?' active-live':'');sbBtn.className='pa-mode-pill'+(mode==='sandbox'?' active-sandbox':'');liveEl.style.display=mode==='live'?'':'none';sbEl.style.display=mode==='sandbox'?'':'none';if(mode==='live')loadLiveAnalytics();else if(document.getElementById('sbLegs').children.length===0){sbAddLeg();sbAddLeg();}}
+async function loadLiveAnalytics(){var el=document.getElementById('paLiveContent');el.innerHTML='<div class="pa-loading">Fetching live portfolio analytics...</div>';try{setConnStatus('loading');var data=await apiGet('getPortfolioAnalytics',{paMode:'live'});if(data&&data.ok&&data.analyticsData){renderAnalytics(data.analyticsData,el);setConnStatus('ok');}else{el.innerHTML='<div class="pa-empty"><div class="pa-empty-icon">&#9888;</div><div class="pa-empty-title">Error</div><div>'+(data&&data.analyticsData&&data.analyticsData.error?data.analyticsData.error:'Failed to load analytics')+'</div></div>';setConnStatus('err');}}catch(e){el.innerHTML='<div class="pa-empty"><div class="pa-empty-icon">&#9888;</div><div class="pa-empty-title">Connection Error</div><div>'+e.message+'</div></div>';setConnStatus('err');}}
+function renderAnalytics(ad,targetEl){
+var m=ad.metrics;if(!m||(!m.rollingZ&&!m.error)){targetEl.innerHTML='<div class="pa-empty"><div class="pa-empty-icon">&#128202;</div><div class="pa-empty-title">'+(ad.mode==='live'?'No Open Positions':'No Results')+'</div><div>'+(ad.mode==='live'?'Open trades in the Active Portfolio tab to see analytics here.':'Add legs and click Calculate Basket.')+'</div></div>';return;}
+if(m.error){targetEl.innerHTML='<div class="pa-empty"><div class="pa-empty-icon">&#9888;</div><div class="pa-empty-title">Calculation Error</div><div>'+m.error+'</div></div>';return;}
+var h='';
+// Banner
+h+='<div class="pa-banner">';
+if(ad.mode==='live'){
+h+='<div class="pa-banner-stat"><span class="pa-banner-label">Trades</span><span class="pa-banner-val" style="color:var(--accent)">'+(ad.trades||0)+'</span></div>';
+h+='<div class="pa-banner-stat"><span class="pa-banner-label">Legs</span><span class="pa-banner-val" style="color:var(--text)">'+(ad.legs||0)+'</span></div>';
+}
+h+='<div class="pa-banner-stat"><span class="pa-banner-label">Valid Legs</span><span class="pa-banner-val" style="color:var(--text)">'+(m.validLegs||0)+'</span></div>';
+h+='<div class="pa-banner-stat"><span class="pa-banner-label">History</span><span class="pa-banner-val" style="color:var(--subtext)">'+(m.historyDays||0)+'d</span></div>';
+h+='<div class="pa-banner-stat"><span class="pa-banner-label">Current Value</span><span class="pa-banner-val" style="color:var(--text)">$'+(m.currentValue||0).toLocaleString()+'</span></div>';
+h+='</div>';
+// PnL bar (live mode only)
+if(ad.mode==='live'&&m.entryValue!==undefined){
+var cgClr=m.capitalGains>=0?'var(--low)':'var(--high)';var ndClr=m.netDividends>=0?'var(--low)':'var(--high)';var pnlClr=m.totalPnL>=0?'var(--low)':'var(--high)';
+h+='<div class="pa-pnl-bar">';
+h+='<div class="pa-pnl-card"><div class="pa-pnl-label">Entry Value</div><div class="pa-pnl-val" style="color:var(--text)">$'+m.entryValue.toLocaleString()+'</div></div>';
+h+='<div class="pa-pnl-card"><div class="pa-pnl-label">Capital Gains</div><div class="pa-pnl-val" style="color:'+cgClr+'">'+(m.capitalGains>=0?'+':'')+m.capitalGains.toFixed(2)+'$</div></div>';
+h+='<div class="pa-pnl-card"><div class="pa-pnl-label">Net Dividends</div><div class="pa-pnl-val" style="color:'+ndClr+'">'+(m.netDividends>=0?'+':'')+m.netDividends.toFixed(2)+'$</div></div>';
+h+='<div class="pa-pnl-card"><div class="pa-pnl-label">Total PnL</div><div class="pa-pnl-val" style="color:'+pnlClr+'">'+(m.totalPnL>=0?'+':'')+m.totalPnL.toFixed(2)+'$</div></div>';
+h+='</div>';
+}
+// Missing tickers warning (sandbox)
+if(m.missingTickers&&m.missingTickers.length>0){
+h+='<div style="background:rgba(245,158,11,.08);border:1px solid var(--yellow);border-radius:8px;padding:12px 16px;margin-bottom:24px;font-size:11px;color:var(--yellow);font-weight:700">Missing history for: '+m.missingTickers.join(', ')+' — these legs are excluded from calculations.</div>';}
+// Hypothetical entry (sandbox)
+if(ad.mode==='sandbox'&&m.hypotheticalEntry!==undefined){
+h+='<div class="pa-pnl-bar" style="grid-template-columns:1fr 1fr">';
+h+='<div class="pa-pnl-card"><div class="pa-pnl-label">Hypothetical Entry Value</div><div class="pa-pnl-val" style="color:var(--text)">$'+m.hypotheticalEntry.toLocaleString()+'</div></div>';
+h+='<div class="pa-pnl-card"><div class="pa-pnl-label">Current Market Value</div><div class="pa-pnl-val" style="color:var(--text)">$'+(m.currentValue||0).toLocaleString()+'</div></div>';
+h+='</div>';}
+// 30/60/90 window cards
+var rz=m.rollingZ||{};
+var windows=[{k:'30d',l:'30-Day'},{k:'60d',l:'60-Day'},{k:'90d',l:'90-Day'}];
+h+='<div class="pa-windows">';
+for(var i=0;i<windows.length;i++){
+var w=rz[windows[i].k];
+var hasData=w&&!w.insufficient;
+var z=hasData?w.z:0;
+var zs=healthZColor(z);
+var ep=hasData?w.expectedProfit:0;
+var epClr=ep>=0?'var(--low)':'var(--high)';
+h+='<div class="pa-window-card">';
+h+='<div class="pa-window-label">'+windows[i].l+'<span class="pa-window-badge">'+(hasData?w.dataPoints+'d data':'insufficient data')+'</span></div>';
+if(hasData){
+h+='<div class="pa-metric-row"><span class="pa-metric-label">Z-Score</span><span class="pa-metric-val big" style="color:'+zs.c+'">'+(z>=0?'+':'')+z.toFixed(2)+'&sigma;</span></div>';
+h+='<div class="pa-metric-row"><span class="pa-metric-label">Expected Profit</span><span class="pa-metric-val" style="color:'+epClr+'">'+(ep>=0?'+':'')+ep.toFixed(2)+'$</span></div>';
+h+='<div class="pa-metric-row"><span class="pa-metric-label">Mean</span><span class="pa-metric-val" style="color:var(--subtext)">$'+w.mean.toLocaleString()+'</span></div>';
+h+='<div class="pa-metric-row"><span class="pa-metric-label">Std Dev</span><span class="pa-metric-val" style="color:var(--subtext)">$'+w.std.toLocaleString()+'</span></div>';
+}else{
+h+='<div style="text-align:center;padding:20px;color:var(--subtext);font-weight:700">Need '+windows[i].k.replace('d','')+' days of history</div>';}
+// Sparkline (use daily values trimmed to this window)
+if(hasData&&m.dailyValues&&m.dailyValues.length>0){
+var n=parseInt(windows[i].k);
+var vals=m.dailyValues.slice(-n);
+h+='<div class="pa-sparkline-wrap">'+buildSparklineSvg(vals,zs.c)+'</div>';}
+h+='</div>';}
+h+='</div>';
+targetEl.innerHTML=h;}
+var sparklineIdCounter=0;
+function buildSparklineSvg(vals,color){
+if(!vals||vals.length<2)return'';
+sparklineIdCounter++;var gid='spg'+sparklineIdCounter;
+var min=Infinity,max=-Infinity;
+for(var i=0;i<vals.length;i++){if(vals[i]<min)min=vals[i];if(vals[i]>max)max=vals[i];}
+var range=max-min;if(range<0.01)range=1;
+var w=300,ht=50,pad=2;
+var pts=[];
+for(var i=0;i<vals.length;i++){
+var x=pad+(i/(vals.length-1))*(w-2*pad);
+var y=ht-pad-((vals[i]-min)/range)*(ht-2*pad);
+pts.push(x.toFixed(1)+','+y.toFixed(1));}
+var line=pts.join(' ');
+var area='M'+pts[0]+' L'+line+' L'+(w-pad).toFixed(1)+','+ht+' L'+pad+','+ht+' Z';
+return'<svg viewBox="0 0 '+w+' '+ht+'" preserveAspectRatio="none"><defs><linearGradient id="'+gid+'" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="'+color+'" stop-opacity="0.3"/><stop offset="100%" stop-color="'+color+'" stop-opacity="0"/></linearGradient></defs><path d="'+area+'" fill="url(#'+gid+')"/><polyline points="'+line+'" fill="none" stroke="'+color+'" stroke-width="1.5" stroke-linejoin="round"/><circle cx="'+pts[pts.length-1].split(',')[0]+'" cy="'+pts[pts.length-1].split(',')[1]+'" r="2.5" fill="'+color+'"/></svg>';}
+// ── Sandbox form ──
+function sbAddLeg(){sbLegCounter++;var div=document.createElement('div');div.className='sb-leg-row';div.id='sbLeg-'+sbLegCounter;div.innerHTML='<input type="text" placeholder="e.g. BAC-B" class="sb-ticker" spellcheck="false"><select class="sb-dir"><option value="1">LONG</option><option value="-1">SHORT</option></select><input type="number" placeholder="Shares" class="sb-size" min="1"><input type="number" placeholder="Entry $" class="sb-entry" step="0.01" min="0"><button class="sb-remove-btn" onclick="sbRemoveLeg(\'sbLeg-'+sbLegCounter+'\')">&times;</button>';document.getElementById('sbLegs').appendChild(div);}
+function sbRemoveLeg(id){var el=document.getElementById(id);if(el)el.remove();}
+async function sbCalculate(){var rows=document.querySelectorAll('.sb-leg-row');var legs=[];rows.forEach(function(r){var tk=r.querySelector('.sb-ticker').value.trim();var dir=r.querySelector('.sb-dir').value;var sz=r.querySelector('.sb-size').value;var ep=r.querySelector('.sb-entry').value;if(tk&&sz){legs.push({ticker:tk,direction:parseFloat(dir),size:parseFloat(sz),entryPrice:parseFloat(ep)||0});}});
+if(legs.length===0){alert('Add at least one leg with a ticker and size.');return;}
+var btn=document.getElementById('sbCalcBtn');btn.disabled=true;btn.innerText='CALCULATING...';
+var resultEl=document.getElementById('paSandboxResult');resultEl.innerHTML='<div class="pa-loading">Computing basket metrics...</div>';
+try{setConnStatus('loading');var data=await apiGet('getPortfolioAnalytics',{paMode:'sandbox',legs:JSON.stringify(legs)});if(data&&data.ok&&data.analyticsData){renderAnalytics(data.analyticsData,resultEl);setConnStatus('ok');}else{resultEl.innerHTML='<div class="pa-empty"><div class="pa-empty-icon">&#9888;</div><div class="pa-empty-title">Error</div><div>'+(data&&data.analyticsData?data.analyticsData.error:'Unknown error')+'</div></div>';setConnStatus('err');}}catch(e){resultEl.innerHTML='<div class="pa-empty"><div class="pa-empty-icon">&#9888;</div><div>'+e.message+'</div></div>';setConnStatus('err');}finally{btn.disabled=false;btn.innerText='CALCULATE BASKET';}}
 // ── MACRO VALUATION ──
 var macroData=[];var macroCreditAvg={};var macroSortAsc=true;var macroCurrentSignal='all';var macroCurrentSec='';var macroCurrentCredit='';
 function zHeatColor(z){if(z>=2.5)return'rgba(16,185,129,0.35)';if(z>=1.5)return'rgba(16,185,129,0.18)';if(z<=-2.5)return'rgba(239,68,68,0.35)';if(z<=-1.5)return'rgba(239,68,68,0.18)';return'transparent';}

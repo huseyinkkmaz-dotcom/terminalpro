@@ -118,6 +118,11 @@ function doGet(e) {
     else if (action === 'getBasketAnalytics') {
       result = { ok: true, basketData: getBasketAnalytics() };
     }
+    else if (action === 'getPortfolioAnalytics') {
+      var paMode = (e && e.parameter && e.parameter.paMode) ? e.parameter.paMode : 'live';
+      var legsJson = (e && e.parameter && e.parameter.legs) ? e.parameter.legs : '[]';
+      result = { ok: true, analyticsData: getPortfolioAnalytics(paMode, legsJson) };
+    }
     else {
       result = { ok: false, message: "Unknown action: " + action };
     }
@@ -749,6 +754,240 @@ function getBasketAnalytics() {
     };
   } catch(e) {
     return { trades: 0, error: e.message };
+  }
+}
+// ============================================================
+// PORTFOLIO ANALYTICS (dual-mode: live + sandbox)
+// ============================================================
+/**
+ * Reads TickerHistory and returns a map of {TICKER: [price0, price1, ...]}
+ * where index 0 = oldest, last index = most recent.
+ */
+function readTickerHistMap_(ss) {
+  var histSheet = ss.getSheetByName('TickerHistory');
+  var histMap = {};
+  if (!histSheet || histSheet.getLastRow() <= 1) return histMap;
+  var histData = histSheet.getDataRange().getValues();
+  for (var h = 1; h < histData.length; h++) {
+    var ticker = String(histData[h][0]).trim().toUpperCase();
+    if (!ticker) continue;
+    var prices = [];
+    for (var d = 1; d < histData[h].length; d++) {
+      var p = parseFloat(histData[h][d]);
+      if (!isNaN(p) && p > 0) prices.push(p);
+    }
+    if (prices.length > 0) histMap[ticker] = prices;
+  }
+  return histMap;
+}
+
+/**
+ * Core math: builds a synthetic daily portfolio value array from legs + history,
+ * then computes 30/60/90-day rolling Z-scores and expected profit.
+ *
+ * @param {Array} legs - [{ticker, size, direction}] where direction=+1 (long) or -1 (short)
+ * @param {Object} histMap - {TICKER: [price0..priceN]} oldest-first
+ * @returns {Object} {rollingZ, dailyValues, currentValue, legDetails}
+ */
+function computeBasketMetrics_(legs, histMap) {
+  if (!legs || legs.length === 0) return { error: 'No legs provided', dailyValues: [] };
+
+  // Find the minimum history length across all legs
+  var minLen = Infinity;
+  var validLegs = [];
+  for (var i = 0; i < legs.length; i++) {
+    var tk = String(legs[i].ticker).trim().toUpperCase();
+    var hist = histMap[tk];
+    if (!hist || hist.length === 0) continue;
+    var size = parseFloat(legs[i].size) || 0;
+    var dir = parseFloat(legs[i].direction) || 0;
+    if (size === 0 || dir === 0) continue;
+    validLegs.push({ ticker: tk, size: Math.abs(size), dir: dir > 0 ? 1 : -1, hist: hist });
+    if (hist.length < minLen) minLen = hist.length;
+  }
+  if (validLegs.length === 0) return { error: 'No valid legs with history', dailyValues: [] };
+  if (minLen === Infinity) minLen = 0;
+
+  // Cap at 90 days
+  var maxDays = Math.min(minLen, 90);
+
+  // Build synthetic daily portfolio value array (oldest first)
+  var dailyValues = [];
+  for (var day = 0; day < maxDays; day++) {
+    var dayIdx = validLegs[0].hist.length - maxDays + day; // align from end
+    var val = 0;
+    for (var j = 0; j < validLegs.length; j++) {
+      var leg = validLegs[j];
+      var legDayIdx = leg.hist.length - maxDays + day;
+      val += leg.dir * leg.size * leg.hist[legDayIdx];
+    }
+    dailyValues.push(val);
+  }
+
+  var currentValue = dailyValues.length > 0 ? dailyValues[dailyValues.length - 1] : 0;
+
+  // Compute rolling stats for 30, 60, 90 day windows
+  var rollingZ = {};
+  var windows = [30, 60, 90];
+  for (var w = 0; w < windows.length; w++) {
+    var n = windows[w];
+    if (dailyValues.length >= n) {
+      var slice = dailyValues.slice(dailyValues.length - n);
+      var sum = 0;
+      for (var k = 0; k < slice.length; k++) sum += slice[k];
+      var mean = sum / slice.length;
+      var sq = 0;
+      for (var k = 0; k < slice.length; k++) sq += (slice[k] - mean) * (slice[k] - mean);
+      var std = Math.sqrt(sq / (slice.length - 1));
+      var z = std > 0.0001 ? (currentValue - mean) / std : 0;
+      var expectedProfit = mean - currentValue; // positive = portfolio should revert UP
+      rollingZ[n + 'd'] = {
+        z: parseFloat(z.toFixed(2)),
+        mean: parseFloat(mean.toFixed(2)),
+        std: parseFloat(std.toFixed(2)),
+        expectedProfit: parseFloat(expectedProfit.toFixed(2)),
+        dataPoints: slice.length
+      };
+    } else {
+      rollingZ[n + 'd'] = { z: 0, mean: 0, std: 0, expectedProfit: 0, dataPoints: dailyValues.length, insufficient: true };
+    }
+  }
+
+  return {
+    rollingZ: rollingZ,
+    currentValue: parseFloat(currentValue.toFixed(2)),
+    dailyValues: dailyValues.length > 0 ? dailyValues.slice(-90).map(function(v) { return parseFloat(v.toFixed(2)); }) : [],
+    validLegs: validLegs.length,
+    historyDays: maxDays
+  };
+}
+
+/**
+ * Portfolio Analytics endpoint. Two modes:
+ *  - live: reads OpenTrades, resolves legs from actual positions
+ *  - sandbox: uses user-provided legs JSON
+ */
+function getPortfolioAnalytics(mode, legsJson) {
+  try {
+    var ss = SpreadsheetApp.getActive();
+    var histMap = readTickerHistMap_(ss);
+    var legs = [];
+
+    if (mode === 'live') {
+      // Read OpenTrades and resolve legs
+      var openSheet = ss.getSheetByName('OpenTrades');
+      if (!openSheet || openSheet.getLastRow() <= 1) return { mode: 'live', trades: 0, metrics: { dailyValues: [] } };
+      var openData = openSheet.getDataRange().getValues();
+
+      // Read live data for current prices
+      var liveRows = [];
+      var intra = ss.getSheetByName('WebCache');
+      if (!intra || intra.getLastRow() <= 1) intra = ss.getSheetByName('Live');
+      var credit = ss.getSheetByName('WebCacheCredit');
+      var sources = [intra, credit];
+      for (var s = 0; s < sources.length; s++) {
+        var ls = sources[s];
+        if (ls && ls.getLastRow() > 1) {
+          var rows = ls.getRange(2, 1, ls.getLastRow()-1, 24).getValues();
+          liveRows = liveRows.concat(rows);
+        }
+      }
+
+      var entryValue = 0;
+      for (var j = 1; j < openData.length; j++) {
+        var rawId = openData[j][0];
+        if (!rawId) continue;
+        var info = parseTickerInfo(rawId);
+        var sA = parseMoney(openData[j][4]);
+        var sB = parseMoney(openData[j][5]);
+        var costA = parseMoney(openData[j][2]);
+        var costB = parseMoney(openData[j][3]);
+
+        // Each open trade has two legs: A and B, with signed sizes
+        if (sA !== 0) {
+          legs.push({ ticker: info.tA, size: Math.abs(sA), direction: sA > 0 ? 1 : -1 });
+          entryValue += sA * costA; // signed: long adds, short subtracts
+        }
+        if (sB !== 0) {
+          legs.push({ ticker: info.tB, size: Math.abs(sB), direction: sB > 0 ? 1 : -1 });
+          entryValue += sB * costB;
+        }
+      }
+
+      var metrics = computeBasketMetrics_(legs, histMap);
+
+      // Compute current live value for PnL
+      var currentLiveValue = 0;
+      for (var j = 1; j < openData.length; j++) {
+        var rawId = openData[j][0];
+        if (!rawId) continue;
+        var openAnchor = cleanId(rawId);
+        var sA = parseMoney(openData[j][4]);
+        var sB = parseMoney(openData[j][5]);
+        var pair = null;
+        for (var k = 0; k < liveRows.length; k++) {
+          if (liveRows[k][0] && cleanId(liveRows[k][0]) === openAnchor) { pair = liveRows[k]; break; }
+        }
+        if (pair) {
+          currentLiveValue += sA * (parseFloat(pair[3]) || 0);
+          currentLiveValue += sB * (parseFloat(pair[4]) || 0);
+        }
+      }
+
+      // Accumulate dividends
+      var totalPaidDiv = 0, totalRcvdDiv = 0;
+      for (var j = 1; j < openData.length; j++) {
+        totalPaidDiv += parseMoney(openData[j][7]);
+        totalRcvdDiv += parseMoney(openData[j][8]);
+      }
+
+      metrics.entryValue = parseFloat(entryValue.toFixed(2));
+      metrics.currentLiveValue = parseFloat(currentLiveValue.toFixed(2));
+      metrics.capitalGains = parseFloat((currentLiveValue - entryValue).toFixed(2));
+      metrics.netDividends = parseFloat((totalRcvdDiv - totalPaidDiv).toFixed(2));
+      metrics.totalPnL = parseFloat((currentLiveValue - entryValue + totalRcvdDiv - totalPaidDiv).toFixed(2));
+
+      return { mode: 'live', trades: openData.length - 1, legs: legs.length, metrics: metrics };
+    }
+    else if (mode === 'sandbox') {
+      // Parse user-provided legs
+      var userLegs = [];
+      try { userLegs = JSON.parse(legsJson); } catch(e) { return { mode: 'sandbox', error: 'Invalid legs JSON' }; }
+      for (var i = 0; i < userLegs.length; i++) {
+        var ul = userLegs[i];
+        if (ul.ticker && ul.size && ul.direction) {
+          legs.push({ ticker: String(ul.ticker).trim().toUpperCase(), size: Math.abs(parseFloat(ul.size) || 0), direction: parseFloat(ul.direction) > 0 ? 1 : -1 });
+        }
+      }
+      if (legs.length === 0) return { mode: 'sandbox', error: 'No valid legs', metrics: { dailyValues: [] } };
+
+      var metrics = computeBasketMetrics_(legs, histMap);
+
+      // Compute hypothetical entry value from provided prices
+      var hypotheticalEntry = 0;
+      for (var i = 0; i < userLegs.length; i++) {
+        var ul = userLegs[i];
+        var sz = Math.abs(parseFloat(ul.size) || 0);
+        var dir = parseFloat(ul.direction) > 0 ? 1 : -1;
+        var ep = parseFloat(ul.entryPrice) || 0;
+        hypotheticalEntry += dir * sz * ep;
+      }
+      metrics.hypotheticalEntry = parseFloat(hypotheticalEntry.toFixed(2));
+
+      // Flag which tickers are missing history
+      var missing = [];
+      for (var i = 0; i < legs.length; i++) {
+        if (!histMap[legs[i].ticker]) missing.push(legs[i].ticker);
+      }
+      if (missing.length > 0) metrics.missingTickers = missing;
+
+      return { mode: 'sandbox', legs: legs.length, metrics: metrics };
+    }
+    else {
+      return { error: 'Unknown mode: ' + mode };
+    }
+  } catch(e) {
+    return { error: e.message };
   }
 }
 // ============================================================
