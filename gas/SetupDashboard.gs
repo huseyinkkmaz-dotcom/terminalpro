@@ -139,6 +139,7 @@ function setupAllBatched() {
       }
       ensureSheet_(ss, 'DivDates', ['Ticker', 'ExDivDate', 'LastFetched']);
       ensureSheet_(ss, 'Watchlist', ['PairID', 'AddedDate', 'AddedZ', 'Mode', 'AddedExpProfit', 'AddedSpread']);
+      ensureSheet_(ss, 'BasketCache', ['Key', 'Value', 'UpdatedAt']);
       ensureSheet_(ss, 'TreasuryHist', ['Date', 'US2Y', 'US5Y', 'US7Y', 'US10Y', 'US30Y']);
       Logger.log('Phase 2 complete: Supporting sheets ready.');
 
@@ -278,7 +279,7 @@ function createAutoTrigger() {
     var fn = triggers[i].getHandlerFunction();
     if (fn === 'setupAllBatched' || fn === 'updateLivePrices' ||
         fn === 'snapshotZScores' || fn === 'dailyCreditRefresh' || fn === 'fetchDividendDates' ||
-        fn === 'dailyMacroRefresh' || fn === 'computeMacroValuationsBatch') {
+        fn === 'dailyMacroRefresh' || fn === 'computeMacroValuationsBatch' || fn === 'updateBasketAnalytics') {
       ScriptApp.deleteTrigger(triggers[i]);
     }
   }
@@ -316,17 +317,78 @@ function createAutoTrigger() {
     .everyDays(1)
     .create();
 
-  Logger.log('All triggers installed:\n• updateLivePrices: every 10 min\n• snapshotZScores: every hour\n• dailyCreditRefresh: daily 5 AM\n• fetchDividendDates: daily 6 AM\n• dailyMacroRefresh: daily 7 AM');
+  // DAILY: updateBasketAnalytics at 8 AM (portfolio basket Z-scores)
+  ScriptApp.newTrigger('updateBasketAnalytics')
+    .timeBased()
+    .atHour(8)
+    .everyDays(1)
+    .create();
+
+  Logger.log('All triggers installed:\n• updateLivePrices: every 10 min\n• snapshotZScores: every hour\n• dailyCreditRefresh: daily 5 AM\n• fetchDividendDates: daily 6 AM\n• dailyMacroRefresh: daily 7 AM\n• updateBasketAnalytics: daily 8 AM');
   showMsg_(
     'Triggers installed!\n\n' +
     '• updateLivePrices: every 10 min (snapshots prices to WebCache)\n' +
     '• snapshotZScores: every hour (trend tracking)\n' +
     '• dailyCreditRefresh: daily 5 AM (credit pair regeneration)\n' +
     '• fetchDividendDates: daily 6 AM (Yahoo Finance ex-div dates)\n' +
-    '• dailyMacroRefresh: daily 7 AM (macro valuation vs treasuries)\n\n' +
+    '• dailyMacroRefresh: daily 7 AM (macro valuation vs treasuries)\n' +
+    '• updateBasketAnalytics: daily 8 AM (portfolio basket Z-scores)\n\n' +
     'Now run setupAllBatched() to build the sheets.\n' +
     'Then run updateLivePrices() to populate WebCache immediately.'
   );
+}
+
+// ============================================================
+// BASKET ANALYTICS — Daily trigger
+// ============================================================
+/**
+ * Pre-computes basket analytics and caches results to BasketCache sheet.
+ * Called daily at 8 AM by trigger. Results read by getBasketAnalytics() in Code.gs.
+ */
+function updateBasketAnalytics() {
+  try {
+    var result = getBasketAnalytics();
+    if (!result || !result.trades) {
+      Logger.log('updateBasketAnalytics: No open trades, skipping.');
+      return;
+    }
+    var ss = SpreadsheetApp.getActive();
+    ensureSheet_(ss, 'BasketCache', ['Key', 'Value', 'UpdatedAt']);
+    var sheet = ss.getSheetByName('BasketCache');
+    // Clear old data and write fresh cache
+    if (sheet.getLastRow() > 1) sheet.deleteRows(2, sheet.getLastRow() - 1);
+    var now = new Date().toISOString();
+    var rows = [
+      ['trades', result.trades, now],
+      ['weightedAvgZ', result.weightedAvgZ, now],
+      ['totalNotional', result.totalNotional, now]
+    ];
+    if (result.rollingZ) {
+      var windows = ['30d', '60d', '90d'];
+      for (var i = 0; i < windows.length; i++) {
+        var w = result.rollingZ[windows[i]];
+        if (w) {
+          rows.push(['rollingZ_' + windows[i] + '_z', w.z, now]);
+          rows.push(['rollingZ_' + windows[i] + '_mean', w.mean, now]);
+          rows.push(['rollingZ_' + windows[i] + '_std', w.std, now]);
+          rows.push(['rollingZ_' + windows[i] + '_dataPoints', w.dataPoints, now]);
+        }
+      }
+    }
+    if (result.sectorPct) {
+      for (var sec in result.sectorPct) {
+        rows.push(['sector_' + sec, result.sectorPct[sec], now]);
+      }
+    }
+    if (result.strategyMix) {
+      rows.push(['strategy_intra', result.strategyMix.intra, now]);
+      rows.push(['strategy_credit', result.strategyMix.credit, now]);
+    }
+    sheet.getRange(2, 1, rows.length, 3).setValues(rows);
+    Logger.log('updateBasketAnalytics: Cached ' + rows.length + ' entries for ' + result.trades + ' trades.');
+  } catch(e) {
+    Logger.log('updateBasketAnalytics ERROR: ' + e.message);
+  }
 }
 
 /** Remove the auto-setup trigger (called when setup is complete) */

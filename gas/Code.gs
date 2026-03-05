@@ -115,6 +115,9 @@ function doGet(e) {
     else if (action === 'getMacroValuation') {
       result = { ok: true, macroValData: getMacroValuationData() };
     }
+    else if (action === 'getBasketAnalytics') {
+      result = { ok: true, basketData: getBasketAnalytics() };
+    }
     else {
       result = { ok: false, message: "Unknown action: " + action };
     }
@@ -483,6 +486,8 @@ function getOpenTrades() {
           var livePriceB = parseFloat(pair[4])||0;
           var capGains = ((livePriceA-costA)*sA) + ((livePriceB-costB)*sB);
           var netPnl = capGains + rcvdDiv - paidDiv;
+          var currentZ = parseFloat(pair[12]) || 0;
+          var sector = pair[15] ? String(pair[15]) : '';
           results.push({
             id: displayId, tA: tA_Name, tB: tB_Name,
             spr: liveSpr.toFixed(2), target: meanTarget.toFixed(2),
@@ -491,7 +496,8 @@ function getOpenTrades() {
             paidDiv: paidDiv.toFixed(2), rcvdDiv: rcvdDiv.toFixed(2),
             centGoal: (Math.abs((costA-costB)-meanTarget)*100).toFixed(0),
             centRem: (Math.abs(liveSpr-meanTarget)*100).toFixed(0),
-            isWinning: netPnl > 0, entryZ: openData[j][1]
+            isWinning: netPnl > 0, entryZ: openData[j][1],
+            currentZ: currentZ, sector: sector
           });
         } else {
           results.push({
@@ -501,7 +507,8 @@ function getOpenTrades() {
             dollarPnL:"0.00", capGains:"0.00",
             paidDiv: paidDiv.toFixed(2), rcvdDiv: rcvdDiv.toFixed(2),
             centGoal:"0", centRem:"0",
-            isWinning:false, entryZ:"0"
+            isWinning:false, entryZ:"0",
+            currentZ: 0, sector: ''
           });
         }
       } catch(err) { console.error(err); }
@@ -566,6 +573,174 @@ function clearHistory() {
   var sheet = ss.getSheetByName('ClosedTrades');
   if (!sheet || sheet.getLastRow() <= 1) return;
   sheet.deleteRows(2, sheet.getLastRow() - 1);
+}
+// ============================================================
+// BASKET ANALYTICS
+// ============================================================
+/**
+ * Computes rolling basket Z-scores for the active portfolio.
+ * Reads TickerHistory for historical prices, computes daily basket values,
+ * then returns 30/60/90-day rolling Z-scores.
+ */
+function getBasketAnalytics() {
+  try {
+    var ss = SpreadsheetApp.getActive();
+    var openSheet = ss.getSheetByName('OpenTrades');
+    if (!openSheet || openSheet.getLastRow() <= 1) return { trades: 0 };
+    var openData = openSheet.getDataRange().getValues();
+
+    // Get live pair data for current Z, sector, strategy detection
+    var liveRows = [];
+    var intra = ss.getSheetByName('WebCache');
+    if (!intra || intra.getLastRow() <= 1) intra = ss.getSheetByName('Live');
+    var credit = ss.getSheetByName('WebCacheCredit');
+    var sources = [intra, credit];
+    for (var s = 0; s < sources.length; s++) {
+      var ls = sources[s];
+      if (ls && ls.getLastRow() > 1) {
+        var rows = ls.getRange(2, 1, ls.getLastRow()-1, 24).getValues();
+        liveRows = liveRows.concat(rows);
+      }
+    }
+
+    // Build trade list: ticker pairs + weights
+    var trades = [];
+    for (var j = 1; j < openData.length; j++) {
+      var rawId = openData[j][0];
+      if (!rawId) continue;
+      var info = parseTickerInfo(rawId);
+      var openAnchor = cleanId(rawId);
+      var sA = parseMoney(openData[j][4]);
+      var sB = parseMoney(openData[j][5]);
+      var pair = null;
+      for (var k = 0; k < liveRows.length; k++) {
+        if (liveRows[k][0] && cleanId(liveRows[k][0]) === openAnchor) { pair = liveRows[k]; break; }
+      }
+      // Determine if intra or credit by checking which sheet the pair came from
+      var isCredit = false;
+      if (credit && credit.getLastRow() > 1) {
+        var creditRows = credit.getRange(2, 1, credit.getLastRow()-1, 1).getValues();
+        for (var cr = 0; cr < creditRows.length; cr++) {
+          if (creditRows[cr][0] && cleanId(creditRows[cr][0]) === openAnchor) { isCredit = true; break; }
+        }
+      }
+      trades.push({
+        id: rawId,
+        tA: info.tA,
+        tB: info.tB,
+        sA: sA,
+        sB: sB,
+        weight: Math.abs(sA),
+        sector: pair ? String(pair[15] || '') : '',
+        strategy: isCredit ? 'credit' : 'intra',
+        currentZ: pair ? (parseFloat(pair[12]) || 0) : 0,
+        liveSpread: pair ? (parseFloat(pair[5]) || 0) : 0
+      });
+    }
+    if (trades.length === 0) return { trades: 0 };
+
+    // Read TickerHistory for rolling Z computation
+    var histSheet = ss.getSheetByName('TickerHistory');
+    var tickerHist = {}; // ticker -> [{date, price}]
+    if (histSheet && histSheet.getLastRow() > 1) {
+      var histData = histSheet.getDataRange().getValues();
+      // TickerHistory: Row 1 = headers (Ticker, Date1, Date2, ...)
+      // Row N = [Ticker, Price1, Price2, ...]
+      var dates = histData[0].slice(1); // date headers
+      for (var h = 1; h < histData.length; h++) {
+        var ticker = String(histData[h][0]).trim();
+        if (!ticker) continue;
+        var prices = [];
+        for (var d = 1; d < histData[h].length; d++) {
+          var p = parseFloat(histData[h][d]);
+          if (!isNaN(p) && p > 0) prices.push({ idx: d - 1, price: p });
+        }
+        tickerHist[ticker] = prices;
+      }
+    }
+
+    // Compute daily basket values (spread * weight for each trade, summed)
+    // Find the common date range across all trades
+    var maxDays = 90;
+    var basketValues = [];
+    if (Object.keys(tickerHist).length > 0) {
+      for (var day = 0; day < maxDays; day++) {
+        var bVal = 0;
+        var validTrades = 0;
+        for (var t = 0; t < trades.length; t++) {
+          var hA = tickerHist[trades[t].tA];
+          var hB = tickerHist[trades[t].tB];
+          if (hA && hB && hA.length > day && hB.length > day) {
+            var spread = hA[hA.length - 1 - day].price - hB[hB.length - 1 - day].price;
+            bVal += trades[t].weight * spread;
+            validTrades++;
+          }
+        }
+        if (validTrades > 0) basketValues.push(bVal);
+      }
+      basketValues.reverse(); // oldest first
+    }
+
+    // Compute rolling stats for 30, 60, 90 day windows
+    var rollingZ = {};
+    var windows = [30, 60, 90];
+    for (var w = 0; w < windows.length; w++) {
+      var n = windows[w];
+      if (basketValues.length >= n) {
+        var slice = basketValues.slice(basketValues.length - n);
+        var sum = 0, sq = 0;
+        for (var i = 0; i < slice.length; i++) sum += slice[i];
+        var mean = sum / slice.length;
+        for (var i = 0; i < slice.length; i++) sq += (slice[i] - mean) * (slice[i] - mean);
+        var std = Math.sqrt(sq / (slice.length - 1));
+        var current = basketValues[basketValues.length - 1];
+        rollingZ[n + 'd'] = {
+          z: std > 0.0001 ? parseFloat(((current - mean) / std).toFixed(2)) : 0,
+          mean: parseFloat(mean.toFixed(4)),
+          std: parseFloat(std.toFixed(4)),
+          dataPoints: slice.length
+        };
+      } else {
+        rollingZ[n + 'd'] = { z: 0, mean: 0, std: 0, dataPoints: basketValues.length, insufficient: true };
+      }
+    }
+
+    // Compute sector concentration
+    var sectorNotional = {};
+    var totalNotional = 0;
+    var strategyCount = { intra: 0, credit: 0 };
+    for (var t = 0; t < trades.length; t++) {
+      var notional = trades[t].weight * Math.abs(trades[t].liveSpread);
+      var sec = trades[t].sector || 'Unknown';
+      sectorNotional[sec] = (sectorNotional[sec] || 0) + notional;
+      totalNotional += notional;
+      strategyCount[trades[t].strategy]++;
+    }
+    var sectorPct = {};
+    for (var sec in sectorNotional) {
+      sectorPct[sec] = totalNotional > 0 ? parseFloat((sectorNotional[sec] / totalNotional * 100).toFixed(1)) : 0;
+    }
+
+    // Weighted average Z (instant, from live data)
+    var weightedZSum = 0, totalWeight = 0;
+    for (var t = 0; t < trades.length; t++) {
+      weightedZSum += trades[t].weight * trades[t].currentZ;
+      totalWeight += trades[t].weight;
+    }
+    var weightedAvgZ = totalWeight > 0 ? parseFloat((weightedZSum / totalWeight).toFixed(2)) : 0;
+
+    return {
+      trades: trades.length,
+      weightedAvgZ: weightedAvgZ,
+      rollingZ: rollingZ,
+      sectorPct: sectorPct,
+      strategyMix: strategyCount,
+      totalNotional: parseFloat(totalNotional.toFixed(2)),
+      basketHistory: basketValues.length > 0 ? basketValues.slice(-30) : []
+    };
+  } catch(e) {
+    return { trades: 0, error: e.message };
+  }
 }
 // ============================================================
 // WRITE OPERATIONS

@@ -30,7 +30,8 @@ Google Sheets (Data Layer)
     ├── MacroData sheet     → Auto: US10Y, TLT, PFF macro indicators
     ├── TreasuryHist sheet  → Auto: 90-day FRED treasury yields (US2Y-US30Y)
     ├── MacroCalc sheet     → Auto: computed macro valuations per ticker
-    └── MacroCache sheet    → Auto: static snapshot of MacroCalc
+    ├── MacroCache sheet    → Auto: static snapshot of MacroCalc
+    └── BasketCache sheet   → Auto: pre-computed portfolio basket analytics
 
 Google Apps Script (API Backend)
     ├── Code.gs             → doGet/doPost routing, data reading, trade operations
@@ -44,7 +45,7 @@ Vercel (Frontend)
 
 ### `gas/Code.gs` — API Backend (V23)
 
-- **doGet()** routes `?action=getData|saveTrade|closeTrade|addDividend|saveNote` with optional `&mode=intra|credit`
+- **doGet()** routes `?action=getData|saveTrade|closeTrade|addDividend|saveNote|getBasketAnalytics` with optional `&mode=intra|credit`
 - **WebCache failsafe** — API prefers `WebCache` / `WebCacheCredit` (static snapshots) over `Live` / `CreditLive` (GOOGLEFINANCE formulas). Faster responses, decoupled from formula recalculation.
 - **getAlertData(mode)** reads WebCache (or Live fallback) sheet. Filters:
   - Skips pairs with missing/zero prices
@@ -57,6 +58,13 @@ Vercel (Frontend)
 - **addDividendToTrade(id, type, amount)** accumulates dividend cash flows on open positions. `type` is `paid` (short leg owes) or `received` (long leg earns). Amounts are additive (accumulator pattern).
 - **PnL formula** — `Net PnL = Capital Gains + Received Div - Paid Div`. Applied in both open trade display and closed trade history.
 - **saveTradeNote(row, note)** saves a journal note to a specific ClosedTrades row. Uses 1-indexed sheet row number (returned as `rowIdx` from `getClosedTrades`). Notes column = P (col 16).
+- **getBasketAnalytics()** computes portfolio-level metrics for all open trades:
+  - Weighted average Z-score (instant, from current live data)
+  - Rolling 30/60/90-day Z-scores (from TickerHistory historical prices)
+  - Sector concentration percentages
+  - Strategy mix (intra vs credit count)
+  - Last 30 daily basket values for sparkline
+  - Returns `currentZ` and `sector` per trade in `getOpenTrades()` for frontend computation
 
 ### `gas/SetupDashboard.gs` — Setup & Automation (V23.1)
 
@@ -78,6 +86,7 @@ Vercel (Frontend)
   - Hourly: `snapshotZScores()` — logs to AlertsLog + updates ZScoreAge
   - Daily at 5 AM: `dailyCreditRefresh()` — regenerates credit pairs from Master
   - Daily at 6 AM: `fetchDividendDates()` — refreshes ex-dividend dates
+  - Daily at 8 AM: `updateBasketAnalytics()` — pre-computes portfolio basket Z-scores to BasketCache
 - **fetchDividendDates()** — two-phase Yahoo Finance fetch:
   - Phase 1: v7/finance/quote API (50 tickers per batch, requires crumb auth)
   - Phase 2: v8/finance/chart fallback (no auth, uses 1-year history for dividend events)
@@ -96,6 +105,12 @@ Vercel (Frontend)
   - Yellow: <= 30 days away
   - Gray: > 30 days away
   - Shows which leg (A or B) has the upcoming dividend
+- **Portfolio Health Bar** — collapsible analytics panel on Active Portfolio tab:
+  - Weighted average Z-score (instant, computed from portfolio data in frontend)
+  - Rolling 30/60/90-day Z-scores (fetched from `?action=getBasketAnalytics` backend endpoint)
+  - Sector concentration bar chart
+  - Strategy mix (intra vs credit)
+  - Color-coded: Green (neutral |Z|<0.5), Blue (mild), Yellow (elevated), Red (extreme |Z|>=1.8)
 - **CRITICAL**: Line 1 of `<script>` has `GAS_URL` constant — must be set to deployed GAS URL
 
 ## Live Sheet Column Map (24 columns, 0-indexed)
@@ -136,6 +151,17 @@ Both `Live` and `CreditLive` share this layout:
 | BAC-B | 2026-03-15 | 2026-02-20T06:00:00 |
 
 Populated by `fetchDividendDates()` via Yahoo Finance. 20-hour cache — tickers fetched within the last 20 hours are skipped.
+
+## BasketCache Sheet (auto-populated)
+
+| A: Key | B: Value | C: UpdatedAt |
+|--------|----------|-------------|
+| trades | 12 | 2026-03-05T08:00:00 |
+| weightedAvgZ | -0.42 | 2026-03-05T08:00:00 |
+| rollingZ_30d_z | -0.38 | 2026-03-05T08:00:00 |
+| sector_Finance | 45.2 | 2026-03-05T08:00:00 |
+
+Key-value store for pre-computed basket analytics. Updated daily at 8 AM by `updateBasketAnalytics()` trigger. The `getBasketAnalytics()` endpoint in Code.gs computes fresh values on each API call (using TickerHistory for rolling Z); BasketCache serves as a daily snapshot backup.
 
 ## Critical Rules When Editing
 

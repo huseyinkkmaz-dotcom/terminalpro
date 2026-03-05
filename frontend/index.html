@@ -182,6 +182,34 @@ td:last-child{border-radius:0 10px 10px 0;border-right:1px solid var(--border)}
 .journal-save:disabled{opacity:.5;cursor:not-allowed}
 .journal-saved{color:var(--low);font-size:11px;font-weight:900;text-align:center;margin-top:10px;opacity:0;transition:opacity .3s}
 .journal-saved.show{opacity:1}
+.health-bar{background:var(--card);border:1px solid var(--border);border-radius:12px;margin-bottom:25px;overflow:hidden;transition:max-height .4s cubic-bezier(.4,0,.2,1)}
+.health-bar.collapsed{max-height:54px}
+.health-bar.expanded{max-height:600px}
+.health-header{display:flex;align-items:center;justify-content:space-between;padding:14px 20px;cursor:pointer;user-select:none}
+.health-header:hover{background:rgba(255,255,255,.02)}
+.health-title{font-size:10px;font-weight:900;text-transform:uppercase;letter-spacing:1.5px;color:var(--subtext);display:flex;align-items:center;gap:10px}
+.health-z-pill{font-family:'JetBrains Mono';font-weight:900;font-size:14px;padding:4px 12px;border-radius:6px;border:1px solid}
+.health-status{font-size:10px;font-weight:900;text-transform:uppercase;letter-spacing:1px;display:flex;align-items:center;gap:8px}
+.health-chevron{font-size:10px;color:var(--subtext);transition:transform .3s}
+.health-bar.expanded .health-chevron{transform:rotate(180deg)}
+.health-body{padding:0 20px 20px;display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px}
+.health-section{padding:16px;background:rgba(255,255,255,.02);border-radius:10px;border:1px solid var(--border)}
+.health-section-title{font-size:9px;font-weight:900;text-transform:uppercase;letter-spacing:1px;color:var(--subtext);margin-bottom:12px}
+.rolling-z-grid{display:flex;gap:12px}
+.rolling-z-card{flex:1;text-align:center;padding:12px 8px;background:rgba(255,255,255,.03);border-radius:8px;border:1px solid var(--border)}
+.rolling-z-label{font-size:9px;font-weight:900;color:var(--subtext);text-transform:uppercase;margin-bottom:6px}
+.rolling-z-val{font-family:'JetBrains Mono';font-weight:900;font-size:16px}
+.rolling-z-sub{font-size:9px;color:var(--subtext);margin-top:4px}
+.sector-bar-row{display:flex;align-items:center;margin-bottom:6px}
+.sector-bar-label{font-size:10px;font-weight:700;color:var(--subtext);width:80px;flex-shrink:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sector-bar-track{flex:1;height:8px;background:var(--bg);border-radius:4px;overflow:hidden;margin:0 8px}
+.sector-bar-fill{height:100%;border-radius:4px;transition:width .4s}
+.sector-bar-pct{font-family:'JetBrains Mono';font-size:10px;font-weight:900;color:var(--subtext);width:40px;text-align:right}
+.strat-mix-row{display:flex;gap:12px;margin-top:8px}
+.strat-mix-pill{flex:1;text-align:center;padding:10px;background:rgba(255,255,255,.03);border-radius:8px;border:1px solid var(--border)}
+.strat-mix-label{font-size:9px;font-weight:900;text-transform:uppercase;color:var(--subtext);margin-bottom:4px}
+.strat-mix-val{font-family:'JetBrains Mono';font-weight:900;font-size:18px}
+.health-loading{font-size:10px;color:var(--subtext);font-weight:900;text-transform:uppercase;letter-spacing:1px;padding:8px 0}
 </style>
 </head>
 <body>
@@ -266,6 +294,34 @@ td:last-child{border-radius:0 10px 10px 0;border-right:1px solid var(--border)}
 </div>
 <div id="portfolio" class="tab-content">
 <div class="exposure-pill-box"><div class="exp-pill"><span class="exp-label">LONG</span><span class="exp-val-long" id="valLong">$0</span></div><div class="exp-pill"><span class="exp-label">SHORT</span><span class="exp-val-short" id="valShort">$0</span></div></div>
+<div class="health-bar collapsed" id="healthBar">
+<div class="health-header" onclick="toggleHealthBar()">
+<div class="health-title">Portfolio Health <span class="health-z-pill" id="healthZPill" style="color:var(--subtext);border-color:var(--border)">—</span><span class="health-status" id="healthStatus"></span></div>
+<span class="health-chevron" id="healthChevron">&#9660;</span>
+</div>
+<div class="health-body" id="healthBody">
+<div class="health-section">
+<div class="health-section-title">Rolling Z-Scores</div>
+<div class="rolling-z-grid" id="rollingZGrid">
+<div class="rolling-z-card"><div class="rolling-z-label">30-Day</div><div class="rolling-z-val" id="rz30" style="color:var(--subtext)">—</div><div class="rolling-z-sub" id="rzSub30"></div></div>
+<div class="rolling-z-card"><div class="rolling-z-label">60-Day</div><div class="rolling-z-val" id="rz60" style="color:var(--subtext)">—</div><div class="rolling-z-sub" id="rzSub60"></div></div>
+<div class="rolling-z-card"><div class="rolling-z-label">90-Day</div><div class="rolling-z-val" id="rz90" style="color:var(--subtext)">—</div><div class="rolling-z-sub" id="rzSub90"></div></div>
+</div>
+</div>
+<div class="health-section">
+<div class="health-section-title">Sector Concentration</div>
+<div id="sectorBars"></div>
+</div>
+<div class="health-section">
+<div class="health-section-title">Strategy Mix</div>
+<div class="strat-mix-row" id="stratMix">
+<div class="strat-mix-pill"><div class="strat-mix-label">Intra</div><div class="strat-mix-val" style="color:var(--accent)" id="stratIntra">0</div></div>
+<div class="strat-mix-pill"><div class="strat-mix-label">Credit</div><div class="strat-mix-val" style="color:var(--purple)" id="stratCredit">0</div></div>
+<div class="strat-mix-pill"><div class="strat-mix-label">Pairs</div><div class="strat-mix-val" style="color:var(--text)" id="stratTotal">0</div></div>
+</div>
+</div>
+</div>
+</div>
 <div class="portfolio-grid" id="portfolioGrid"></div>
 </div>
 <div id="watchlist" class="tab-content">
@@ -425,12 +481,62 @@ var ph='';if(data.portfolioData&&data.portfolioData.length>0){data.portfolioData
 var pd=parseFloat(p.paidDiv)||0,rd=parseFloat(p.rcvdDiv)||0,nd=rd-pd,cg=parseFloat(p.capGains)||0;var ndClr=nd>=0?'var(--low)':'var(--high)';var cgClr=cg>=0?'var(--low)':'var(--high)';
 ph+='<div class="trade-card" id="card-'+i+'">'+'<div style="display:flex;justify-content:space-between;align-items:flex-start"><div><div style="font-weight:900;font-size:22px;color:var(--accent)">'+p.id+'</div><div style="display:flex;gap:6px;align-items:center;margin-top:4px"><div style="font-size:12px;color:var(--subtext);font-weight:700">Spread: $'+p.spr+'</div><div class="entry-indicator">ENTRY: '+ez.toFixed(2)+'σ</div></div></div><div style="font-family:\'JetBrains Mono\';font-weight:900;font-size:22px;color:'+c+'">'+(p.dollarPnL>=0?'+':'')+p.dollarPnL+'$</div></div>'+'<div class="target-ribbon"><div class="target-row"><div class="target-desc">CURRENT SPREAD</div><div class="target-val">$'+p.spr+' (Diff)</div></div><div class="target-row"><div class="target-desc">TARGET MEAN</div>'+tm+'</div></div>'+'<div style="display:flex;gap:12px;margin-top:20px;margin-bottom:20px"><div style="flex:1;padding:12px;background:rgba(255,255,255,.03);border-radius:10px;border:1px solid var(--border)"><div style="font-size:10px;color:var(--accent);font-weight:900;text-transform:uppercase;margin-bottom:6px">'+tA+'</div><div style="font-family:\'JetBrains Mono\';font-size:15px;font-weight:900;color:white">$'+p.pA+'</div><div style="font-size:10px;color:var(--subtext);margin-top:4px">Qty: '+p.sA+'</div></div><div style="flex:1;padding:12px;background:rgba(255,255,255,.03);border-radius:10px;border:1px solid var(--border)"><div style="font-size:10px;color:var(--accent);font-weight:900;text-transform:uppercase;margin-bottom:6px">'+tB+'</div><div style="font-family:\'JetBrains Mono\';font-size:15px;font-weight:900;color:white">$'+p.pB+'</div><div style="font-size:10px;color:var(--subtext);margin-top:4px">Qty: '+p.sB+'</div></div></div>'+'<div class="div-flow-row"><div class="div-flow-item"><div class="div-flow-label" style="color:var(--subtext)">Cap Gains</div><div class="div-flow-val" style="color:'+cgClr+'">'+(cg>=0?'+':'')+cg.toFixed(2)+'$</div></div><div class="div-flow-item"><div class="div-flow-label" style="color:var(--high)">Paid Div</div><div class="div-flow-val" style="color:var(--high)">-'+pd.toFixed(2)+'$</div><button class="div-btn paid" onclick="openDivModal(\''+si+'\',\'paid\')" style="margin-top:4px">+ Add</button></div><div class="div-flow-item"><div class="div-flow-label" style="color:var(--low)">Rcvd Div</div><div class="div-flow-val" style="color:var(--low)">+'+rd.toFixed(2)+'$</div><button class="div-btn rcvd" onclick="openDivModal(\''+si+'\',\'received\')" style="margin-top:4px">+ Add</button></div><div class="div-flow-item"><div class="div-flow-label" style="color:var(--subtext)">Net Div</div><div class="div-flow-val" style="color:'+ndClr+'">'+(nd>=0?'+':'')+nd.toFixed(2)+'$</div></div></div>'+'<div class="progress-container"><div class="progress-bar" style="width:'+prog+'%;background:'+c+'"></div></div>'+'<div style="display:flex;justify-content:space-between;font-size:11px;font-weight:900;text-transform:uppercase"><span>Dist: '+p.centGoal+'¢</span><span style="color:'+c+'">Rem: '+p.centRem+'¢</span></div>'+'<div style="display:flex;justify-content:space-between;margin-top:20px"><button class="scale-btn" onclick="openModal(\''+si+'\',\''+sa+'\',\''+sb+'\')">Scale</button><button class="close-trade-btn" onclick="openCloseModal(\''+si+'\',\'card-'+i+'\')">Close</button></div></div>';});}
 document.getElementById('portfolioGrid').innerHTML=ph;
+renderHealthBar(data.portfolioData);
 var hd=data.historyData||[];
 var totalPnl=0,wins=0,losses=0;hd.forEach(function(h){var p=parseFloat(h.pnl)||0;totalPnl+=p;if(p>0)wins++;else if(p<0)losses++;});
 var wr=hd.length>0?((wins/hd.length)*100).toFixed(0):'0';
 var pnlClr=totalPnl>=0?'var(--low)':'var(--high)';var pnlSign=totalPnl>=0?'+':'';
 document.getElementById('historySummary').innerHTML='<div class="macro-pill"><span style="color:var(--accent)">TRADES</span><span class="mp-count" style="color:var(--accent)">'+hd.length+'</span></div><div class="macro-pill"><span style="color:'+pnlClr+'">TOTAL PNL</span><span class="mp-count" style="color:'+pnlClr+'">'+pnlSign+totalPnl.toFixed(2)+'$</span></div><div class="macro-pill"><span style="color:var(--low)">WINS</span><span class="mp-count" style="color:var(--low)">'+wins+'</span></div><div class="macro-pill"><span style="color:var(--high)">LOSSES</span><span class="mp-count" style="color:var(--high)">'+losses+'</span></div><div class="macro-pill"><span style="color:var(--subtext)">WIN RATE</span><span class="mp-count" style="color:var(--subtext)">'+wr+'%</span></div>';
 var hh='<tbody>';hd.forEach(function(h){var p=parseFloat(h.pnl)||0;var pc=p>=0?'var(--low)':'var(--high)';var rc=parseFloat(h.returnPct)||0;var typeClr=h.closeType==='PARTIAL'?'var(--yellow)':'var(--subtext)';var cg=parseFloat(h.capGains)||0;var cgc=cg>=0?'var(--low)':'var(--high)';var nd=parseFloat(h.netDiv)||0;var ndc=nd>=0?'var(--low)':'var(--high)';var ndStr=nd!==0?((nd>=0?'+':'')+nd.toFixed(2)+'$'):'—';var hn=String(h.note||'').replace(/'/g,"\\'").replace(/\n/g,'\\n');var nbCls=h.note?'note-btn has-note':'note-btn';var nbLbl=h.note?'Edit Note':'Add Note';hh+='<tr><td><div style="font-weight:900;color:var(--accent)">'+h.id+'</div><div style="font-size:10px;color:var(--subtext);margin-top:2px">Z: '+h.entryZ.toFixed(2)+'σ → '+h.exitZ.toFixed(2)+'σ</div></td><td><div class="action-tag" style="color:'+typeClr+';border-color:'+typeClr+';font-size:8px">'+h.closeType+'</div></td><td><div class="mono-data" style="font-size:11px">$'+h.costA+' / $'+h.costB+'</div></td><td><div class="mono-data" style="font-size:11px">$'+h.exitPriceA+' / $'+h.exitPriceB+'</div></td><td><div class="mono-data" style="font-size:11px">'+h.sizeA+' / '+h.sizeB+'</div></td><td>'+h.openDate+'</td><td>'+h.closeDate+'</td><td>'+h.holdDays+'d</td><td><div class="mono-data" style="color:'+cgc+'">'+(cg>=0?'+':'')+cg.toFixed(2)+'$</div></td><td><div class="mono-data" style="color:'+ndc+'">'+ndStr+'</div></td><td><div class="mono-data" style="color:'+pc+';font-weight:900">'+(p>=0?'+':'')+h.pnl+'$</div></td><td><div class="mono-data" style="color:'+pc+'">'+(rc>=0?'+':'')+rc.toFixed(1)+'%</div></td><td><button class="'+nbCls+'" id="nbtn-'+h.rowIdx+'" onclick="openJournal('+h.rowIdx+',\''+h.id.replace(/'/g,"\\'")+'\',\''+h.pnl+'\',\''+h.openDate+'\',\''+h.closeDate+'\',\''+h.holdDays+'\',\''+h.entryZ+'\',\''+h.exitZ+'\',\''+h.capGains+'\',\''+h.netDiv+'\',\''+hn+'\')">'+nbLbl+'</button></td></tr>';});hh+='</tbody>';document.getElementById('historyTable').querySelector('tbody').outerHTML=hh;}
+// ── PORTFOLIO HEALTH BAR ──
+function healthZColor(z){var a=Math.abs(z);if(a>=1.8)return{c:'var(--high)',bg:'rgba(239,68,68,0.1)',b:'var(--high)',label:'EXTREME'};if(a>=1.0)return{c:'var(--yellow)',bg:'rgba(245,158,11,0.1)',b:'var(--yellow)',label:'ELEVATED'};if(a>=0.5)return{c:'var(--accent)',bg:'rgba(14,165,233,0.1)',b:'var(--accent)',label:'MILD'};return{c:'var(--low)',bg:'rgba(16,185,129,0.1)',b:'var(--low)',label:'NEUTRAL'};}
+function renderHealthBar(portfolioData){
+var bar=document.getElementById('healthBar');if(!bar)return;
+if(!portfolioData||portfolioData.length===0){bar.style.display='none';return;}
+bar.style.display='';
+// Compute weighted avg Z from portfolio data (instant, no backend call)
+var wSum=0,wTot=0;
+var sectorMap={};var stratMap={intra:0,credit:0};
+portfolioData.forEach(function(p){
+var w=Math.abs(parseFloat(p.sA)||0);var z=parseFloat(p.currentZ)||0;
+wSum+=w*z;wTot+=w;
+var sec=p.sector||'Unknown';sectorMap[sec]=(sectorMap[sec]||0)+w;
+// Detect strategy by checking if pair is credit (has | separator with different company roots)
+var tA=String(p.tA||''),tB=String(p.tB||'');
+var rootA=tA.replace(/-[A-Z]$/,'').replace(/[A-Z]$/,''),rootB=tB.replace(/-[A-Z]$/,'').replace(/[A-Z]$/,'');
+if(rootA!==rootB)stratMap.credit++;else stratMap.intra++;
+});
+var avgZ=wTot>0?(wSum/wTot):0;
+var style=healthZColor(avgZ);
+// Update summary pill
+var pill=document.getElementById('healthZPill');
+pill.innerText=(avgZ>=0?'+':'')+avgZ.toFixed(2)+'σ';
+pill.style.color=style.c;pill.style.borderColor=style.b;pill.style.background=style.bg;
+var status=document.getElementById('healthStatus');
+status.innerHTML='<span class="dot" style="background:'+style.c+';box-shadow:0 0 8px '+style.c+'"></span>'+style.label+' — '+portfolioData.length+' pairs';
+status.style.color=style.c;
+// Sector bars
+var secEl=document.getElementById('sectorBars');
+var secKeys=Object.keys(sectorMap).sort(function(a,b){return sectorMap[b]-sectorMap[a];});
+var sh='';secKeys.forEach(function(s){var pct=wTot>0?(sectorMap[s]/wTot*100):0;
+var clr=pct>50?'var(--high)':(pct>25?'var(--yellow)':'var(--accent)');
+sh+='<div class="sector-bar-row"><div class="sector-bar-label">'+s+'</div><div class="sector-bar-track"><div class="sector-bar-fill" style="width:'+pct+'%;background:'+clr+'"></div></div><div class="sector-bar-pct">'+pct.toFixed(0)+'%</div></div>';});
+secEl.innerHTML=sh;
+// Strategy mix
+document.getElementById('stratIntra').innerText=stratMap.intra;
+document.getElementById('stratCredit').innerText=stratMap.credit;
+document.getElementById('stratTotal').innerText=portfolioData.length;
+// Fetch rolling Z from backend (async, won't block UI)
+fetchBasketAnalytics();
+}
+async function fetchBasketAnalytics(){
+try{var data=await apiGet('getBasketAnalytics');if(!data||!data.ok||!data.basketData)return;
+var bd=data.basketData;if(!bd.rollingZ)return;
+var windows=['30d','60d','90d'];var ids=['rz30','rz60','rz90'];var subIds=['rzSub30','rzSub60','rzSub90'];
+for(var i=0;i<windows.length;i++){var w=bd.rollingZ[windows[i]];var el=document.getElementById(ids[i]);var sub=document.getElementById(subIds[i]);
+if(!w||w.insufficient){el.innerText='—';el.style.color='var(--subtext)';sub.innerText=w?w.dataPoints+'d data':'no data';}
+else{el.innerText=(w.z>=0?'+':'')+w.z.toFixed(2)+'σ';var s=healthZColor(w.z);el.style.color=s.c;sub.innerText=w.dataPoints+'d window';}}}catch(e){console.log('[TerminalPro] Basket analytics fetch error:',e.message);}}
+function toggleHealthBar(){var bar=document.getElementById('healthBar');if(bar.classList.contains('collapsed')){bar.classList.remove('collapsed');bar.classList.add('expanded');}else{bar.classList.remove('expanded');bar.classList.add('collapsed');}}
 // ── MACRO VALUATION ──
 var macroData=[];var macroCreditAvg={};var macroSortAsc=true;var macroCurrentSignal='all';var macroCurrentSec='';var macroCurrentCredit='';
 function zHeatColor(z){if(z>=2.5)return'rgba(16,185,129,0.35)';if(z>=1.5)return'rgba(16,185,129,0.18)';if(z<=-2.5)return'rgba(239,68,68,0.35)';if(z<=-1.5)return'rgba(239,68,68,0.18)';return'transparent';}
