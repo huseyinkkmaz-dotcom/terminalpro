@@ -279,7 +279,8 @@ function createAutoTrigger() {
     var fn = triggers[i].getHandlerFunction();
     if (fn === 'setupAllBatched' || fn === 'updateLivePrices' ||
         fn === 'snapshotZScores' || fn === 'dailyCreditRefresh' || fn === 'fetchDividendDates' ||
-        fn === 'dailyMacroRefresh' || fn === 'computeMacroValuationsBatch' || fn === 'updateBasketAnalytics') {
+        fn === 'dailyMacroRefresh' || fn === 'computeMacroValuationsBatch' || fn === 'updateBasketAnalytics' ||
+        fn === 'runNightlyScreener') {
       ScriptApp.deleteTrigger(triggers[i]);
     }
   }
@@ -324,7 +325,14 @@ function createAutoTrigger() {
     .everyDays(1)
     .create();
 
-  Logger.log('All triggers installed:\n• updateLivePrices: every 10 min\n• snapshotZScores: every hour\n• dailyCreditRefresh: daily 5 AM\n• fetchDividendDates: daily 6 AM\n• dailyMacroRefresh: daily 7 AM\n• updateBasketAnalytics: daily 8 AM');
+  // DAILY: runNightlyScreener at 9 AM (pre-compute probability analysis for top alerts)
+  ScriptApp.newTrigger('runNightlyScreener')
+    .timeBased()
+    .atHour(9)
+    .everyDays(1)
+    .create();
+
+  Logger.log('All triggers installed:\n• updateLivePrices: every 10 min\n• snapshotZScores: every hour\n• dailyCreditRefresh: daily 5 AM\n• fetchDividendDates: daily 6 AM\n• dailyMacroRefresh: daily 7 AM\n• updateBasketAnalytics: daily 8 AM\n• runNightlyScreener: daily 9 AM');
   showMsg_(
     'Triggers installed!\n\n' +
     '• updateLivePrices: every 10 min (snapshots prices to WebCache)\n' +
@@ -332,7 +340,8 @@ function createAutoTrigger() {
     '• dailyCreditRefresh: daily 5 AM (credit pair regeneration)\n' +
     '• fetchDividendDates: daily 6 AM (Yahoo Finance ex-div dates)\n' +
     '• dailyMacroRefresh: daily 7 AM (macro valuation vs treasuries)\n' +
-    '• updateBasketAnalytics: daily 8 AM (portfolio basket Z-scores)\n\n' +
+    '• updateBasketAnalytics: daily 8 AM (portfolio basket Z-scores)\n' +
+    '• runNightlyScreener: daily 9 AM (pre-compute top alert probabilities)\n\n' +
     'Now run setupAllBatched() to build the sheets.\n' +
     'Then run updateLivePrices() to populate WebCache immediately.'
   );

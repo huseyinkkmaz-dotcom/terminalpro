@@ -123,6 +123,17 @@ function doGet(e) {
       var legsJson = (e && e.parameter && e.parameter.legs) ? e.parameter.legs : '[]';
       result = { ok: true, analyticsData: getPortfolioAnalytics(paMode, legsJson) };
     }
+    else if (action === 'getScreenerData') {
+      result = { ok: true, screenerData: getScreenerData_() };
+    }
+    else if (action === 'analyzePair') {
+      var pairTa = (e && e.parameter && e.parameter.tA) ? e.parameter.tA : '';
+      var pairTb = (e && e.parameter && e.parameter.tB) ? e.parameter.tB : '';
+      var pairPa = parseFloat((e && e.parameter && e.parameter.pA) || 0);
+      var pairPb = parseFloat((e && e.parameter && e.parameter.pB) || 0);
+      var pairZ = parseFloat((e && e.parameter && e.parameter.z) || 0);
+      result = { ok: true, analysisData: analyzeSinglePair_(pairTa, pairTb, pairPa, pairPb, pairZ) };
+    }
     else {
       result = { ok: false, message: "Unknown action: " + action };
     }
@@ -417,6 +428,8 @@ function getAlertData(mode) {
         id: info.id,
         tA: row[1] || info.tA,
         tB: row[2] || info.tB,
+        pA: priceA,
+        pB: priceB,
         rng: lower.toFixed(2) + " / " + upper.toFixed(2),
         sec: row[15] || "",
         spr: spread.toFixed(2),
@@ -1733,4 +1746,126 @@ function getMacroValuationData() {
     console.error('getMacroValuationData error: ' + e);
     return { status: 'error', data: [], creditAvg: {} };
   }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// SINGLE-PAIR ANALYSIS — lightweight endpoint for inline alert analysis
+// ═══════════════════════════════════════════════════════════════════
+function analyzeSinglePair_(tA, tB, priceA, priceB, currentZ) {
+  try {
+    var ss = SpreadsheetApp.getActive();
+    var histMap = readTickerHistMap_(ss);
+    // Build two legs: if Z > 0 spread is above mean → short A, long B
+    var dirA = currentZ > 0 ? -1 : 1;
+    var dirB = currentZ > 0 ? 1 : -1;
+    var legs = [
+      { ticker: String(tA).toUpperCase().trim(), size: 100, direction: dirA },
+      { ticker: String(tB).toUpperCase().trim(), size: 100, direction: dirB }
+    ];
+    var metrics = computeBasketMetrics_(legs, histMap);
+    if (metrics.error) return { error: metrics.error };
+    // Re-run probability engine with entry spread = current spread (priceA - priceB weighted)
+    var entrySpread = (dirA * 100 * priceA + dirB * 100 * priceB) / (metrics.totalWeight || 100);
+    if (metrics.dailyValuesFull_ && metrics.dailyValuesFull_.length > 0) {
+      metrics.probabilities = computeHistoricalProbabilities_(
+        metrics.dailyValuesFull_, entrySpread, metrics.rollingZ, metrics.totalWeight || 100
+      );
+    }
+    // Strip internal fields
+    delete metrics.dailyValuesFull_;
+    return {
+      tA: tA, tB: tB, dirA: dirA, dirB: dirB,
+      metrics: metrics
+    };
+  } catch (e) {
+    return { error: e.toString() };
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// NIGHTLY SCREENER — pre-computes probability analysis for top alerts
+// ═══════════════════════════════════════════════════════════════════
+function runNightlyScreener() {
+  var startTime = new Date().getTime();
+  var MAX_MS = 300000; // 5 min safety (GAS limit = 6 min)
+  var MAX_PAIRS = 20;
+  try {
+    var ss = SpreadsheetApp.getActive();
+    var histMap = readTickerHistMap_(ss);
+    // Get current alerts from both modes
+    var allAlerts = [];
+    try { var intra = getAlertData('intra'); if (intra && intra.length) allAlerts = allAlerts.concat(intra.map(function(a){ a._mode='intra'; return a; })); } catch(e){}
+    try { var credit = getAlertData('credit'); if (credit && credit.length) allAlerts = allAlerts.concat(credit.map(function(a){ a._mode='credit'; return a; })); } catch(e){}
+    if (allAlerts.length === 0) { Logger.log('Screener: no alerts to process'); return; }
+    // Sort by |Z| descending, take top N
+    allAlerts.sort(function(a,b){ return Math.abs(parseFloat(b.z)||0) - Math.abs(parseFloat(a.z)||0); });
+    var top = allAlerts.slice(0, MAX_PAIRS);
+    var results = [];
+    for (var i = 0; i < top.length; i++) {
+      if (new Date().getTime() - startTime > MAX_MS) { Logger.log('Screener: timeout after ' + i + ' pairs'); break; }
+      var a = top[i];
+      try {
+        var analysis = analyzeSinglePair_(a.tA, a.tB, a.pA || parseFloat(a.spr), a.pB || 0, parseFloat(a.z));
+        if (analysis && !analysis.error && analysis.metrics) {
+          var prob = analysis.metrics.probabilities || {};
+          var wr30 = (prob.winRates && prob.winRates['30d']) ? prob.winRates['30d'].rate : null;
+          var wr60 = (prob.winRates && prob.winRates['60d']) ? prob.winRates['60d'].rate : null;
+          var wr90 = (prob.winRates && prob.winRates['90d']) ? prob.winRates['90d'].rate : null;
+          var bs = prob.badScenario || {};
+          results.push({
+            id: a.id, tA: a.tA, tB: a.tB, mode: a._mode,
+            z: parseFloat(a.z), expProfit: parseFloat(a.expProfit),
+            wr30: wr30, wr60: wr60, wr90: wr90,
+            avgMae: bs.avgMaeDollar || null, p75Mae: bs.p75MaeDollar || null,
+            wideningProb: bs.wideningProb || null, triggers: prob.triggers || 0,
+            ep30: (analysis.metrics.rollingZ && analysis.metrics.rollingZ['30d']) ? analysis.metrics.rollingZ['30d'].expectedProfit : null,
+            ep60: (analysis.metrics.rollingZ && analysis.metrics.rollingZ['60d']) ? analysis.metrics.rollingZ['60d'].expectedProfit : null,
+            ep90: (analysis.metrics.rollingZ && analysis.metrics.rollingZ['90d']) ? analysis.metrics.rollingZ['90d'].expectedProfit : null,
+            ts: new Date().toISOString()
+          });
+        }
+      } catch(e) { Logger.log('Screener: failed ' + a.id + ': ' + e); }
+    }
+    // Write to ScreenerCache sheet
+    var sheet = ss.getSheetByName('ScreenerCache');
+    if (!sheet) {
+      sheet = ss.insertSheet('ScreenerCache');
+      sheet.getRange(1,1,1,16).setValues([['PairID','TickerA','TickerB','Mode','Z','ExpProfit','WR30','WR60','WR90','AvgMAE','P75MAE','WidenProb','Triggers','EP30','EP60','UpdatedAt']]);
+    } else {
+      if (sheet.getLastRow() > 1) sheet.getRange(2, 1, sheet.getLastRow() - 1, 16).clearContent();
+    }
+    if (results.length > 0) {
+      var rows = results.map(function(r){
+        return [r.id, r.tA, r.tB, r.mode, r.z, r.expProfit, r.wr30, r.wr60, r.wr90, r.avgMae, r.p75Mae, r.wideningProb, r.triggers, r.ep30, r.ep60, r.ts];
+      });
+      sheet.getRange(2, 1, rows.length, 16).setValues(rows);
+    }
+    Logger.log('Screener: processed ' + results.length + '/' + top.length + ' pairs in ' + ((new Date().getTime()-startTime)/1000).toFixed(1) + 's');
+  } catch(e) {
+    Logger.log('Screener error: ' + e);
+  }
+}
+
+// Read pre-computed screener results
+function getScreenerData_() {
+  try {
+    var ss = SpreadsheetApp.getActive();
+    var sheet = ss.getSheetByName('ScreenerCache');
+    if (!sheet || sheet.getLastRow() <= 1) return [];
+    var data = sheet.getDataRange().getValues();
+    var results = [];
+    for (var i = 1; i < data.length; i++) {
+      var r = data[i];
+      if (!r[0]) continue;
+      results.push({
+        id: r[0], tA: r[1], tB: r[2], mode: r[3],
+        z: r[4], expProfit: r[5],
+        wr30: r[6], wr60: r[7], wr90: r[8],
+        avgMae: r[9], p75Mae: r[10], wideningProb: r[11],
+        triggers: r[12], ep30: r[13], ep60: r[14],
+        ts: r[15]
+      });
+    }
+    return results;
+  } catch(e) { return []; }
 }

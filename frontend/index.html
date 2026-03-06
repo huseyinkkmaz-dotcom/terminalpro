@@ -257,6 +257,35 @@ td:last-child{border-radius:0 10px 10px 0;border-right:1px solid var(--border)}
 .pa-empty{text-align:center;padding:80px 20px;color:var(--subtext)}
 .pa-empty-icon{font-size:40px;margin-bottom:16px}
 .pa-empty-title{font-weight:900;font-size:16px;margin-bottom:8px;color:var(--text)}
+/* ── Screener: Score Column + Filter Pills + Inline Analyze ── */
+.score-cell{display:flex;align-items:center;gap:6px}
+.score-badge{font-family:'JetBrains Mono';font-weight:900;font-size:13px;padding:3px 8px;border-radius:6px;min-width:32px;text-align:center}
+.score-bar{width:40px;height:5px;border-radius:3px;background:rgba(255,255,255,.06);overflow:hidden}
+.score-bar-fill{height:100%;border-radius:3px;transition:width .3s}
+.filter-pills{display:flex;gap:8px;align-items:center}
+.filter-pill{padding:6px 14px;border-radius:8px;font-size:10px;font-weight:900;text-transform:uppercase;letter-spacing:0.5px;cursor:pointer;border:1.5px solid var(--border);background:transparent;color:var(--subtext);transition:.2s}
+.filter-pill:hover{border-color:var(--accent);color:var(--accent)}
+.filter-pill.active{background:var(--accent);color:white;border-color:var(--accent)}
+.filter-pill.active-purple{background:var(--purple);color:white;border-color:var(--purple)}
+.filter-label{font-size:9px;font-weight:900;text-transform:uppercase;letter-spacing:1px;color:var(--subtext)}
+.screened-badge{display:inline-flex;align-items:center;gap:3px;font-size:8px;font-weight:900;text-transform:uppercase;letter-spacing:0.5px;padding:2px 6px;border-radius:4px;background:rgba(147,51,234,.1);color:var(--purple);border:1px solid rgba(147,51,234,.3)}
+.analyze-btn{background:none;border:1.5px solid var(--border);color:var(--subtext);width:28px;height:28px;border-radius:6px;cursor:pointer;font-size:12px;display:flex;align-items:center;justify-content:center;transition:.2s;flex-shrink:0}
+.analyze-btn:hover{border-color:var(--accent);color:var(--accent);background:rgba(14,165,233,.05)}
+.analyze-btn.loading{opacity:.5;cursor:wait}
+.analyze-btn.done{border-color:var(--low);color:var(--low)}
+.analyze-row{background:rgba(14,165,233,.02);border-bottom:1px solid var(--border)}
+.analyze-row td{padding:16px 20px !important}
+.ar-wrap{display:flex;gap:20px;flex-wrap:wrap;align-items:flex-start}
+.ar-card{flex:1;min-width:180px;background:var(--card);border:1px solid var(--border);border-radius:10px;padding:14px}
+.ar-card-title{font-size:9px;font-weight:900;text-transform:uppercase;letter-spacing:1px;color:var(--subtext);margin-bottom:10px}
+.ar-metric{display:flex;justify-content:space-between;align-items:baseline;padding:4px 0}
+.ar-metric-label{font-size:10px;color:var(--subtext);font-weight:700}
+.ar-metric-val{font-family:'JetBrains Mono';font-weight:900;font-size:14px}
+.ar-winrate-hero{font-family:'JetBrains Mono';font-weight:900;font-size:22px;text-align:center;padding:8px 0}
+.ar-winrate-sub{font-size:9px;font-weight:700;color:var(--subtext);text-align:center}
+.ar-bad-row{display:flex;gap:12px;margin-top:8px;flex-wrap:wrap}
+.ar-bad-pill{font-size:10px;font-weight:700;color:var(--high);background:rgba(239,68,68,.06);padding:4px 8px;border-radius:4px}
+.ar-direction{display:inline-flex;align-items:center;gap:3px;font-size:9px;font-weight:900;padding:2px 6px;border-radius:4px;text-transform:uppercase}
 /* Sandbox */
 .sb-form{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:24px;margin-bottom:24px}
 .sb-leg-row{display:grid;grid-template-columns:1fr 100px 100px 100px 40px;gap:12px;align-items:center;margin-bottom:10px}
@@ -352,7 +381,17 @@ td:last-child{border-radius:0 10px 10px 0;border-right:1px solid var(--border)}
 <input type="text" id="sInput" placeholder="Search..." onkeyup="search()" style="flex:1;min-width:0;padding:18px 25px;background:var(--card);border:1px solid var(--border);color:white;border-radius:10px;outline:none;box-sizing:border-box">
 <div id="excludeWrap" style="flex:none"><input type="text" id="excludeInput" placeholder="Filter out ticker..." oninput="applyFilters()" style="width:220px;padding:18px 25px;background:var(--card);border:1px solid rgba(239,68,68,.4);color:#ef4444;border-radius:10px;outline:none;box-sizing:border-box;font-family:Inter,sans-serif;font-size:13px"></div>
 </div>
-<table><thead><tr><th>Instrument</th><th>Current</th><th>Div Date</th><th class="sortable" onclick="sortProfit()">Exp. Profit ⇅</th><th class="sortable" onclick="sortZ()">Z-Score ⇅</th><th>Yields</th><th class="sortable" onclick="sortLiq()">Liquidity ⇅</th><th class="sortable" onclick="sortAge()">Active ⇅</th><th>Z Trend</th><th>Action</th></tr></thead><tbody id="alertBody"></tbody></table>
+<div style="display:flex;gap:15px;margin-bottom:20px;align-items:center;flex-wrap:wrap">
+<span class="filter-label">Show:</span>
+<div class="filter-pills" id="filterPills">
+<button class="filter-pill" onclick="filterByScore(5,this)">Top 5</button>
+<button class="filter-pill" onclick="filterByScore(10,this)">Top 10</button>
+<button class="filter-pill" onclick="filterByScore(20,this)">Top 20</button>
+<button class="filter-pill active" onclick="filterByScore(0,this)">All</button>
+</div>
+<span class="filter-label" style="margin-left:auto" id="screenerAge"></span>
+</div>
+<table><thead><tr><th class="sortable" onclick="sortScore()">Score ⇅</th><th>Instrument</th><th>Current</th><th>Div Date</th><th class="sortable" onclick="sortProfit()">Exp. Profit ⇅</th><th class="sortable" onclick="sortZ()">Z-Score ⇅</th><th>Yields</th><th class="sortable" onclick="sortLiq()">Liquidity ⇅</th><th class="sortable" onclick="sortAge()">Active ⇅</th><th>Z Trend</th><th>Action</th></tr></thead><tbody id="alertBody"></tbody></table>
 </div>
 <div id="portfolio" class="tab-content">
 <div class="exposure-pill-box"><div class="exp-pill"><span class="exp-label">LONG</span><span class="exp-val-long" id="valLong">$0</span></div><div class="exp-pill"><span class="exp-label">SHORT</span><span class="exp-val-short" id="valShort">$0</span></div></div>
@@ -461,6 +500,141 @@ let activeId = "";
 let sortAsc = true;
 let liveTimer = null;
 let watchlistIds = new Set(); // tracks pair IDs currently on watchlist
+let screenerCache = {}; // {cleanId: {wr30, wr60, wr90, avgMae, ...}}
+let activeScoreFilter = 0; // 0 = show all, N = show top N
+// ── COMPOSITE SETUP SCORE (0-100) ──
+// Instant frontend computation from existing alert data. No API call.
+function computeSetupScore(r, maxEP) {
+  var score = 0;
+  // 1. Z-Score magnitude (0-20): higher |Z| = stronger signal
+  var az = Math.abs(parseFloat(r.z) || 0);
+  score += Math.min(20, (az - 1.8) / (3.0 - 1.8) * 15 + 5); // 1.8→5, 3.0→20
+  // 2. Expected Profit (0-20): scaled relative to best in dataset
+  var ep = parseFloat(r.expProfit) || 0;
+  if (maxEP > 0) score += (ep / maxEP) * 20;
+  // 3. Liquidity (0-15): higher volume = easier execution
+  var liq = parseFloat(r.liq) || 0;
+  if (liq > 100000) score += 15;
+  else if (liq > 50000) score += 12;
+  else if (liq > 20000) score += 8;
+  else score += 3;
+  // 4. Volume Spike bonus (0-5): institutional interest
+  if (r.volSpike) score += 5;
+  // 5. Z-Trend convergence (0-15): is Z moving toward 0?
+  if (r.zTrend && r.zTrend.length >= 2) {
+    var recent = r.zTrend.slice(-3).map(function(v) { return Math.abs(parseFloat(v)); });
+    var converging = 0;
+    for (var i = 1; i < recent.length; i++) { if (recent[i] < recent[i-1]) converging++; }
+    var diverging = 0;
+    for (var i = 1; i < recent.length; i++) { if (recent[i] > recent[i-1]) diverging++; }
+    if (converging > diverging) score += 15;
+    else if (converging === diverging) score += 7;
+    else score += 0; // diverging = bad
+  }
+  // 6. Age sweet spot (0-10): 2-7 days ideal, too fresh or too stale = lower
+  var age = parseInt(r.age) || 0;
+  if (age >= 2 && age <= 7) score += 10;
+  else if (age === 1 || (age >= 8 && age <= 14)) score += 6;
+  else if (age === 0) score += 4; // NEW, unproven
+  else score += 2; // stale
+  // 7. Yield (0-10): higher combined yield = more carry
+  var yA = parseFloat(r.yA) || 0, yB = parseFloat(r.yB) || 0;
+  var avgY = (yA + yB) / 2;
+  score += Math.min(10, avgY / 8 * 10); // 8% yield → full points
+  // 8. Div proximity penalty (-5): near ex-div = assignment risk
+  if (r.exDivA || r.exDivB) {
+    var now = new Date();
+    var checkDiv = function(dt) {
+      if (!dt) return 999;
+      var d = new Date(dt + 'T00:00:00');
+      return Math.max(0, (d - now) / 86400000);
+    };
+    var minDiv = Math.min(checkDiv(r.exDivA), checkDiv(r.exDivB));
+    if (minDiv <= 7) score -= 5;
+  }
+  // 9. Screener bonus (0-5): if pre-screened with good win rate
+  var scr = screenerCache[cleanIdFE(r.id)];
+  if (scr && scr.wr30 !== null && scr.wr30 >= 60) score += 5;
+  return Math.max(0, Math.min(100, Math.round(score)));
+}
+function cleanIdFE(id) { return String(id).replace(/[^a-zA-Z0-9]/g, '').toUpperCase(); }
+function scoreColor(s) {
+  if (s >= 75) return { c: 'var(--low)', bg: 'rgba(16,185,129,.1)' };
+  if (s >= 55) return { c: 'var(--accent)', bg: 'rgba(14,165,233,.08)' };
+  if (s >= 40) return { c: 'var(--yellow)', bg: 'rgba(245,158,11,.08)' };
+  return { c: 'var(--subtext)', bg: 'rgba(255,255,255,.04)' };
+}
+// ── INLINE ANALYZE ──
+async function analyzeAlert(btn, tA, tB, pA, pB, z, rowId) {
+  if (btn.classList.contains('loading')) return;
+  // Toggle off if already analyzed
+  var existingRow = document.getElementById('ar-' + rowId);
+  if (existingRow) { existingRow.remove(); btn.classList.remove('done'); return; }
+  btn.classList.add('loading'); btn.innerHTML = '&#8987;';
+  try {
+    var data = await apiGet('analyzePair', { tA: tA, tB: tB, pA: pA, pB: pB, z: z });
+    btn.classList.remove('loading'); btn.classList.add('done'); btn.innerHTML = '&#10003;';
+    if (!data || !data.ok || !data.analysisData || data.analysisData.error) {
+      btn.classList.remove('done'); btn.innerHTML = '&#9881;'; btn.title = 'Error: ' + ((data && data.analysisData) ? data.analysisData.error : 'Unknown');
+      return;
+    }
+    var ad = data.analysisData;
+    var m = ad.metrics;
+    var prob = m.probabilities || {};
+    var rz = m.rollingZ || {};
+    // Build expandable analysis row
+    var h = '<tr class="analyze-row" id="ar-' + rowId + '"><td colspan="11"><div class="ar-wrap">';
+    // Direction card
+    var longTk = ad.dirA > 0 ? ad.tA : ad.tB;
+    var shortTk = ad.dirA < 0 ? ad.tA : ad.tB;
+    h += '<div class="ar-card" style="flex:0 0 140px"><div class="ar-card-title">Trade Direction</div>';
+    h += '<div class="ar-direction" style="background:rgba(16,185,129,.1);color:var(--low);margin-bottom:6px">LONG ' + longTk + '</div>';
+    h += '<div class="ar-direction" style="background:rgba(239,68,68,.08);color:var(--high)">SHORT ' + shortTk + '</div>';
+    h += '</div>';
+    // Win Rate cards (30/60/90)
+    var windows = [{k:'30d',l:'30D'},{k:'60d',l:'60D'},{k:'90d',l:'90D'}];
+    for (var i = 0; i < windows.length; i++) {
+      var wk = windows[i].k;
+      var wr = (prob.winRates && prob.winRates[wk]) ? prob.winRates[wk] : null;
+      var rw = rz[wk] || {};
+      h += '<div class="ar-card"><div class="ar-card-title">' + windows[i].l + ' Window</div>';
+      if (wr && wr.eligible >= 3) {
+        var wrClr = wr.rate >= 60 ? 'var(--low)' : wr.rate >= 40 ? 'var(--yellow)' : 'var(--high)';
+        h += '<div class="ar-winrate-hero" style="color:' + wrClr + '">' + wr.rate + '%</div>';
+        h += '<div class="ar-winrate-sub">Win Rate (' + wr.wins + '/' + wr.eligible + ')</div>';
+      } else {
+        h += '<div class="ar-winrate-hero" style="color:var(--subtext)">—</div>';
+        h += '<div class="ar-winrate-sub">Insufficient data</div>';
+      }
+      if (rw.expectedProfit !== undefined) {
+        var epClr = rw.expectedProfit >= 0 ? 'var(--low)' : 'var(--high)';
+        h += '<div class="ar-metric"><span class="ar-metric-label">Exp. Profit</span><span class="ar-metric-val" style="color:' + epClr + '">' + (rw.expectedProfit >= 0 ? '+' : '') + '$' + Math.abs(rw.expectedProfit).toFixed(2) + '</span></div>';
+      }
+      if (rw.z !== undefined) {
+        var zClr = Math.abs(rw.z) >= 1.8 ? 'var(--high)' : Math.abs(rw.z) >= 1 ? 'var(--yellow)' : 'var(--low)';
+        h += '<div class="ar-metric"><span class="ar-metric-label">Z-Score</span><span class="ar-metric-val" style="color:' + zClr + '">' + (rw.z >= 0 ? '+' : '') + rw.z.toFixed(2) + 'σ</span></div>';
+      }
+      h += '</div>';
+    }
+    // Bad Scenario card
+    if (prob.badScenario && prob.triggers >= 3) {
+      var bs = prob.badScenario;
+      var wpClr = bs.wideningProb > 60 ? 'var(--high)' : bs.wideningProb > 40 ? 'var(--yellow)' : 'var(--low)';
+      h += '<div class="ar-card" style="border-color:rgba(239,68,68,.2)"><div class="ar-card-title" style="color:var(--high)">Downside Risk</div>';
+      h += '<div class="ar-metric"><span class="ar-metric-label">Avg Max Loss</span><span class="ar-metric-val" style="color:var(--high)">-$' + Math.abs(bs.avgMaeDollar).toFixed(2) + '</span></div>';
+      h += '<div class="ar-metric"><span class="ar-metric-label">P75 Max Loss</span><span class="ar-metric-val" style="color:var(--high)">-$' + Math.abs(bs.p75MaeDollar).toFixed(2) + '</span></div>';
+      h += '<div class="ar-metric"><span class="ar-metric-label">Widen Prob</span><span class="ar-metric-val" style="color:' + wpClr + '">' + bs.wideningProb + '%</span></div>';
+      h += '<div class="ar-metric"><span class="ar-metric-label">Samples</span><span class="ar-metric-val" style="color:var(--subtext)">' + bs.sampleSize + '</span></div>';
+      h += '</div>';
+    }
+    h += '</div></td></tr>';
+    // Insert after the alert row
+    var alertRow = btn.closest('tr');
+    if (alertRow) alertRow.insertAdjacentHTML('afterend', h);
+  } catch(e) {
+    btn.classList.remove('loading'); btn.innerHTML = '&#9881;'; btn.title = 'Error: ' + e.message;
+  }
+}
 async function apiGet(action,params={}){
   if(!GAS_URL||GAS_URL.indexOf("PASTE")!==-1||GAS_URL.indexOf("http")!==0){throw new Error("GAS_URL not configured. Open index.html and set your Apps Script deployment URL.");}
   console.log("[TerminalPro] apiGet:",action,params);
@@ -469,14 +643,14 @@ async function apiGet(action,params={}){
   try{console.log("[TerminalPro] Fetching:",url.toString());const res=await fetch(url.toString(),{signal:controller.signal});clearTimeout(timer);console.log("[TerminalPro] Response status:",res.status);if(!res.ok)throw new Error("HTTP "+res.status+" "+res.statusText);const text=await res.text();console.log("[TerminalPro] Response length:",text.length,"chars");try{const json=JSON.parse(text);console.log("[TerminalPro] Parsed OK. ok=",json.ok,"alertData count=",(json.alertData?json.alertData.length:"N/A"));return json;}catch(e){console.error("[TerminalPro] Non-JSON response:",text.substring(0,500));throw new Error("Non-JSON response — redeploy GAS as 'Anyone'");}}catch(e){clearTimeout(timer);if(e.name==='AbortError')throw new Error("Request timed out (30s). GAS may be unreachable — check deployment URL and permissions.");throw e;}
 }
 function setConnStatus(s,msg){document.getElementById("connDot").className="conn-dot "+s;document.getElementById("connDot").title=msg||"API Status";}
-function showApiError(msg){var el=document.getElementById("alertBody");if(el)el.innerHTML='<tr><td colspan="10" style="text-align:center;color:var(--high);padding:40px;font-weight:900;font-size:12px">API ERROR: '+msg+'<br><span style="color:var(--subtext);font-weight:400;font-size:11px;margin-top:8px;display:block">Check browser console for details. Ensure GAS is deployed as "Anyone" (not "Anyone with Google account").</span></td></tr>';}
-function showInitializing(data){var el=document.getElementById("alertBody");if(!el)return;var msg='<tr><td colspan="10" style="text-align:center;padding:60px;font-size:12px">';msg+='<div style="font-size:28px;margin-bottom:12px">&#9881;</div>';msg+='<div style="color:var(--yellow);font-weight:900;font-size:14px;margin-bottom:8px">System Initializing</div>';msg+='<div style="color:var(--subtext);margin-bottom:16px">'+(data.statusMessage||'Sheets are being built. Please wait.')+'</div>';if(data.setupPhase>=0&&data.setupPhase<7){var phases=["Intra Levels","Intra Live","Supporting Sheets","Credit Pairs","Credit Levels","Credit Live","Triggers","Done"];msg+='<div style="color:var(--accent);font-weight:900;font-size:11px">Setup progress: Phase '+data.setupPhase+'/7 — '+phases[data.setupPhase]+'</div>';}msg+='<div style="color:var(--subtext);margin-top:16px;font-size:11px">Auto-refreshing in 30 seconds...</div>';msg+='</td></tr>';el.innerHTML=msg;}
-function showDiag(d,ad,data){if(data&&data.status==="initializing"){showInitializing(data);return;}if(ad&&ad.length>0)return;var el=document.getElementById("alertBody");if(!el)return;var msg='<tr><td colspan="10" style="text-align:center;padding:40px;font-size:12px">';if(!d||!d.totalRows){msg+='<div style="color:var(--yellow);font-weight:900">No data rows found in sheet</div><div style="color:var(--subtext);margin-top:8px">Run <b>setupAllBatched()</b> in the Apps Script editor to build the Live sheet.</div>';}else{msg+='<div style="color:var(--yellow);font-weight:900;margin-bottom:12px">'+d.totalRows+' pairs checked — '+d.passed+' passed all filters</div>';if(d.sheetUsed){msg+='<div style="color:var(--subtext);margin-bottom:12px;font-size:11px">Reading from: <b>'+d.sheetUsed+'</b></div>';}msg+='<table style="margin:0 auto;text-align:left;border-spacing:8px 4px"><tr><td style="color:var(--subtext);padding:4px 12px">Blacklisted:</td><td style="color:var(--high);font-weight:900">'+(d.blacklisted||0)+'</td></tr><tr><td style="color:var(--subtext);padding:4px 12px">Intra-only (credit skip):</td><td style="color:var(--high);font-weight:900">'+(d.intraOnly||0)+'</td></tr><tr><td style="color:var(--subtext);padding:4px 12px">No PairID:</td><td style="color:var(--high);font-weight:900">'+d.noId+'</td></tr><tr><td style="color:var(--subtext);padding:4px 12px">No price data:</td><td style="color:var(--high);font-weight:900">'+d.noPrice+'</td></tr><tr><td style="color:var(--subtext);padding:4px 12px">No valid history (StDev=0):</td><td style="color:var(--high);font-weight:900">'+(d.noHistory||d.lowHist||0)+'</td></tr><tr><td style="color:var(--subtext);padding:4px 12px">Missing coupon:</td><td style="color:var(--high);font-weight:900">'+d.noCoupon+'</td></tr><tr><td style="color:var(--subtext);padding:4px 12px">Div dates &gt;45d apart:</td><td style="color:var(--high);font-weight:900">'+(d.divTooFar||0)+'</td></tr><tr><td style="color:var(--subtext);padding:4px 12px">|Z| &lt; 1.5:</td><td style="color:var(--low);font-weight:900">'+d.lowZ+'</td></tr><tr><td style="color:var(--subtext);padding:4px 12px">Passed (signals):</td><td style="color:var(--accent);font-weight:900">'+d.passed+'</td></tr></table>';if(d.sampleRows&&d.sampleRows.length>0){msg+='<div style="margin-top:20px;color:var(--yellow);font-weight:900;font-size:11px;margin-bottom:8px">SAMPLE RAW DATA (first '+d.sampleRows.length+' rows)</div>';msg+='<div style="overflow-x:auto;max-width:100%"><table style="margin:0 auto;text-align:left;border-spacing:6px 3px;font-size:10px;font-family:monospace">';msg+='<tr style="color:var(--accent);font-weight:900"><td>Row</td><td>PairID</td><td>PriceA</td><td>PriceB</td><td>Z-Score</td><td>Mean</td><td>StDev</td><td>HistCnt</td><td>CouponA</td><td>CouponB</td></tr>';for(var i=0;i<d.sampleRows.length;i++){var r=d.sampleRows[i];var pClr=(parseFloat(r.priceA)>0&&parseFloat(r.priceB)>0)?'var(--low)':'var(--high)';var hClr=parseFloat(r.stdev)>0.001?'var(--low)':'var(--high)';var cClr=(r.couponA!==""&&r.couponA!==null&&r.couponA!==""&&r.couponB!==""&&r.couponB!==null)?'var(--low)':'var(--high)';var zClr=Math.abs(parseFloat(r.zScore)||0)>=1.5?'var(--low)':'var(--high)';msg+='<tr><td style="color:var(--subtext)">'+r.row+'</td><td style="color:var(--subtext);max-width:120px;overflow:hidden;text-overflow:ellipsis">'+r.pairId+'</td><td style="color:'+pClr+'">'+r.priceA+'</td><td style="color:'+pClr+'">'+r.priceB+'</td><td style="color:'+zClr+'">'+(parseFloat(r.zScore)||0).toFixed(2)+'</td><td style="color:var(--subtext)">'+(parseFloat(r.mean)||0).toFixed(3)+'</td><td style="color:var(--subtext)">'+(parseFloat(r.stdev)||0).toFixed(4)+'</td><td style="color:'+hClr+'">'+r.histCount+'</td><td style="color:'+cClr+'">'+(r.couponA===""||r.couponA===null?"(empty)":r.couponA)+'</td><td style="color:'+cClr+'">'+(r.couponB===""||r.couponB===null?"(empty)":r.couponB)+'</td></tr>';}msg+='</table></div>';}}msg+='</td></tr>';el.innerHTML=msg;console.log("[TerminalPro] Diagnostics:",JSON.stringify(d));}
+function showApiError(msg){var el=document.getElementById("alertBody");if(el)el.innerHTML='<tr><td colspan="11" style="text-align:center;color:var(--high);padding:40px;font-weight:900;font-size:12px">API ERROR: '+msg+'<br><span style="color:var(--subtext);font-weight:400;font-size:11px;margin-top:8px;display:block">Check browser console for details. Ensure GAS is deployed as "Anyone" (not "Anyone with Google account").</span></td></tr>';}
+function showInitializing(data){var el=document.getElementById("alertBody");if(!el)return;var msg='<tr><td colspan="11" style="text-align:center;padding:60px;font-size:12px">';msg+='<div style="font-size:28px;margin-bottom:12px">&#9881;</div>';msg+='<div style="color:var(--yellow);font-weight:900;font-size:14px;margin-bottom:8px">System Initializing</div>';msg+='<div style="color:var(--subtext);margin-bottom:16px">'+(data.statusMessage||'Sheets are being built. Please wait.')+'</div>';if(data.setupPhase>=0&&data.setupPhase<7){var phases=["Intra Levels","Intra Live","Supporting Sheets","Credit Pairs","Credit Levels","Credit Live","Triggers","Done"];msg+='<div style="color:var(--accent);font-weight:900;font-size:11px">Setup progress: Phase '+data.setupPhase+'/7 — '+phases[data.setupPhase]+'</div>';}msg+='<div style="color:var(--subtext);margin-top:16px;font-size:11px">Auto-refreshing in 30 seconds...</div>';msg+='</td></tr>';el.innerHTML=msg;}
+function showDiag(d,ad,data){if(data&&data.status==="initializing"){showInitializing(data);return;}if(ad&&ad.length>0)return;var el=document.getElementById("alertBody");if(!el)return;var msg='<tr><td colspan="11" style="text-align:center;padding:40px;font-size:12px">';if(!d||!d.totalRows){msg+='<div style="color:var(--yellow);font-weight:900">No data rows found in sheet</div><div style="color:var(--subtext);margin-top:8px">Run <b>setupAllBatched()</b> in the Apps Script editor to build the Live sheet.</div>';}else{msg+='<div style="color:var(--yellow);font-weight:900;margin-bottom:12px">'+d.totalRows+' pairs checked — '+d.passed+' passed all filters</div>';if(d.sheetUsed){msg+='<div style="color:var(--subtext);margin-bottom:12px;font-size:11px">Reading from: <b>'+d.sheetUsed+'</b></div>';}msg+='<table style="margin:0 auto;text-align:left;border-spacing:8px 4px"><tr><td style="color:var(--subtext);padding:4px 12px">Blacklisted:</td><td style="color:var(--high);font-weight:900">'+(d.blacklisted||0)+'</td></tr><tr><td style="color:var(--subtext);padding:4px 12px">Intra-only (credit skip):</td><td style="color:var(--high);font-weight:900">'+(d.intraOnly||0)+'</td></tr><tr><td style="color:var(--subtext);padding:4px 12px">No PairID:</td><td style="color:var(--high);font-weight:900">'+d.noId+'</td></tr><tr><td style="color:var(--subtext);padding:4px 12px">No price data:</td><td style="color:var(--high);font-weight:900">'+d.noPrice+'</td></tr><tr><td style="color:var(--subtext);padding:4px 12px">No valid history (StDev=0):</td><td style="color:var(--high);font-weight:900">'+(d.noHistory||d.lowHist||0)+'</td></tr><tr><td style="color:var(--subtext);padding:4px 12px">Missing coupon:</td><td style="color:var(--high);font-weight:900">'+d.noCoupon+'</td></tr><tr><td style="color:var(--subtext);padding:4px 12px">Div dates &gt;45d apart:</td><td style="color:var(--high);font-weight:900">'+(d.divTooFar||0)+'</td></tr><tr><td style="color:var(--subtext);padding:4px 12px">|Z| &lt; 1.5:</td><td style="color:var(--low);font-weight:900">'+d.lowZ+'</td></tr><tr><td style="color:var(--subtext);padding:4px 12px">Passed (signals):</td><td style="color:var(--accent);font-weight:900">'+d.passed+'</td></tr></table>';if(d.sampleRows&&d.sampleRows.length>0){msg+='<div style="margin-top:20px;color:var(--yellow);font-weight:900;font-size:11px;margin-bottom:8px">SAMPLE RAW DATA (first '+d.sampleRows.length+' rows)</div>';msg+='<div style="overflow-x:auto;max-width:100%"><table style="margin:0 auto;text-align:left;border-spacing:6px 3px;font-size:10px;font-family:monospace">';msg+='<tr style="color:var(--accent);font-weight:900"><td>Row</td><td>PairID</td><td>PriceA</td><td>PriceB</td><td>Z-Score</td><td>Mean</td><td>StDev</td><td>HistCnt</td><td>CouponA</td><td>CouponB</td></tr>';for(var i=0;i<d.sampleRows.length;i++){var r=d.sampleRows[i];var pClr=(parseFloat(r.priceA)>0&&parseFloat(r.priceB)>0)?'var(--low)':'var(--high)';var hClr=parseFloat(r.stdev)>0.001?'var(--low)':'var(--high)';var cClr=(r.couponA!==""&&r.couponA!==null&&r.couponA!==""&&r.couponB!==""&&r.couponB!==null)?'var(--low)':'var(--high)';var zClr=Math.abs(parseFloat(r.zScore)||0)>=1.5?'var(--low)':'var(--high)';msg+='<tr><td style="color:var(--subtext)">'+r.row+'</td><td style="color:var(--subtext);max-width:120px;overflow:hidden;text-overflow:ellipsis">'+r.pairId+'</td><td style="color:'+pClr+'">'+r.priceA+'</td><td style="color:'+pClr+'">'+r.priceB+'</td><td style="color:'+zClr+'">'+(parseFloat(r.zScore)||0).toFixed(2)+'</td><td style="color:var(--subtext)">'+(parseFloat(r.mean)||0).toFixed(3)+'</td><td style="color:var(--subtext)">'+(parseFloat(r.stdev)||0).toFixed(4)+'</td><td style="color:'+hClr+'">'+r.histCount+'</td><td style="color:'+cClr+'">'+(r.couponA===""||r.couponA===null?"(empty)":r.couponA)+'</td><td style="color:'+cClr+'">'+(r.couponB===""||r.couponB===null?"(empty)":r.couponB)+'</td></tr>';}msg+='</table></div>';}}msg+='</td></tr>';el.innerHTML=msg;console.log("[TerminalPro] Diagnostics:",JSON.stringify(d));}
 function hideLoader(){var o=document.getElementById("loadingOverlay");if(o){o.classList.add("hidden");setTimeout(function(){o.style.display="none";},500);}}
 window.addEventListener("DOMContentLoaded",async()=>{
   console.log("[TerminalPro] Page loaded. GAS_URL=",GAS_URL?GAS_URL.substring(0,50)+"...":"(empty)");
   var safetyTimer=setTimeout(function(){console.error("[TerminalPro] Safety timeout — forcing loader hide after 35s");hideLoader();},35000);
-  try{setConnStatus("loading","Connecting...");const data=await apiGet("getData",{mode:currentMode});console.log("[TerminalPro] Data received, ok=",data&&data.ok,"status=",data&&data.status);if(data&&data.ok){updateUI(data);showDiag(data._diag,data.alertData,data);loadWatchlistIds();if(data.status==="initializing"){setConnStatus("ok","Initializing");setTimeout(()=>refreshData(),30000);}else{setConnStatus("ok","Connected");}}else{var errMsg=data&&data.message?data.message:"Unknown error";console.error("[TerminalPro] API returned ok:false",data);setConnStatus("err","Error: "+errMsg);showApiError(errMsg);}}catch(e){console.error("[TerminalPro] FETCH ERROR:",e.message||e);setConnStatus("err",e.message);showApiError(e.message);}finally{clearTimeout(safetyTimer);hideLoader();}
+  try{setConnStatus("loading","Connecting...");const data=await apiGet("getData",{mode:currentMode});console.log("[TerminalPro] Data received, ok=",data&&data.ok,"status=",data&&data.status);if(data&&data.ok){updateUI(data);showDiag(data._diag,data.alertData,data);loadWatchlistIds();loadScreenerCache();if(data.status==="initializing"){setConnStatus("ok","Initializing");setTimeout(()=>refreshData(),30000);}else{setConnStatus("ok","Connected");}}else{var errMsg=data&&data.message?data.message:"Unknown error";console.error("[TerminalPro] API returned ok:false",data);setConnStatus("err","Error: "+errMsg);showApiError(errMsg);}}catch(e){console.error("[TerminalPro] FETCH ERROR:",e.message||e);setConnStatus("err",e.message);showApiError(e.message);}finally{clearTimeout(safetyTimer);hideLoader();}
 });
 async function switchMode(mode,el){if(mode===currentMode)return;currentMode=mode;activeSector='';document.querySelectorAll('.strat-pill').forEach(p=>p.classList.remove('active'));el.classList.add('active');document.getElementById('sInput').value='';document.getElementById('excludeInput').value='';document.getElementById('alerts').setAttribute('data-mode',mode);try{setConnStatus("loading");console.log("[TerminalPro] Switching to mode:",mode);const data=await apiGet("getData",{mode:mode});if(data&&data.ok){updateUI(data);setConnStatus("ok");}else{console.error("[TerminalPro] switchMode error:",data);setConnStatus("err");}}catch(e){console.error("[TerminalPro] switchMode failed:",e.message);setConnStatus("err");}}
 function tab(t,el){document.querySelectorAll('.tab-content').forEach(x=>x.classList.remove('active'));document.querySelectorAll('.nav-item').forEach(x=>x.classList.remove('active'));document.getElementById(t).classList.add('active');el.classList.add('active');}
@@ -504,10 +678,13 @@ function search(){applyFilters();}
 function toggleSecDropdown(){var el=document.getElementById('secDropdown');if(el)el.classList.toggle('open');}
 function pickSector(sec,label){activeSector=sec;var lbl=document.getElementById('secLabel');if(lbl)lbl.innerText=label||'ALL SECTORS';var dd=document.getElementById('secDropdown');if(dd){dd.classList.remove('open');var items=dd.querySelectorAll('.sec-menu-item');items.forEach(function(it){it.classList.remove('active');if((!sec&&it.textContent.indexOf('All Sectors')!==-1)||(sec&&it.textContent.indexOf(sec)!==-1))it.classList.add('active');});}applyFilters();}
 document.addEventListener('click',function(e){var dd=document.getElementById('secDropdown');if(dd&&!dd.contains(e.target))dd.classList.remove('open');});
-function sortAge(){sortBy('data-age');}function sortZ(){sortBy('data-z',true);}function sortLiq(){sortBy('data-liq');}function sortProfit(){sortBy('data-profit');}
+function sortAge(){sortBy('data-age');}function sortZ(){sortBy('data-z',true);}function sortLiq(){sortBy('data-liq');}function sortProfit(){sortBy('data-profit');}function sortScore(){sortBy('data-score');}
+function filterByScore(n,btn){activeScoreFilter=n;document.querySelectorAll('.filter-pill').forEach(function(p){p.classList.remove('active','active-purple');});if(btn)btn.classList.add(currentMode==='credit'?'active-purple':'active');var rows=Array.from(document.querySelectorAll('.alert-row'));rows.sort(function(a,b){return(parseFloat(b.getAttribute('data-score'))||0)-(parseFloat(a.getAttribute('data-score'))||0);});rows.forEach(function(r,i){if(n>0&&i>=n)r.style.display='none';else r.style.display='';});}
 function sortBy(attr,abs){const tb=document.querySelector("#alertBody");const rows=Array.from(tb.querySelectorAll("tr"));rows.sort((a,b)=>{let av=parseFloat(a.getAttribute(attr))||0,bv=parseFloat(b.getAttribute(attr))||0;if(abs){av=Math.abs(av);bv=Math.abs(bv);}return sortAsc?(bv-av):(av-bv);});rows.forEach(r=>tb.appendChild(r));sortAsc=!sortAsc;}
 function toggleLive(){if(document.getElementById('autoRefresh').checked){refreshData();liveTimer=setInterval(()=>{if(document.getElementById('entryModal').style.display!=='block')refreshData();},300000);}else clearInterval(liveTimer);}
 async function refreshData(){try{setConnStatus("loading");const data=await apiGet("getData",{mode:currentMode});if(data&&data.ok){updateUI(data);setConnStatus("ok");}else setConnStatus("err");}catch(e){setConnStatus("err");}}
+// ── SCREENER CACHE ──
+async function loadScreenerCache(){try{var data=await apiGet('getScreenerData');if(data&&data.ok&&data.screenerData){screenerCache={};data.screenerData.forEach(function(s){screenerCache[cleanIdFE(s.id)]=s;});var ageEl=document.getElementById('screenerAge');if(ageEl&&data.screenerData.length>0){var ts=data.screenerData[0].ts;if(ts){var d=new Date(ts);var hrs=Math.round((Date.now()-d.getTime())/3600000);ageEl.innerText='Screener: '+data.screenerData.length+' pairs pre-analyzed'+(hrs>0?' ('+hrs+'h ago)':'');}}console.log('[TerminalPro] Screener cache loaded:',data.screenerData.length,'pairs');}}catch(e){console.log('[TerminalPro] Screener cache unavailable');}}
 // ── WATCHLIST ──
 async function loadWatchlistIds(){try{const data=await apiGet("getWatchlist");if(data&&data.ok&&data.watchlistData){watchlistIds=new Set(data.watchlistData.map(function(w){return w.id.replace(/[^a-zA-Z0-9]/g,'').toUpperCase();}));document.querySelectorAll('.star-btn').forEach(function(btn){var btnKey=btn.id.replace('star-','').toUpperCase();if(watchlistIds.has(btnKey)){btn.innerHTML='&#9733;';btn.classList.add('saved');}});var ct=document.getElementById('watchCount');if(ct)ct.innerText=data.watchlistData.length>0?'('+data.watchlistData.length+')':'';}}catch(e){}}
 async function addToWatchlist(id,btn){try{btn.innerHTML='&#9733;';btn.classList.add('saved');watchlistIds.add(id.replace(/[^a-zA-Z0-9]/g,'').toUpperCase());await apiGet("saveWatchlist",{id:id,mode:currentMode});var ct=document.getElementById('watchCount');var sz=watchlistIds.size;if(ct)ct.innerText=sz>0?'('+sz+')':'';}catch(e){btn.innerHTML='&#9734;';btn.classList.remove('saved');}}
@@ -546,16 +723,29 @@ function buildTrend(trend){if(!trend||!trend.length)return'<span style="color:va
 function renderMacro(m){if(!m||!m.us10y)return;document.getElementById('m_us10y').innerText=m.us10y.val;var c1=m.us10y.chg,e1=document.getElementById('c_us10y');e1.innerText='('+(c1>=0?'+':'')+(c1*100).toFixed(2)+'%)';e1.className='macro-chg '+(c1>=0?'chg-pos':'chg-neg');document.getElementById('m_tlt').innerText=m.tlt.val;var c2=m.tlt.chg,e2=document.getElementById('c_tlt');e2.innerText='('+(c2>=0?'+':'')+(c2*100).toFixed(2)+'%)';e2.className='macro-chg '+(c2>=0?'chg-pos':'chg-neg');document.getElementById('m_pff').innerText=m.pff.val;var c3=m.pff.chg,e3=document.getElementById('c_pff');e3.innerText='('+(c3>=0?'+':'')+(c3*100).toFixed(2)+'%)';e3.className='macro-chg '+(c3>=0?'chg-pos':'chg-neg');}
 function renderAlerts(ad){if(!ad)return;document.getElementById('alerts').setAttribute('data-mode',currentMode);var maxEP=0,maxId="N/A",maxUrl="#";var fmt=function(t){return t?"'"+t.trim().replace(/-/g,'/P')+"'":"UNKNOWN";};var isCr=currentMode==='credit';var ac=isCr?'var(--purple)':'var(--accent)';
 ad.forEach(function(r){var ep=parseFloat(r.expProfit)||0;if(ep>maxEP){maxEP=ep;maxId=r.id;maxUrl="https://www.tradingview.com/chart/?symbol="+fmt(r.tA)+"-"+fmt(r.tB);}});
+// Compute scores for all alerts
+ad.forEach(function(r){ r._score = computeSetupScore(r, maxEP); });
+// Sort by score descending by default
+ad.sort(function(a,b){ return b._score - a._score; });
 document.getElementById('pairCount').innerText=ad.length+' signals';document.getElementById('topSpreadVal').innerHTML='$'+maxEP.toFixed(2);var lnk=document.getElementById('topSpreadLink');lnk.innerText=maxId;lnk.href=maxUrl;
 var sec={};ad.forEach(function(r){if(r.sec)sec[r.sec]=(sec[r.sec]||0)+1;});if(activeSector&&!sec[activeSector])activeSector='';var secKeys=Object.keys(sec).sort(function(a,b){if(a==='OTHER')return 1;if(b==='OTHER')return -1;return a.localeCompare(b);});var curSecLabel=activeSector||'ALL SECTORS';var ph='<div class="sec-dropdown" id="secDropdown"><div class="sec-toggle" onclick="toggleSecDropdown()"><span id="secLabel">'+curSecLabel+'</span><span class="arrow">&#9660;</span></div><div class="sec-menu"><div class="sec-menu-item'+(!activeSector?' active':'')+'" onclick="pickSector(\'\',\'ALL SECTORS\')">All Sectors <span class="sec-count" style="color:'+ac+'">'+ad.length+'</span></div>';for(var si2=0;si2<secKeys.length;si2++){var sk=secKeys[si2];ph+='<div class="sec-menu-item'+(activeSector===sk?' active':'')+'" onclick="pickSector(\''+sk+'\',\''+sk+'\')">'+sk+' <span class="sec-count" style="color:'+ac+'">'+sec[sk]+'</span></div>';}ph+='</div></div>';document.getElementById('secBar').innerHTML=ph;
-var h='';ad.forEach(function(r){var z=parseFloat(r.z),az=Math.abs(z);var act=az>=3?{l:"EXTREME / GIFT",c:ac}:(az>=2.2?{l:"STRONG ENTRY",c:"white"}:{l:"EARLY SETUP",c:"var(--subtext)"});var url="https://www.tradingview.com/chart/?symbol="+fmt(r.tA)+"-"+fmt(r.tB);var al=parseFloat(r.liq)||0;var lc=al>50000?'dot-green':(al>20000?'dot-yellow':'dot-red');var lt=al>1000?(al/1000).toFixed(0)+'k':al.toFixed(0);var sp=r.volSpike?'<div class="vol-spike-tag">HIGH VOL</div>':'';var tr=buildTrend(r.zTrend);var ag=parseInt(r.age)||0;var at=ag>0?ag+'d':'NEW';var sa=String(r.tA).replace(/'/g,"\\'"),sb=String(r.tB).replace(/'/g,"\\'"),si=String(r.id).replace(/'/g,"\\'");var lk=isCr?'pair-link credit':'pair-link';
+var h='';var rowIdx=0;ad.forEach(function(r){var z=parseFloat(r.z),az=Math.abs(z);var act=az>=3?{l:"EXTREME / GIFT",c:ac}:(az>=2.2?{l:"STRONG ENTRY",c:"white"}:{l:"EARLY SETUP",c:"var(--subtext)"});var url="https://www.tradingview.com/chart/?symbol="+fmt(r.tA)+"-"+fmt(r.tB);var al=parseFloat(r.liq)||0;var lc=al>50000?'dot-green':(al>20000?'dot-yellow':'dot-red');var lt=al>1000?(al/1000).toFixed(0)+'k':al.toFixed(0);var sp=r.volSpike?'<div class="vol-spike-tag">HIGH VOL</div>':'';var tr=buildTrend(r.zTrend);var ag=parseInt(r.age)||0;var at=ag>0?ag+'d':'NEW';var sa=String(r.tA).replace(/'/g,"\\'"),sb=String(r.tB).replace(/'/g,"\\'"),si=String(r.id).replace(/'/g,"\\'");var lk=isCr?'pair-link credit':'pair-link';
 var starCid=si.replace(/[^a-zA-Z0-9]/g,'').toUpperCase();var starSaved=watchlistIds.has(starCid);var starIcon=starSaved?'&#9733;':'&#9734;';var starCls=starSaved?'star-btn saved':'star-btn';
 var divTd='<td><div style="display:flex;flex-direction:column;gap:3px"><div class="mono-data" style="color:var(--subtext);font-size:10px">'+r.tA+': —</div><div class="mono-data" style="color:var(--subtext);font-size:10px">'+r.tB+': —</div></div></td>';
 var fmtDiv=function(dt,ticker){if(!dt)return'<div class="mono-data" style="color:var(--subtext);font-size:10px">'+ticker+': —</div>';var dd=new Date(dt+'T00:00:00');var dMon=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][dd.getMonth()];var dStr=dMon+' '+dd.getDate();return'<div class="mono-data" style="color:white;font-size:10px;font-weight:700">'+ticker+': '+dStr+'</div>';};
 if(r.exDivA||r.exDivB){divTd='<td><div style="display:flex;flex-direction:column;gap:3px">'+fmtDiv(r.exDivA,r.tA)+fmtDiv(r.exDivB,r.tB)+'</div></td>';}
 var ep=r.expProfit||'0.00';
-h+='<tr class="alert-row" data-s="'+r.id.toLowerCase()+' '+(r.sec||'').toLowerCase()+' '+act.l.toLowerCase()+'" data-sec="'+(r.sec||'')+'" data-tickers="'+r.tA.toUpperCase()+' '+r.tB.toUpperCase()+'" data-z="'+r.z+'" data-age="'+ag+'" data-liq="'+al+'" data-profit="'+ep+'">'+'<td><div style="display:flex;align-items:center"><button class="'+starCls+'" id="star-'+si.replace(/[^a-zA-Z0-9]/g,'')+'" onclick="addToWatchlist(\''+si+'\',this)" title="Add to Watchlist">'+starIcon+'</button><button class="plus-btn" onclick="openModal(\''+si+'\',\''+sa+'\',\''+sb+'\')">+</button><div><a href="'+url+'" target="_blank" class="'+lk+'">'+r.id+'</a><div class="range-tag">'+r.rng+'</div><div style="font-size:10px;color:var(--subtext);font-weight:900;text-transform:uppercase;margin-top:2px">'+r.sec+'</div></div></div></td>'+'<td><div class="mono-data">$'+r.spr+'</div></td>'+divTd+'<td><div class="mono-data" style="color:var(--low)">$'+ep+'</div></td>'+'<td><div style="color:var(--accent)" class="mono-data">'+z.toFixed(2)+'σ</div></td>'+'<td><div class="mono-data">'+r.yA+'% / '+r.yB+'%</div></td>'+'<td><div style="display:flex;flex-direction:column;gap:2px"><div style="display:flex;align-items:center"><span class="dot '+lc+'"></span>'+lt+'</div>'+sp+'</div></td>'+'<td><div>'+at+'</div></td>'+'<td><div class="trend-tape">'+tr+'</div></td>'+'<td><div class="action-tag" style="color:'+act.c+';border-color:'+act.c+'">'+act.l+'</div></td></tr>';});
-document.getElementById('alertBody').innerHTML=h;applyFilters();}
+// Score cell
+var sc=r._score;var scc=scoreColor(sc);
+var scoreTd='<td><div class="score-cell"><span class="score-badge" style="color:'+scc.c+';background:'+scc.bg+'">'+sc+'</span><div class="score-bar"><div class="score-bar-fill" style="width:'+sc+'%;background:'+scc.c+'"></div></div></div></td>';
+// Screener badge + analyze button
+var scrData=screenerCache[cleanIdFE(r.id)];
+var screenBadge='';if(scrData&&scrData.wr30!==null){var bClr=scrData.wr30>=60?'rgba(16,185,129,.1)':scrData.wr30>=40?'rgba(245,158,11,.1)':'rgba(239,68,68,.08)';var bTxt=scrData.wr30>=60?'var(--low)':scrData.wr30>=40?'var(--yellow)':'var(--high)';screenBadge='<span class="screened-badge" style="background:'+bClr+';color:'+bTxt+';border-color:'+bTxt+'" title="Pre-screened: '+scrData.wr30+'% 30d win rate">'+scrData.wr30+'% WR</span>';}
+var aRid='arow'+rowIdx;
+var pAVal=r.pA||0,pBVal=r.pB||0;
+var analyzeBtn='<button class="analyze-btn" onclick="analyzeAlert(this,\''+sa+'\',\''+sb+'\','+pAVal+','+pBVal+','+z+',\''+aRid+'\')" title="Run probability analysis">&#9881;</button>';
+h+='<tr class="alert-row" data-s="'+r.id.toLowerCase()+' '+(r.sec||'').toLowerCase()+' '+act.l.toLowerCase()+'" data-sec="'+(r.sec||'')+'" data-tickers="'+r.tA.toUpperCase()+' '+r.tB.toUpperCase()+'" data-z="'+r.z+'" data-age="'+ag+'" data-liq="'+al+'" data-profit="'+ep+'" data-score="'+sc+'">'+scoreTd+'<td><div style="display:flex;align-items:center;gap:4px">'+analyzeBtn+'<button class="'+starCls+'" id="star-'+si.replace(/[^a-zA-Z0-9]/g,'')+'" onclick="addToWatchlist(\''+si+'\',this)" title="Add to Watchlist">'+starIcon+'</button><button class="plus-btn" onclick="openModal(\''+si+'\',\''+sa+'\',\''+sb+'\')">+</button><div><a href="'+url+'" target="_blank" class="'+lk+'">'+r.id+'</a>'+screenBadge+'<div class="range-tag">'+r.rng+'</div><div style="font-size:10px;color:var(--subtext);font-weight:900;text-transform:uppercase;margin-top:2px">'+r.sec+'</div></div></div></td>'+'<td><div class="mono-data">$'+r.spr+'</div></td>'+divTd+'<td><div class="mono-data" style="color:var(--low)">$'+ep+'</div></td>'+'<td><div style="color:var(--accent)" class="mono-data">'+z.toFixed(2)+'σ</div></td>'+'<td><div class="mono-data">'+r.yA+'% / '+r.yB+'%</div></td>'+'<td><div style="display:flex;flex-direction:column;gap:2px"><div style="display:flex;align-items:center"><span class="dot '+lc+'"></span>'+lt+'</div>'+sp+'</div></td>'+'<td><div>'+at+'</div></td>'+'<td><div class="trend-tape">'+tr+'</div></td>'+'<td><div class="action-tag" style="color:'+act.c+';border-color:'+act.c+'">'+act.l+'</div></td></tr>';rowIdx++;});
+document.getElementById('alertBody').innerHTML=h;applyFilters();if(activeScoreFilter>0)filterByScore(activeScoreFilter);}
 function updateUI(data){if(!data)return;renderAlerts(data.alertData);renderMacro(data.macroData);
 var lng=0,sht=0;if(data.portfolioData)data.portfolioData.forEach(function(p){var pA=parseFloat(p.pA)||0,pB=parseFloat(p.pB)||0,sA=parseFloat(p.sA)||0,sB=parseFloat(p.sB)||0;if(sA>0)lng+=pA*sA;else sht+=Math.abs(pA*sA);if(sB>0)lng+=pB*sB;else sht+=Math.abs(pB*sB);});
 document.getElementById('valLong').innerText='$'+lng.toFixed(0);document.getElementById('valShort').innerText='$'+sht.toFixed(0);

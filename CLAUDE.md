@@ -31,7 +31,8 @@ Google Sheets (Data Layer)
     ├── TreasuryHist sheet  → Auto: 90-day FRED treasury yields (US2Y-US30Y)
     ├── MacroCalc sheet     → Auto: computed macro valuations per ticker
     ├── MacroCache sheet    → Auto: static snapshot of MacroCalc
-    └── BasketCache sheet   → Auto: pre-computed portfolio basket analytics
+    ├── BasketCache sheet   → Auto: pre-computed portfolio basket analytics
+    └── ScreenerCache sheet → Auto: pre-computed probability analysis for top alert pairs
 
 Google Apps Script (API Backend)
     ├── Code.gs             → doGet/doPost routing, data reading, trade operations
@@ -43,9 +44,9 @@ Vercel (Frontend)
 
 ## Key File Descriptions
 
-### `gas/Code.gs` — API Backend (V23)
+### `gas/Code.gs` — API Backend (V24)
 
-- **doGet()** routes `?action=getData|saveTrade|closeTrade|addDividend|saveNote|getBasketAnalytics` with optional `&mode=intra|credit`
+- **doGet()** routes `?action=getData|saveTrade|closeTrade|addDividend|saveNote|getBasketAnalytics|getScreenerData|analyzePair` with optional `&mode=intra|credit`
 - **WebCache failsafe** — API prefers `WebCache` / `WebCacheCredit` (static snapshots) over `Live` / `CreditLive` (GOOGLEFINANCE formulas). Faster responses, decoupled from formula recalculation.
 - **getAlertData(mode)** reads WebCache (or Live fallback) sheet. Filters:
   - Skips pairs with missing/zero prices
@@ -65,8 +66,20 @@ Vercel (Frontend)
   - Strategy mix (intra vs credit count)
   - Last 30 daily basket values for sparkline
   - Returns `currentZ` and `sector` per trade in `getOpenTrades()` for frontend computation
+- **analyzeSinglePair_(tA, tB, priceA, priceB, currentZ)** — lightweight endpoint for inline alert analysis:
+  - Builds 2-leg sandbox pair (auto-detects long/short from Z-sign)
+  - Runs `computeBasketMetrics_` + `computeHistoricalProbabilities_` for that pair
+  - Returns win rates (30/60/90d), bad scenario, rolling Z-scores, expected profit
+  - Called via `?action=analyzePair&tA=X&tB=Y&pA=25&pB=24&z=2.5`
+- **runNightlyScreener()** — daily 9 AM trigger, pre-computes probability analysis for top 20 alert pairs:
+  - Reads alerts from both intra + credit modes
+  - Sorts by |Z| descending, takes top 20
+  - Runs `analyzeSinglePair_` for each with 5-min timeout safety
+  - Writes results to `ScreenerCache` sheet
+- **getScreenerData_()** — reads pre-computed screener results from `ScreenerCache` sheet
+- **getAlertData()** now includes `pA` and `pB` (leg prices) in each alert object
 
-### `gas/SetupDashboard.gs` — Setup & Automation (V23.1)
+### `gas/SetupDashboard.gs` — Setup & Automation (V24)
 
 **Batched setup system** — uses `PropertiesService` to save/resume progress across GAS timeouts.
 
@@ -87,6 +100,7 @@ Vercel (Frontend)
   - Daily at 5 AM: `dailyCreditRefresh()` — regenerates credit pairs from Master
   - Daily at 6 AM: `fetchDividendDates()` — refreshes ex-dividend dates
   - Daily at 8 AM: `updateBasketAnalytics()` — pre-computes portfolio basket Z-scores to BasketCache
+  - Daily at 9 AM: `runNightlyScreener()` — pre-computes probability analysis for top 20 alert pairs to ScreenerCache
 - **fetchDividendDates()** — two-phase Yahoo Finance fetch:
   - Phase 1: v7/finance/quote API (50 tickers per batch, requires crumb auth)
   - Phase 2: v8/finance/chart fallback (no auth, uses 1-year history for dividend events)
@@ -111,6 +125,19 @@ Vercel (Frontend)
   - Sector concentration bar chart
   - Strategy mix (intra vs credit)
   - Color-coded: Green (neutral |Z|<0.5), Blue (mild), Yellow (elevated), Red (extreme |Z|>=1.8)
+- **Composite Setup Score** — 0-100 score computed in frontend from alert data:
+  - Factors: |Z| magnitude (20pts), expected profit (20pts), liquidity (15pts), volume spike (5pts), Z-trend convergence (15pts), age sweet spot (10pts), yield (10pts), div proximity penalty (-5pts), screener bonus (5pts)
+  - Displayed as first column in alerts table, sorted by default
+  - Filter pills: Top 5, Top 10, Top 20, All
+- **Inline Analyze Button** — per-alert probability analysis:
+  - Gear icon next to each pair in alerts table
+  - On click: calls `?action=analyzePair` → expands row with 30/60/90d win rates, expected profit, bad scenario
+  - Auto-detects trade direction from Z-sign (Z>0 → short spread, Z<0 → long spread)
+  - Toggle behavior: click again to collapse
+- **Pre-Screened Badges** — win rate badges from nightly screener cache:
+  - Loaded on page init from `?action=getScreenerData`
+  - Shows colored "XX% WR" badge next to pair name if pre-analyzed
+  - Feeds +5 bonus points into composite score
 - **CRITICAL**: Line 1 of `<script>` has `GAS_URL` constant — must be set to deployed GAS URL
 
 ## Live Sheet Column Map (24 columns, 0-indexed)
@@ -162,6 +189,13 @@ Populated by `fetchDividendDates()` via Yahoo Finance. 20-hour cache — tickers
 | sector_Finance | 45.2 | 2026-03-05T08:00:00 |
 
 Key-value store for pre-computed basket analytics. Updated daily at 8 AM by `updateBasketAnalytics()` trigger. The `getBasketAnalytics()` endpoint in Code.gs computes fresh values on each API call (using TickerHistory for rolling Z); BasketCache serves as a daily snapshot backup.
+
+## ScreenerCache Sheet (auto-populated)
+
+| A: PairID | B: TickerA | C: TickerB | D: Mode | E: Z | F: ExpProfit | G: WR30 | H: WR60 | I: WR90 | J: AvgMAE | K: P75MAE | L: WidenProb | M: Triggers | N: EP30 | O: EP60 | P: UpdatedAt |
+|-----------|-----------|-----------|---------|------|-------------|---------|---------|---------|----------|----------|-------------|------------|---------|---------|-------------|
+
+Pre-computed probability analysis for top 20 alert pairs. Updated daily at 9 AM by `runNightlyScreener()` trigger. Frontend loads on page init and displays win rate badges + feeds composite score.
 
 ## Critical Rules When Editing
 
