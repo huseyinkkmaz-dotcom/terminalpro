@@ -786,8 +786,13 @@ function readTickerHistMap_(ss) {
     if (!ticker) continue;
     var prices = [];
     for (var d = 1; d < histData[h].length; d++) {
-      var p = parseFloat(histData[h][d]);
-      if (!isNaN(p) && p > 0) prices.push(p);
+      var v = histData[h][d];
+      // Match the proven parsing from computeCreditCache in SetupDashboard.gs:
+      // handles Numbers, strings-that-are-numbers, and skips empty/null/Date/zero
+      if (v === '' || v === null || v === undefined) continue;
+      if (typeof v === 'object') continue; // skip Date objects from GOOGLEFINANCE
+      var n = Number(v);
+      if (!isNaN(n) && n > 0) prices.push(n);
     }
     if (prices.length > 0) histMap[ticker] = prices;
   }
@@ -1860,29 +1865,60 @@ function analyzeSinglePair_(tA, tB, priceA, priceB, currentZ) {
   try {
     var ss = SpreadsheetApp.getActive();
     var histMap = readTickerHistMap_(ss);
+
+    // Debug diagnostics
+    var _debug = {};
+    _debug.histMapSize = Object.keys(histMap).length;
+    var tkA = String(tA).toUpperCase().trim();
+    var tkB = String(tB).toUpperCase().trim();
+    _debug.tA = tkA;
+    _debug.tB = tkB;
+    _debug.histA = histMap[tkA] ? histMap[tkA].length : 0;
+    _debug.histB = histMap[tkB] ? histMap[tkB].length : 0;
+    _debug.pA = priceA;
+    _debug.pB = priceB;
+    _debug.z = currentZ;
+
+    // If no history at all, return diagnostic error
+    if (_debug.histMapSize === 0) {
+      return { error: 'TickerHistory sheet is empty or not found. Run setupAllBatched() first.', _debug: _debug };
+    }
+    if (!histMap[tkA] && !histMap[tkB]) {
+      // Show first 10 tickers in histMap so we can diagnose format mismatch
+      _debug.sampleTickers = Object.keys(histMap).slice(0, 10);
+      return { error: 'Neither ticker found in TickerHistory. Tickers: ' + tkA + ', ' + tkB, _debug: _debug };
+    }
+
     // Build two legs: if Z > 0 spread is above mean → short A, long B
     var dirA = currentZ > 0 ? -1 : 1;
     var dirB = currentZ > 0 ? 1 : -1;
     var legs = [
-      { ticker: String(tA).toUpperCase().trim(), size: 100, direction: dirA },
-      { ticker: String(tB).toUpperCase().trim(), size: 100, direction: dirB }
+      { ticker: tkA, size: 100, direction: dirA },
+      { ticker: tkB, size: 100, direction: dirB }
     ];
     var metrics = computeBasketMetrics_(legs, histMap);
-    if (metrics.error) return { error: metrics.error };
+    if (metrics.error) {
+      _debug.metricsError = metrics.error;
+      return { error: metrics.error, _debug: _debug };
+    }
 
-    // The initial computeBasketMetrics_ already ran computeHistoricalProbabilities_
-    // with currentValue (last historical value). For alert pairs at extreme Z-scores,
-    // re-running with the entry spread often fails because the extreme level hasn't
-    // occurred enough times in history to find 3+ trigger points.
-    //
-    // Instead, we keep the initial probability result AND also run a wider-tolerance
-    // version that relaxes constraints for extreme setups.
+    _debug.validLegs = metrics.validLegs;
+    _debug.historyDays = metrics.historyDays;
+    _debug.dailyValuesLen = metrics.dailyValuesFull_ ? metrics.dailyValuesFull_.length : 0;
+    _debug.triggers = metrics.probabilities ? metrics.probabilities.triggers : 0;
+
+    // computeBasketMetrics_ already ran computeHistoricalProbabilities_ with
+    // currentValue (the last daily spread value). If it found enough triggers, great.
+    // If not, try the wide-tolerance version which relaxes constraints.
     var dailyVals = metrics.dailyValuesFull_;
     if (dailyVals && dailyVals.length >= 20) {
       var currentValue = dailyVals[dailyVals.length - 1];
-      // Run with wider tolerance (10% instead of 5%) and lower trigger minimum (2 instead of 3)
+      _debug.currentValue = parseFloat(currentValue.toFixed(4));
+
       var wideProb = computeHistoricalProbabilitiesWide_(dailyVals, currentValue, metrics.rollingZ, metrics.totalWeight || 100);
-      // Use the wider result if it found more triggers than the original
+      _debug.wideTriggersFound = wideProb.triggers;
+
+      // Use whichever found more triggers
       if (wideProb.triggers > (metrics.probabilities ? metrics.probabilities.triggers : 0)) {
         metrics.probabilities = wideProb;
       }
@@ -1892,7 +1928,8 @@ function analyzeSinglePair_(tA, tB, priceA, priceB, currentZ) {
     delete metrics.dailyValuesFull_;
     return {
       tA: tA, tB: tB, dirA: dirA, dirB: dirB,
-      metrics: metrics
+      metrics: metrics,
+      _debug: _debug
     };
   } catch (e) {
     return { error: e.toString() };

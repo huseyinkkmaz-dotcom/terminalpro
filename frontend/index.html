@@ -576,15 +576,26 @@ async function analyzeAlert(btn, tA, tB, pA, pB, z, rowId) {
   btn.classList.add('loading'); btn.innerHTML = '&#8987;';
   try {
     var data = await apiGet('analyzePair', { tA: tA, tB: tB, pA: pA, pB: pB, z: z }, 60000);
+    console.log('[TerminalPro] analyzePair response:', JSON.stringify(data).substring(0, 2000));
     btn.classList.remove('loading'); btn.classList.add('done'); btn.innerHTML = '&#10003;';
     if (!data || !data.ok || !data.analysisData || data.analysisData.error) {
-      btn.classList.remove('done'); btn.innerHTML = '&#9881;'; btn.title = 'Error: ' + ((data && data.analysisData) ? data.analysisData.error : 'Unknown');
+      var errMsg = (data && data.analysisData) ? data.analysisData.error : 'Unknown';
+      var dbg = (data && data.analysisData && data.analysisData._debug) ? data.analysisData._debug : null;
+      btn.classList.remove('done'); btn.innerHTML = '&#9881;';
+      // Show error inline so user can see it
+      var errH = '<tr class="analyze-row" id="ar-' + rowId + '"><td colspan="11"><div style="padding:12px;color:var(--high);font-size:11px;font-weight:700">';
+      errH += 'Analysis Error: ' + errMsg;
+      if (dbg) errH += '<br><span style="color:var(--subtext);font-weight:400">Debug: histMapSize=' + dbg.histMapSize + ', histA=' + dbg.histA + ', histB=' + dbg.histB + (dbg.sampleTickers ? ', sampleTickers=[' + dbg.sampleTickers.join(',') + ']' : '') + '</span>';
+      errH += '</div></td></tr>';
+      var aRow = btn.closest('tr');
+      if (aRow) aRow.insertAdjacentHTML('afterend', errH);
       return;
     }
     var ad = data.analysisData;
     var m = ad.metrics;
     var prob = m.probabilities || {};
     var rz = m.rollingZ || {};
+    var dbg = ad._debug || {};
     // Build expandable analysis row
     var h = '<tr class="analyze-row" id="ar-' + rowId + '"><td colspan="11"><div class="ar-wrap">';
     // Direction card
@@ -593,6 +604,8 @@ async function analyzeAlert(btn, tA, tB, pA, pB, z, rowId) {
     h += '<div class="ar-card" style="flex:0 0 140px"><div class="ar-card-title">Trade Direction</div>';
     h += '<div class="ar-direction" style="background:rgba(16,185,129,.1);color:var(--low);margin-bottom:6px">LONG ' + longTk + '</div>';
     h += '<div class="ar-direction" style="background:rgba(239,68,68,.08);color:var(--high)">SHORT ' + shortTk + '</div>';
+    h += '<div style="margin-top:8px;font-size:9px;color:var(--subtext)">History: ' + (dbg.historyDays || 0) + 'd</div>';
+    h += '<div style="font-size:9px;color:var(--subtext)">Triggers: ' + (prob.triggers || 0) + '</div>';
     h += '</div>';
     // Win Rate cards (30/60/90)
     var windows = [{k:'30d',l:'30D'},{k:'60d',l:'60D'},{k:'90d',l:'90D'}];
@@ -600,20 +613,28 @@ async function analyzeAlert(btn, tA, tB, pA, pB, z, rowId) {
       var wk = windows[i].k;
       var wr = (prob.winRates && prob.winRates[wk]) ? prob.winRates[wk] : null;
       var rw = rz[wk] || {};
-      h += '<div class="ar-card"><div class="ar-card-title">' + windows[i].l + ' Window</div>';
-      if (wr && wr.eligible >= 2) {
+      h += '<div class="ar-card"><div class="ar-card-title">' + windows[i].l + ' Window';
+      if (rw.dataPoints) h += ' <span style="font-size:8px;color:var(--subtext);font-weight:400">(' + rw.dataPoints + 'd)</span>';
+      h += '</div>';
+      if (rw.insufficient) {
+        h += '<div class="ar-winrate-hero" style="color:var(--subtext);font-size:14px">Insufficient History</div>';
+        h += '<div class="ar-winrate-sub">Need ' + (parseInt(wk)*0.9).toFixed(0) + '+ days, have ' + (rw.dataPoints||0) + '</div>';
+      } else if (wr && wr.eligible >= 2) {
         var wrClr = wr.rate >= 60 ? 'var(--low)' : wr.rate >= 40 ? 'var(--yellow)' : 'var(--high)';
         h += '<div class="ar-winrate-hero" style="color:' + wrClr + '">' + wr.rate + '%</div>';
         h += '<div class="ar-winrate-sub">Win Rate (' + wr.wins + '/' + wr.eligible + ')</div>';
+      } else if (wr) {
+        h += '<div class="ar-winrate-hero" style="color:var(--subtext);font-size:14px">' + wr.rate + '%</div>';
+        h += '<div class="ar-winrate-sub">Low sample (' + wr.wins + '/' + wr.eligible + ')</div>';
       } else {
         h += '<div class="ar-winrate-hero" style="color:var(--subtext)">—</div>';
-        h += '<div class="ar-winrate-sub">Insufficient data</div>';
+        h += '<div class="ar-winrate-sub">No trigger data</div>';
       }
-      if (rw.expectedProfit !== undefined) {
+      if (rw.expectedProfit !== undefined && !rw.insufficient) {
         var epClr = rw.expectedProfit >= 0 ? 'var(--low)' : 'var(--high)';
         h += '<div class="ar-metric"><span class="ar-metric-label">Exp. Profit</span><span class="ar-metric-val" style="color:' + epClr + '">' + (rw.expectedProfit >= 0 ? '+' : '') + '$' + Math.abs(rw.expectedProfit).toFixed(2) + '</span></div>';
       }
-      if (rw.z !== undefined) {
+      if (rw.z !== undefined && !rw.insufficient) {
         var zClr = Math.abs(rw.z) >= 1.8 ? 'var(--high)' : Math.abs(rw.z) >= 1 ? 'var(--yellow)' : 'var(--low)';
         h += '<div class="ar-metric"><span class="ar-metric-label">Z-Score</span><span class="ar-metric-val" style="color:' + zClr + '">' + (rw.z >= 0 ? '+' : '') + rw.z.toFixed(2) + 'σ</span></div>';
       }
@@ -623,11 +644,10 @@ async function analyzeAlert(btn, tA, tB, pA, pB, z, rowId) {
     if (prob.badScenario && prob.triggers >= 2) {
       var bs = prob.badScenario;
       var wpClr = bs.wideningProb > 60 ? 'var(--high)' : bs.wideningProb > 40 ? 'var(--yellow)' : 'var(--low)';
-      h += '<div class="ar-card" style="border-color:rgba(239,68,68,.2)"><div class="ar-card-title" style="color:var(--high)">Downside Risk</div>';
+      h += '<div class="ar-card" style="border-color:rgba(239,68,68,.2)"><div class="ar-card-title" style="color:var(--high)">Downside Risk (' + bs.sampleSize + ' samples)</div>';
       h += '<div class="ar-metric"><span class="ar-metric-label">Avg Max Loss</span><span class="ar-metric-val" style="color:var(--high)">-$' + Math.abs(bs.avgMaeDollar).toFixed(2) + '</span></div>';
       h += '<div class="ar-metric"><span class="ar-metric-label">P75 Max Loss</span><span class="ar-metric-val" style="color:var(--high)">-$' + Math.abs(bs.p75MaeDollar).toFixed(2) + '</span></div>';
       h += '<div class="ar-metric"><span class="ar-metric-label">Widen Prob</span><span class="ar-metric-val" style="color:' + wpClr + '">' + bs.wideningProb + '%</span></div>';
-      h += '<div class="ar-metric"><span class="ar-metric-label">Samples</span><span class="ar-metric-val" style="color:var(--subtext)">' + bs.sampleSize + '</span></div>';
       h += '</div>';
     }
     h += '</div></td></tr>';
@@ -635,7 +655,11 @@ async function analyzeAlert(btn, tA, tB, pA, pB, z, rowId) {
     var alertRow = btn.closest('tr');
     if (alertRow) alertRow.insertAdjacentHTML('afterend', h);
   } catch(e) {
-    btn.classList.remove('loading'); btn.innerHTML = '&#9881;'; btn.title = 'Error: ' + e.message;
+    btn.classList.remove('loading'); btn.innerHTML = '&#9881;';
+    // Show error inline
+    var errH2 = '<tr class="analyze-row" id="ar-' + rowId + '"><td colspan="11"><div style="padding:12px;color:var(--high);font-size:11px">Fetch Error: ' + e.message + '</div></td></tr>';
+    var aRow2 = btn.closest('tr');
+    if (aRow2) aRow2.insertAdjacentHTML('afterend', errH2);
   }
 }
 async function apiGet(action,params={},timeoutMs){
