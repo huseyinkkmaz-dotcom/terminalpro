@@ -872,6 +872,11 @@ function computeBasketMetrics_(legs, histMap) {
     if (leg.dir > 0) grossLong += legVal; else grossShort += legVal;
   }
 
+  // ── Historical Probability Engine ──
+  // Scan dailyValues for trigger points where spread ≈ currentValue (±5%),
+  // then compute forward-looking max adverse excursion and mean reversion rates.
+  var probResult = computeHistoricalProbabilities_(dailyValues, currentValue, rollingZ, totalWeight);
+
   return {
     rollingZ: rollingZ,
     netSpread: parseFloat(currentValue.toFixed(2)),
@@ -879,10 +884,148 @@ function computeBasketMetrics_(legs, histMap) {
     grossShort: parseFloat(grossShort.toFixed(2)),
     grossExposure: parseFloat((grossLong + grossShort).toFixed(2)),
     dailyValues: dailyValues.length > 0 ? dailyValues.slice(-120).map(function(v) { return parseFloat(v.toFixed(2)); }) : [],
+    dailyValuesFull_: dailyValues, // internal: full precision array for probability overrides
     validLegs: validLegs.length,
     historyDays: maxDays,
-    totalWeight: totalWeight
+    totalWeight: totalWeight,
+    probabilities: probResult
   };
+}
+
+/**
+ * Historical Probability Engine.
+ * Scans the daily spread array for "trigger points" where the spread was at
+ * approximately the same level as the reference value (±5% of the full range).
+ * From each trigger, looks forward to compute:
+ *   1) Max Adverse Excursion (worst-case widening before reversion)
+ *   2) Probability of continued widening vs immediate reversion
+ *   3) Per-window (30/60/90d) probability of touching the mean
+ *
+ * @param {number[]} dailyValues - Full daily spread array (oldest first)
+ * @param {number} refValue - Reference spread (current market or entry)
+ * @param {Object} rollingZ - The rollingZ object with per-window mean/std
+ * @param {number} totalWeight - Position size multiplier for dollar conversion
+ * @return {Object} probabilities result
+ */
+function computeHistoricalProbabilities_(dailyValues, refValue, rollingZ, totalWeight) {
+  var result = { triggers: 0, badScenario: null, winRates: {} };
+  var len = dailyValues.length;
+  if (len < 20) return result; // need minimum history
+
+  // Determine tolerance as 5% of the spread's full range
+  var minVal = dailyValues[0], maxVal = dailyValues[0];
+  for (var i = 1; i < len; i++) {
+    if (dailyValues[i] < minVal) minVal = dailyValues[i];
+    if (dailyValues[i] > maxVal) maxVal = dailyValues[i];
+  }
+  var fullRange = maxVal - minVal;
+  if (fullRange < 0.001) return result; // flat spread, no meaningful stats
+  var tolerance = fullRange * 0.05;
+
+  // Determine if we're above or below the 90d mean to define "adverse" direction.
+  // If spread > mean, adverse = spread widens further up. If spread < mean, adverse = widens further down.
+  var mean90 = (rollingZ['90d'] && !rollingZ['90d'].insufficient) ? rollingZ['90d'].mean : 0;
+  var isAboveMean = refValue >= mean90;
+
+  // Find trigger points: days where spread ≈ refValue (±tolerance)
+  // Exclude the last day (that's "today") and leave room for at least 5 days of forward data
+  var triggers = [];
+  var lastTriggerDay = -10; // prevent overlapping triggers (min 5-day gap)
+  for (var i = 0; i < len - 5; i++) {
+    if (Math.abs(dailyValues[i] - refValue) <= tolerance && (i - lastTriggerDay) >= 5) {
+      triggers.push(i);
+      lastTriggerDay = i;
+    }
+  }
+  result.triggers = triggers.length;
+  if (triggers.length < 3) return result; // not enough samples for meaningful statistics
+
+  // ── FEATURE 1: Bad Scenario (Max Adverse Excursion) ──
+  var maeValues = []; // max adverse excursion per trigger (in spread units)
+  var widenCount = 0; // how many triggers saw widening before any reversion
+
+  for (var t = 0; t < triggers.length; t++) {
+    var idx = triggers[t];
+    var triggerSpread = dailyValues[idx];
+    var maxAdverse = 0;
+    var sawWidening = false;
+    // Look forward from trigger, track worst excursion
+    var lookForward = Math.min(30, len - idx - 1); // 30-day worst-case window
+    for (var f = 1; f <= lookForward; f++) {
+      var futureSpread = dailyValues[idx + f];
+      var excursion;
+      if (isAboveMean) {
+        // Spread is above mean → adverse = going even higher
+        excursion = futureSpread - triggerSpread;
+      } else {
+        // Spread is below mean → adverse = going even lower
+        excursion = triggerSpread - futureSpread;
+      }
+      if (excursion > maxAdverse) maxAdverse = excursion;
+    }
+    maeValues.push(maxAdverse);
+    // Did the spread widen on the very next day? (immediate direction check)
+    if (lookForward >= 1) {
+      var nextDay = dailyValues[idx + 1];
+      if (isAboveMean && nextDay > triggerSpread + tolerance * 0.1) sawWidening = true;
+      else if (!isAboveMean && nextDay < triggerSpread - tolerance * 0.1) sawWidening = true;
+    }
+    if (sawWidening) widenCount++;
+  }
+
+  // Average and P75 MAE
+  var maeSum = 0;
+  var sortedMae = maeValues.slice().sort(function(a, b) { return a - b; });
+  for (var i = 0; i < maeValues.length; i++) maeSum += maeValues[i];
+  var avgMae = maeSum / maeValues.length;
+  var p75Idx = Math.floor(sortedMae.length * 0.75);
+  var p75Mae = sortedMae[Math.min(p75Idx, sortedMae.length - 1)];
+
+  result.badScenario = {
+    avgMae: parseFloat(avgMae.toFixed(4)),           // avg max adverse excursion (per share)
+    avgMaeDollar: parseFloat((avgMae * totalWeight).toFixed(2)),  // total $ loss
+    p75Mae: parseFloat(p75Mae.toFixed(4)),            // 75th percentile MAE (per share)
+    p75MaeDollar: parseFloat((p75Mae * totalWeight).toFixed(2)),  // 75th percentile $ loss
+    wideningProb: parseFloat((widenCount / triggers.length * 100).toFixed(1)), // % chance of widening next day
+    sampleSize: triggers.length
+  };
+
+  // ── FEATURE 2: Mean Reversion Win Rates per Window ──
+  var windows = [30, 60, 90];
+  for (var w = 0; w < windows.length; w++) {
+    var n = windows[w];
+    var wKey = n + 'd';
+    var wMean = (rollingZ[wKey] && !rollingZ[wKey].insufficient) ? rollingZ[wKey].mean : mean90;
+    // Mean reversion tolerance: spread counts as "touched mean" if it gets within 10% of distance to mean
+    var distToMean = Math.abs(refValue - wMean);
+    var meanTolerance = distToMean * 0.10;
+    if (meanTolerance < 0.01) meanTolerance = 0.01; // minimum floor
+
+    var wins = 0, eligible = 0;
+    for (var t = 0; t < triggers.length; t++) {
+      var idx = triggers[t];
+      var remaining = len - idx - 1;
+      if (remaining < Math.floor(n * 0.5)) continue; // need at least half the window to be meaningful
+      eligible++;
+      var lookAhead = Math.min(n, remaining);
+      var touched = false;
+      for (var f = 1; f <= lookAhead; f++) {
+        if (Math.abs(dailyValues[idx + f] - wMean) <= meanTolerance) {
+          touched = true;
+          break;
+        }
+      }
+      if (touched) wins++;
+    }
+
+    result.winRates[wKey] = {
+      rate: eligible > 0 ? parseFloat((wins / eligible * 100).toFixed(1)) : 0,
+      wins: wins,
+      eligible: eligible
+    };
+  }
+
+  return result;
 }
 
 /**
@@ -979,6 +1122,7 @@ function getPortfolioAnalytics(mode, legsJson) {
       metrics.netDividends = parseFloat((totalRcvdDiv - totalPaidDiv).toFixed(2));
       metrics.totalPnL = parseFloat((currentLiveValue - entrySpreadDollar + totalRcvdDiv - totalPaidDiv).toFixed(2));
 
+      delete metrics.dailyValuesFull_; // strip internal array before response
       return { mode: 'live', trades: openData.length - 1, legs: legs.length, metrics: metrics };
     }
     else if (mode === 'sandbox') {
@@ -1024,6 +1168,14 @@ function getPortfolioAnalytics(mode, legsJson) {
         }
       }
 
+      // Re-run probability engine with entry spread as reference point
+      // (default used market spread — sandbox user wants probabilities from THEIR entry level)
+      if (metrics.dailyValuesFull_ && metrics.dailyValuesFull_.length > 0) {
+        metrics.probabilities = computeHistoricalProbabilities_(
+          metrics.dailyValuesFull_, metrics.hypotheticalSpread, rz, metrics.totalWeight
+        );
+      }
+
       // Flag which tickers are missing history
       var missing = [];
       for (var i = 0; i < legs.length; i++) {
@@ -1031,6 +1183,7 @@ function getPortfolioAnalytics(mode, legsJson) {
       }
       if (missing.length > 0) metrics.missingTickers = missing;
 
+      delete metrics.dailyValuesFull_; // strip internal array before response
       return { mode: 'sandbox', legs: legs.length, metrics: metrics };
     }
     else {
