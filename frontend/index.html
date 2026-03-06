@@ -242,14 +242,17 @@ td:last-child{border-radius:0 10px 10px 0;border-right:1px solid var(--border)}
 .pa-range-legend-dot{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:3px;vertical-align:middle}
 .pa-sparkline-wrap{margin-top:14px;height:50px;position:relative}
 .pa-sparkline-wrap svg{width:100%;height:100%}
-.pa-bad-bar{display:flex;align-items:center;gap:16px;background:rgba(239,68,68,.04);border:1px solid rgba(239,68,68,.15);border-radius:8px;padding:10px 16px;margin-bottom:20px;flex-wrap:wrap}
-.pa-bad-tag{font-size:9px;font-weight:900;text-transform:uppercase;letter-spacing:0.5px;color:var(--high);white-space:nowrap}
-.pa-bad-stat{display:flex;align-items:baseline;gap:5px}
-.pa-bad-stat-label{font-size:8px;font-weight:700;color:var(--subtext);text-transform:uppercase}
-.pa-bad-stat-val{font-family:'JetBrains Mono';font-weight:900;font-size:13px}
-.pa-bad-divider{width:1px;height:20px;background:rgba(239,68,68,.15)}
-.pa-winrate{display:inline-flex;align-items:baseline;gap:5px;padding:4px 10px;border-radius:8px;font-size:20px;font-weight:900;font-family:'JetBrains Mono'}
-.pa-winrate-sub{font-size:9px;font-weight:700;color:var(--subtext);font-family:'Inter',sans-serif}
+.pa-bad-scenario{background:linear-gradient(135deg,rgba(239,68,68,.06),rgba(239,68,68,.02));border:1px solid rgba(239,68,68,.2);border-radius:10px;padding:14px 16px;margin-bottom:20px}
+.pa-bad-header{display:flex;align-items:center;gap:8px;margin-bottom:10px}
+.pa-bad-title{font-size:10px;font-weight:900;text-transform:uppercase;letter-spacing:1px;color:var(--high)}
+.pa-bad-sample{font-size:9px;font-weight:700;color:var(--subtext);background:rgba(255,255,255,.04);border-radius:4px;padding:2px 6px}
+.pa-bad-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+.pa-bad-cell{text-align:center}
+.pa-bad-cell-label{font-size:9px;font-weight:900;text-transform:uppercase;letter-spacing:0.5px;color:var(--subtext);margin-bottom:4px}
+.pa-bad-cell-val{font-family:'JetBrains Mono';font-weight:900;font-size:16px}
+.pa-bad-cell-sub{font-size:9px;font-weight:700;color:var(--subtext);margin-top:2px}
+.pa-winrate{display:inline-flex;align-items:baseline;gap:4px;padding:3px 8px;border-radius:6px;font-size:14px;font-weight:900;font-family:'JetBrains Mono'}
+.pa-winrate-sub{font-size:10px;font-weight:700;color:var(--subtext);font-family:'JetBrains Mono'}
 .pa-pnl-bar{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:24px}
 .pa-pnl-card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px;text-align:center}
 .pa-pnl-label{font-size:9px;font-weight:900;text-transform:uppercase;letter-spacing:1px;color:var(--subtext);margin-bottom:8px}
@@ -572,7 +575,7 @@ async function analyzeAlert(btn, tA, tB, pA, pB, z, rowId) {
   if (existingRow) { existingRow.remove(); btn.classList.remove('done'); return; }
   btn.classList.add('loading'); btn.innerHTML = '&#8987;';
   try {
-    var data = await apiGet('analyzePair', { tA: tA, tB: tB, pA: pA, pB: pB, z: z });
+    var data = await apiGet('analyzePair', { tA: tA, tB: tB, pA: pA, pB: pB, z: z }, 60000);
     btn.classList.remove('loading'); btn.classList.add('done'); btn.innerHTML = '&#10003;';
     if (!data || !data.ok || !data.analysisData || data.analysisData.error) {
       btn.classList.remove('done'); btn.innerHTML = '&#9881;'; btn.title = 'Error: ' + ((data && data.analysisData) ? data.analysisData.error : 'Unknown');
@@ -598,7 +601,7 @@ async function analyzeAlert(btn, tA, tB, pA, pB, z, rowId) {
       var wr = (prob.winRates && prob.winRates[wk]) ? prob.winRates[wk] : null;
       var rw = rz[wk] || {};
       h += '<div class="ar-card"><div class="ar-card-title">' + windows[i].l + ' Window</div>';
-      if (wr && wr.eligible >= 3) {
+      if (wr && wr.eligible >= 2) {
         var wrClr = wr.rate >= 60 ? 'var(--low)' : wr.rate >= 40 ? 'var(--yellow)' : 'var(--high)';
         h += '<div class="ar-winrate-hero" style="color:' + wrClr + '">' + wr.rate + '%</div>';
         h += '<div class="ar-winrate-sub">Win Rate (' + wr.wins + '/' + wr.eligible + ')</div>';
@@ -617,7 +620,7 @@ async function analyzeAlert(btn, tA, tB, pA, pB, z, rowId) {
       h += '</div>';
     }
     // Bad Scenario card
-    if (prob.badScenario && prob.triggers >= 3) {
+    if (prob.badScenario && prob.triggers >= 2) {
       var bs = prob.badScenario;
       var wpClr = bs.wideningProb > 60 ? 'var(--high)' : bs.wideningProb > 40 ? 'var(--yellow)' : 'var(--low)';
       h += '<div class="ar-card" style="border-color:rgba(239,68,68,.2)"><div class="ar-card-title" style="color:var(--high)">Downside Risk</div>';
@@ -635,11 +638,11 @@ async function analyzeAlert(btn, tA, tB, pA, pB, z, rowId) {
     btn.classList.remove('loading'); btn.innerHTML = '&#9881;'; btn.title = 'Error: ' + e.message;
   }
 }
-async function apiGet(action,params={}){
+async function apiGet(action,params={},timeoutMs){
   if(!GAS_URL||GAS_URL.indexOf("PASTE")!==-1||GAS_URL.indexOf("http")!==0){throw new Error("GAS_URL not configured. Open index.html and set your Apps Script deployment URL.");}
   console.log("[TerminalPro] apiGet:",action,params);
   const url=new URL(GAS_URL);url.searchParams.set("action",action);for(const[k,v]of Object.entries(params))url.searchParams.set(k,v);
-  const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),30000);
+  const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),timeoutMs||30000);
   try{console.log("[TerminalPro] Fetching:",url.toString());const res=await fetch(url.toString(),{signal:controller.signal});clearTimeout(timer);console.log("[TerminalPro] Response status:",res.status);if(!res.ok)throw new Error("HTTP "+res.status+" "+res.statusText);const text=await res.text();console.log("[TerminalPro] Response length:",text.length,"chars");try{const json=JSON.parse(text);console.log("[TerminalPro] Parsed OK. ok=",json.ok,"alertData count=",(json.alertData?json.alertData.length:"N/A"));return json;}catch(e){console.error("[TerminalPro] Non-JSON response:",text.substring(0,500));throw new Error("Non-JSON response — redeploy GAS as 'Anyone'");}}catch(e){clearTimeout(timer);if(e.name==='AbortError')throw new Error("Request timed out (30s). GAS may be unreachable — check deployment URL and permissions.");throw e;}
 }
 function setConnStatus(s,msg){document.getElementById("connDot").className="conn-dot "+s;document.getElementById("connDot").title=msg||"API Status";}
@@ -859,20 +862,18 @@ h+='<div class="pa-pnl-card"><div class="pa-pnl-label">Entry Gross $</div><div c
 h+='<div class="pa-pnl-card"><div class="pa-pnl-label">Long $</div><div class="pa-pnl-val" style="color:var(--low)">$'+(m.hypotheticalGrossLong||0).toLocaleString()+'</div></div>';
 h+='<div class="pa-pnl-card"><div class="pa-pnl-label">Short $</div><div class="pa-pnl-val" style="color:var(--high)">$'+(m.hypotheticalGrossShort||0).toLocaleString()+'</div></div>';
 h+='</div>';}
-// ── Bad Scenario (inline bar) ──
+// ── Bad Scenario Card ──
 var prob=m.probabilities||{};
-if(prob.badScenario&&prob.triggers>=3){
+if(prob.badScenario&&prob.triggers>=2){
 var bs=prob.badScenario;
+h+='<div class="pa-bad-scenario">';
+h+='<div class="pa-bad-header"><span class="pa-bad-title">&#9888; Bad Scenario — Downside Risk</span><span class="pa-bad-sample">'+bs.sampleSize+' historical trigger'+(bs.sampleSize!==1?'s':'')+'</span></div>';
+h+='<div class="pa-bad-grid">';
+h+='<div class="pa-bad-cell"><div class="pa-bad-cell-label">Avg Max Loss</div><div class="pa-bad-cell-val" style="color:var(--high)">-$'+Math.abs(bs.avgMaeDollar).toFixed(2)+'</div><div class="pa-bad-cell-sub">'+bs.avgMae.toFixed(4)+' / share</div></div>';
 var wpClr=bs.wideningProb>60?'var(--high)':bs.wideningProb>40?'var(--yellow)':'var(--low)';
-h+='<div class="pa-bad-bar">';
-h+='<span class="pa-bad-tag">&#9888; Downside</span>';
-h+='<div class="pa-bad-stat"><span class="pa-bad-stat-label">Avg Max Loss</span><span class="pa-bad-stat-val" style="color:var(--high)">-$'+Math.abs(bs.avgMaeDollar).toFixed(2)+'</span></div>';
-h+='<div class="pa-bad-divider"></div>';
-h+='<div class="pa-bad-stat"><span class="pa-bad-stat-label">P75 Loss</span><span class="pa-bad-stat-val" style="color:var(--high)">-$'+Math.abs(bs.p75MaeDollar).toFixed(2)+'</span></div>';
-h+='<div class="pa-bad-divider"></div>';
-h+='<div class="pa-bad-stat"><span class="pa-bad-stat-label">Widen Prob</span><span class="pa-bad-stat-val" style="color:'+wpClr+'">'+bs.wideningProb+'%</span></div>';
-h+='<span class="pa-bad-stat-label" style="margin-left:auto">'+bs.sampleSize+' samples</span>';
-h+='</div>';
+h+='<div class="pa-bad-cell"><div class="pa-bad-cell-label">P75 Max Loss</div><div class="pa-bad-cell-val" style="color:var(--high)">-$'+Math.abs(bs.p75MaeDollar).toFixed(2)+'</div><div class="pa-bad-cell-sub">75th percentile worst case</div></div>';
+h+='<div class="pa-bad-cell"><div class="pa-bad-cell-label">Widening Probability</div><div class="pa-bad-cell-val" style="color:'+wpClr+'">'+bs.wideningProb+'%</div><div class="pa-bad-cell-sub">chance spread widens next day</div></div>';
+h+='</div></div>';
 }
 // 30/60/90 window cards
 var rz=m.rollingZ||{};
@@ -900,7 +901,7 @@ h+='<div class="pa-metric-row"><span class="pa-metric-label">Z-Score</span><span
 if(wr&&wr.eligible>=3){
 var wrClr=wr.rate>=60?'var(--low)':wr.rate>=40?'var(--yellow)':'var(--high)';
 var wrBg=wr.rate>=60?'rgba(16,185,129,.08)':wr.rate>=40?'rgba(245,158,11,.08)':'rgba(239,68,68,.08)';
-h+='<div class="pa-metric-row"><span class="pa-metric-label">Mean Reversion Prob.</span><span class="pa-winrate" style="color:'+wrClr+';background:'+wrBg+'">'+wr.rate+'%<span class="pa-winrate-sub">('+wr.wins+'/'+wr.eligible+')</span></span></div>';
+h+='<div class="pa-metric-row"><span class="pa-metric-label">Mean Reversion Prob.</span><span class="pa-winrate" style="color:'+wrClr+';background:'+wrBg+'">'+wr.rate+'% <span class="pa-winrate-sub">('+wr.wins+'/'+wr.eligible+')</span></span></div>';
 }
 h+='<div class="pa-metric-row"><span class="pa-metric-label">Exp. Profit / Share</span><span class="pa-metric-val" style="color:'+epClr+'">'+(ep>=0?'+':'')+'$'+Math.abs(ep).toFixed(2)+'</span></div>';
 h+='<div class="pa-metric-row"><span class="pa-metric-label">Total Exp. PnL</span><span class="pa-metric-val" style="color:'+totalEpClr+';font-size:16px;font-weight:900">'+(totalEp>=0?'+':'')+'$'+Math.abs(totalEp).toFixed(2)+'</span></div>';

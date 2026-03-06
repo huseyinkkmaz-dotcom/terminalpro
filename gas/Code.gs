@@ -1042,6 +1042,111 @@ function computeHistoricalProbabilities_(dailyValues, refValue, rollingZ, totalW
 }
 
 /**
+ * Wide-tolerance variant of computeHistoricalProbabilities_ for single-pair alert analysis.
+ * Uses 10% tolerance (vs 5%), minimum 2 triggers (vs 3), and 3-day gap (vs 5-day).
+ * This is necessary because alert pairs are at extreme Z-scores by definition,
+ * so the standard 5% tolerance often can't find enough historical occurrences.
+ */
+function computeHistoricalProbabilitiesWide_(dailyValues, refValue, rollingZ, totalWeight) {
+  var result = { triggers: 0, badScenario: null, winRates: {} };
+  var len = dailyValues.length;
+  if (len < 20) return result;
+
+  var minVal = dailyValues[0], maxVal = dailyValues[0];
+  for (var i = 1; i < len; i++) {
+    if (dailyValues[i] < minVal) minVal = dailyValues[i];
+    if (dailyValues[i] > maxVal) maxVal = dailyValues[i];
+  }
+  var fullRange = maxVal - minVal;
+  if (fullRange < 0.001) return result;
+  var tolerance = fullRange * 0.10; // 10% tolerance (wider than standard 5%)
+
+  var mean90 = (rollingZ['90d'] && !rollingZ['90d'].insufficient) ? rollingZ['90d'].mean : 0;
+  var isAboveMean = refValue >= mean90;
+
+  var triggers = [];
+  var lastTriggerDay = -5;
+  for (var i = 0; i < len - 5; i++) {
+    if (Math.abs(dailyValues[i] - refValue) <= tolerance && (i - lastTriggerDay) >= 3) {
+      triggers.push(i);
+      lastTriggerDay = i;
+    }
+  }
+  result.triggers = triggers.length;
+  if (triggers.length < 2) return result; // minimum 2 triggers (vs standard 3)
+
+  var maeValues = [];
+  var widenCount = 0;
+  for (var t = 0; t < triggers.length; t++) {
+    var idx = triggers[t];
+    var triggerSpread = dailyValues[idx];
+    var maxAdverse = 0;
+    var sawWidening = false;
+    var lookForward = Math.min(30, len - idx - 1);
+    for (var f = 1; f <= lookForward; f++) {
+      var futureSpread = dailyValues[idx + f];
+      var excursion;
+      if (isAboveMean) { excursion = futureSpread - triggerSpread; }
+      else { excursion = triggerSpread - futureSpread; }
+      if (excursion > maxAdverse) maxAdverse = excursion;
+    }
+    maeValues.push(maxAdverse);
+    if (lookForward >= 1) {
+      var nextDay = dailyValues[idx + 1];
+      if (isAboveMean && nextDay > triggerSpread + tolerance * 0.1) sawWidening = true;
+      else if (!isAboveMean && nextDay < triggerSpread - tolerance * 0.1) sawWidening = true;
+    }
+    if (sawWidening) widenCount++;
+  }
+
+  var maeSum = 0;
+  var sortedMae = maeValues.slice().sort(function(a, b) { return a - b; });
+  for (var i = 0; i < maeValues.length; i++) maeSum += maeValues[i];
+  var avgMae = maeSum / maeValues.length;
+  var p75Idx = Math.floor(sortedMae.length * 0.75);
+  var p75Mae = sortedMae[Math.min(p75Idx, sortedMae.length - 1)];
+
+  result.badScenario = {
+    avgMae: parseFloat(avgMae.toFixed(4)),
+    avgMaeDollar: parseFloat((avgMae * totalWeight).toFixed(2)),
+    p75Mae: parseFloat(p75Mae.toFixed(4)),
+    p75MaeDollar: parseFloat((p75Mae * totalWeight).toFixed(2)),
+    wideningProb: parseFloat((widenCount / triggers.length * 100).toFixed(1)),
+    sampleSize: triggers.length
+  };
+
+  var windows = [30, 60, 90];
+  for (var w = 0; w < windows.length; w++) {
+    var n = windows[w];
+    var wKey = n + 'd';
+    var wMean = (rollingZ[wKey] && !rollingZ[wKey].insufficient) ? rollingZ[wKey].mean : mean90;
+    var distToMean = Math.abs(refValue - wMean);
+    var meanTolerance = distToMean * 0.10;
+    if (meanTolerance < 0.01) meanTolerance = 0.01;
+
+    var wins = 0, eligible = 0;
+    for (var t = 0; t < triggers.length; t++) {
+      var idx = triggers[t];
+      var remaining = len - idx - 1;
+      if (remaining < Math.floor(n * 0.4)) continue; // 40% forward data (relaxed)
+      eligible++;
+      var lookAhead = Math.min(n, remaining);
+      var touched = false;
+      for (var f = 1; f <= lookAhead; f++) {
+        if (Math.abs(dailyValues[idx + f] - wMean) <= meanTolerance) { touched = true; break; }
+      }
+      if (touched) wins++;
+    }
+    result.winRates[wKey] = {
+      rate: eligible > 0 ? parseFloat((wins / eligible * 100).toFixed(1)) : 0,
+      wins: wins,
+      eligible: eligible
+    };
+  }
+  return result;
+}
+
+/**
  * Portfolio Analytics endpoint. Two modes:
  *  - live: reads OpenTrades, resolves legs from actual positions
  *  - sandbox: uses user-provided legs JSON
@@ -1764,13 +1869,25 @@ function analyzeSinglePair_(tA, tB, priceA, priceB, currentZ) {
     ];
     var metrics = computeBasketMetrics_(legs, histMap);
     if (metrics.error) return { error: metrics.error };
-    // Re-run probability engine with entry spread = current spread (priceA - priceB weighted)
-    var entrySpread = (dirA * 100 * priceA + dirB * 100 * priceB) / (metrics.totalWeight || 100);
-    if (metrics.dailyValuesFull_ && metrics.dailyValuesFull_.length > 0) {
-      metrics.probabilities = computeHistoricalProbabilities_(
-        metrics.dailyValuesFull_, entrySpread, metrics.rollingZ, metrics.totalWeight || 100
-      );
+
+    // The initial computeBasketMetrics_ already ran computeHistoricalProbabilities_
+    // with currentValue (last historical value). For alert pairs at extreme Z-scores,
+    // re-running with the entry spread often fails because the extreme level hasn't
+    // occurred enough times in history to find 3+ trigger points.
+    //
+    // Instead, we keep the initial probability result AND also run a wider-tolerance
+    // version that relaxes constraints for extreme setups.
+    var dailyVals = metrics.dailyValuesFull_;
+    if (dailyVals && dailyVals.length >= 20) {
+      var currentValue = dailyVals[dailyVals.length - 1];
+      // Run with wider tolerance (10% instead of 5%) and lower trigger minimum (2 instead of 3)
+      var wideProb = computeHistoricalProbabilitiesWide_(dailyVals, currentValue, metrics.rollingZ, metrics.totalWeight || 100);
+      // Use the wider result if it found more triggers than the original
+      if (wideProb.triggers > (metrics.probabilities ? metrics.probabilities.triggers : 0)) {
+        metrics.probabilities = wideProb;
+      }
     }
+
     // Strip internal fields
     delete metrics.dailyValuesFull_;
     return {
