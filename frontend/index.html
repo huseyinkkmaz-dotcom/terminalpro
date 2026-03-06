@@ -242,16 +242,14 @@ td:last-child{border-radius:0 10px 10px 0;border-right:1px solid var(--border)}
 .pa-range-legend-dot{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:3px;vertical-align:middle}
 .pa-sparkline-wrap{margin-top:14px;height:50px;position:relative}
 .pa-sparkline-wrap svg{width:100%;height:100%}
-.pa-bad-scenario{background:linear-gradient(135deg,rgba(239,68,68,.06),rgba(239,68,68,.02));border:1px solid rgba(239,68,68,.2);border-radius:10px;padding:14px 16px;margin-bottom:20px}
-.pa-bad-header{display:flex;align-items:center;gap:8px;margin-bottom:10px}
-.pa-bad-title{font-size:10px;font-weight:900;text-transform:uppercase;letter-spacing:1px;color:var(--high)}
-.pa-bad-sample{font-size:8px;font-weight:700;color:var(--subtext);background:rgba(255,255,255,.04);border-radius:4px;padding:2px 6px}
-.pa-bad-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
-.pa-bad-cell{text-align:center}
-.pa-bad-cell-label{font-size:8px;font-weight:900;text-transform:uppercase;letter-spacing:0.5px;color:var(--subtext);margin-bottom:4px}
-.pa-bad-cell-val{font-family:'JetBrains Mono';font-weight:900;font-size:14px}
-.pa-bad-cell-sub{font-size:8px;font-weight:700;color:var(--subtext);margin-top:2px}
-.pa-winrate{display:inline-flex;align-items:center;gap:5px;padding:4px 10px;border-radius:6px;font-size:15px;font-weight:900;font-family:'JetBrains Mono'}
+.pa-bad-bar{display:flex;align-items:center;gap:16px;background:rgba(239,68,68,.04);border:1px solid rgba(239,68,68,.15);border-radius:8px;padding:10px 16px;margin-bottom:20px;flex-wrap:wrap}
+.pa-bad-tag{font-size:9px;font-weight:900;text-transform:uppercase;letter-spacing:0.5px;color:var(--high);white-space:nowrap}
+.pa-bad-stat{display:flex;align-items:baseline;gap:5px}
+.pa-bad-stat-label{font-size:8px;font-weight:700;color:var(--subtext);text-transform:uppercase}
+.pa-bad-stat-val{font-family:'JetBrains Mono';font-weight:900;font-size:13px}
+.pa-bad-divider{width:1px;height:20px;background:rgba(239,68,68,.15)}
+.pa-winrate{display:inline-flex;align-items:baseline;gap:5px;padding:4px 10px;border-radius:8px;font-size:20px;font-weight:900;font-family:'JetBrains Mono'}
+.pa-winrate-sub{font-size:9px;font-weight:700;color:var(--subtext);font-family:'Inter',sans-serif}
 .pa-pnl-bar{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:24px}
 .pa-pnl-card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px;text-align:center}
 .pa-pnl-label{font-size:9px;font-weight:900;text-transform:uppercase;letter-spacing:1px;color:var(--subtext);margin-bottom:8px}
@@ -671,21 +669,20 @@ h+='<div class="pa-pnl-card"><div class="pa-pnl-label">Entry Gross $</div><div c
 h+='<div class="pa-pnl-card"><div class="pa-pnl-label">Long $</div><div class="pa-pnl-val" style="color:var(--low)">$'+(m.hypotheticalGrossLong||0).toLocaleString()+'</div></div>';
 h+='<div class="pa-pnl-card"><div class="pa-pnl-label">Short $</div><div class="pa-pnl-val" style="color:var(--high)">$'+(m.hypotheticalGrossShort||0).toLocaleString()+'</div></div>';
 h+='</div>';}
-// ── Bad Scenario Card ──
+// ── Bad Scenario (inline bar) ──
 var prob=m.probabilities||{};
 if(prob.badScenario&&prob.triggers>=3){
 var bs=prob.badScenario;
-h+='<div class="pa-bad-scenario">';
-h+='<div class="pa-bad-header"><span class="pa-bad-title">&#9888; Bad Scenario — Downside Risk</span><span class="pa-bad-sample">'+bs.sampleSize+' historical trigger'+(bs.sampleSize!==1?'s':'')+'</span></div>';
-h+='<div class="pa-bad-grid">';
-// Avg max adverse excursion
-h+='<div class="pa-bad-cell"><div class="pa-bad-cell-label">Avg Max Loss</div><div class="pa-bad-cell-val" style="color:var(--high)">-$'+Math.abs(bs.avgMaeDollar).toFixed(2)+'</div><div class="pa-bad-cell-sub">'+bs.avgMae.toFixed(4)+' / share</div></div>';
-// 75th percentile (worse than average)
-h+='<div class="pa-bad-cell"><div class="pa-bad-cell-label">P75 Max Loss</div><div class="pa-bad-cell-val" style="color:var(--high)">-$'+Math.abs(bs.p75MaeDollar).toFixed(2)+'</div><div class="pa-bad-cell-sub">75th percentile worst case</div></div>';
-// Widening probability
 var wpClr=bs.wideningProb>60?'var(--high)':bs.wideningProb>40?'var(--yellow)':'var(--low)';
-h+='<div class="pa-bad-cell"><div class="pa-bad-cell-label">Widening Probability</div><div class="pa-bad-cell-val" style="color:'+wpClr+'">'+bs.wideningProb+'%</div><div class="pa-bad-cell-sub">chance spread widens next day</div></div>';
-h+='</div></div>';
+h+='<div class="pa-bad-bar">';
+h+='<span class="pa-bad-tag">&#9888; Downside</span>';
+h+='<div class="pa-bad-stat"><span class="pa-bad-stat-label">Avg Max Loss</span><span class="pa-bad-stat-val" style="color:var(--high)">-$'+Math.abs(bs.avgMaeDollar).toFixed(2)+'</span></div>';
+h+='<div class="pa-bad-divider"></div>';
+h+='<div class="pa-bad-stat"><span class="pa-bad-stat-label">P75 Loss</span><span class="pa-bad-stat-val" style="color:var(--high)">-$'+Math.abs(bs.p75MaeDollar).toFixed(2)+'</span></div>';
+h+='<div class="pa-bad-divider"></div>';
+h+='<div class="pa-bad-stat"><span class="pa-bad-stat-label">Widen Prob</span><span class="pa-bad-stat-val" style="color:'+wpClr+'">'+bs.wideningProb+'%</span></div>';
+h+='<span class="pa-bad-stat-label" style="margin-left:auto">'+bs.sampleSize+' samples</span>';
+h+='</div>';
 }
 // 30/60/90 window cards
 var rz=m.rollingZ||{};
@@ -709,11 +706,11 @@ h+='<div class="pa-window-card">';
 h+='<div class="pa-window-label">'+windows[i].l+'<span class="pa-window-badge">'+(hasData?w.dataPoints+'d data':'insufficient data')+'</span></div>';
 if(hasData){
 h+='<div class="pa-metric-row"><span class="pa-metric-label">Z-Score</span><span class="pa-metric-val big" style="color:'+zs.c+'">'+(z>=0?'+':'')+z.toFixed(2)+'&sigma;</span></div>';
-// Win rate badge (mean reversion probability)
+// Win rate (mean reversion probability) — hero metric
 if(wr&&wr.eligible>=3){
 var wrClr=wr.rate>=60?'var(--low)':wr.rate>=40?'var(--yellow)':'var(--high)';
-var wrBg=wr.rate>=60?'rgba(16,185,129,.1)':wr.rate>=40?'rgba(245,158,11,.1)':'rgba(239,68,68,.1)';
-h+='<div class="pa-metric-row"><span class="pa-metric-label">Mean Reversion Prob.</span><span class="pa-winrate" style="color:'+wrClr+';background:'+wrBg+'">'+wr.rate+'% <span style="font-size:8px;font-weight:700;color:var(--subtext);font-family:Inter,sans-serif">('+wr.wins+'/'+wr.eligible+')</span></span></div>';
+var wrBg=wr.rate>=60?'rgba(16,185,129,.08)':wr.rate>=40?'rgba(245,158,11,.08)':'rgba(239,68,68,.08)';
+h+='<div class="pa-metric-row"><span class="pa-metric-label">Mean Reversion Prob.</span><span class="pa-winrate" style="color:'+wrClr+';background:'+wrBg+'">'+wr.rate+'%<span class="pa-winrate-sub">('+wr.wins+'/'+wr.eligible+')</span></span></div>';
 }
 h+='<div class="pa-metric-row"><span class="pa-metric-label">Exp. Profit / Share</span><span class="pa-metric-val" style="color:'+epClr+'">'+(ep>=0?'+':'')+'$'+Math.abs(ep).toFixed(2)+'</span></div>';
 h+='<div class="pa-metric-row"><span class="pa-metric-label">Total Exp. PnL</span><span class="pa-metric-val" style="color:'+totalEpClr+';font-size:16px;font-weight:900">'+(totalEp>=0?'+':'')+'$'+Math.abs(totalEp).toFixed(2)+'</span></div>';
