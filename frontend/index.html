@@ -230,6 +230,16 @@ td:last-child{border-radius:0 10px 10px 0;border-right:1px solid var(--border)}
 .pa-metric-label{font-size:10px;font-weight:700;color:var(--subtext);text-transform:uppercase}
 .pa-metric-val{font-family:'JetBrains Mono';font-weight:900;font-size:14px}
 .pa-metric-val.big{font-size:22px}
+.pa-range-wrap{padding:10px 0 4px;margin-top:4px}
+.pa-range-labels{display:flex;justify-content:space-between;font-size:9px;font-weight:700;color:var(--subtext);font-family:'JetBrains Mono';margin-bottom:6px}
+.pa-range-track{position:relative;height:18px;border-radius:9px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.06);overflow:visible}
+.pa-range-band{position:absolute;top:1px;bottom:1px;border-radius:8px;background:rgba(99,102,241,.12);border:1px solid rgba(99,102,241,.2)}
+.pa-range-mean{position:absolute;top:-2px;bottom:-2px;width:2px;border-radius:1px;background:var(--subtext);transform:translateX(-1px)}
+.pa-range-marker{position:absolute;top:50%;width:10px;height:10px;border-radius:50%;transform:translate(-50%,-50%);border:2px solid;z-index:2}
+.pa-range-marker.current{background:var(--accent);border-color:var(--accent);box-shadow:0 0 6px rgba(99,102,241,.5)}
+.pa-range-marker.entry{background:transparent;border-color:var(--yellow);box-shadow:0 0 6px rgba(245,158,11,.3)}
+.pa-range-legend{display:flex;gap:12px;margin-top:6px;font-size:9px;font-weight:700;color:var(--subtext)}
+.pa-range-legend-dot{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:3px;vertical-align:middle}
 .pa-sparkline-wrap{margin-top:14px;height:50px;position:relative}
 .pa-sparkline-wrap svg{width:100%;height:100%}
 .pa-pnl-bar{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:24px}
@@ -654,6 +664,9 @@ h+='</div>';}
 // 30/60/90 window cards
 var rz=m.rollingZ||{};
 var windows=[{k:'30d',l:'30-Day'},{k:'60d',l:'60-Day'},{k:'90d',l:'90-Day'}];
+var tw=m.totalWeight||1;
+var curSpread=m.netSpread||0;
+var entrySpread=(ad.mode==='sandbox'&&m.hypotheticalSpread!==undefined)?m.hypotheticalSpread:null;
 h+='<div class="pa-windows">';
 for(var i=0;i<windows.length;i++){
 var w=rz[windows[i].k];
@@ -662,13 +675,33 @@ var z=hasData?w.z:0;
 var zs=healthZColor(z);
 var ep=hasData?w.expectedProfit:0;
 var epClr=ep>=0?'var(--low)':'var(--high)';
+var totalEp=ep*tw;
+var totalEpClr=totalEp>=0?'var(--low)':'var(--high)';
 h+='<div class="pa-window-card">';
 h+='<div class="pa-window-label">'+windows[i].l+'<span class="pa-window-badge">'+(hasData?w.dataPoints+'d data':'insufficient data')+'</span></div>';
 if(hasData){
 h+='<div class="pa-metric-row"><span class="pa-metric-label">Z-Score</span><span class="pa-metric-val big" style="color:'+zs.c+'">'+(z>=0?'+':'')+z.toFixed(2)+'&sigma;</span></div>';
-h+='<div class="pa-metric-row"><span class="pa-metric-label">Exp. Profit (Mean Reversion)</span><span class="pa-metric-val" style="color:'+epClr+'">'+(ep>=0?'+':'')+'$'+Math.abs(ep).toFixed(2)+'</span></div>';
-h+='<div class="pa-metric-row"><span class="pa-metric-label">Spread Mean</span><span class="pa-metric-val" style="color:var(--subtext)">'+(w.mean>=0?'+':'')+'$'+Math.abs(w.mean).toFixed(2)+'</span></div>';
-h+='<div class="pa-metric-row"><span class="pa-metric-label">Spread Std Dev</span><span class="pa-metric-val" style="color:var(--subtext)">'+w.std.toFixed(2)+'</span></div>';
+h+='<div class="pa-metric-row"><span class="pa-metric-label">Exp. Profit / Share</span><span class="pa-metric-val" style="color:'+epClr+'">'+(ep>=0?'+':'')+'$'+Math.abs(ep).toFixed(2)+'</span></div>';
+h+='<div class="pa-metric-row"><span class="pa-metric-label">Total Exp. PnL</span><span class="pa-metric-val" style="color:'+totalEpClr+';font-size:16px;font-weight:900">'+(totalEp>=0?'+':'')+'$'+Math.abs(totalEp).toFixed(2)+'</span></div>';
+// Visual range bar: mean ± 2σ range with current spread + entry markers
+var rMean=w.mean,rStd=w.std;
+var lo=rMean-2.5*rStd,hi=rMean+2.5*rStd;
+var rangeW=hi-lo;if(rangeW<0.01)rangeW=1;
+var band1L=((rMean-rStd-lo)/rangeW*100);var band1R=((hi-(rMean+rStd))/rangeW*100);
+var meanPct=((rMean-lo)/rangeW*100);
+var curPct=Math.max(0,Math.min(100,(curSpread-lo)/rangeW*100));
+h+='<div class="pa-range-wrap">';
+h+='<div class="pa-range-labels"><span>'+(lo>=0?'+':'')+'$'+Math.abs(lo).toFixed(2)+'</span><span style="color:var(--text)">Mean '+(rMean>=0?'+':'')+'$'+Math.abs(rMean).toFixed(2)+'</span><span>'+(hi>=0?'+':'')+'$'+Math.abs(hi).toFixed(2)+'</span></div>';
+h+='<div class="pa-range-track">';
+h+='<div class="pa-range-band" style="left:'+band1L+'%;right:'+band1R+'%"></div>';
+h+='<div class="pa-range-mean" style="left:'+meanPct+'%"></div>';
+h+='<div class="pa-range-marker current" style="left:'+curPct+'%" title="Current: $'+curSpread.toFixed(2)+'"></div>';
+if(entrySpread!==null){var ePct=Math.max(0,Math.min(100,(entrySpread-lo)/rangeW*100));
+h+='<div class="pa-range-marker entry" style="left:'+ePct+'%" title="Entry: $'+entrySpread.toFixed(2)+'"></div>';}
+h+='</div>';
+h+='<div class="pa-range-legend"><span><span class="pa-range-legend-dot" style="background:var(--subtext)"></span>Mean</span><span><span class="pa-range-legend-dot" style="background:rgba(99,102,241,.3);border:1px solid rgba(99,102,241,.5)"></span>&plusmn;1&sigma;</span><span><span class="pa-range-legend-dot" style="background:var(--accent)"></span>Current</span>';
+if(entrySpread!==null)h+='<span><span class="pa-range-legend-dot" style="background:transparent;border:2px solid var(--yellow)"></span>Entry</span>';
+h+='</div></div>';
 }else{
 h+='<div style="text-align:center;padding:20px;color:var(--subtext);font-weight:700">Need '+windows[i].k.replace('d','')+' days of history</div>';}
 // Sparkline (use daily values trimmed to this window)
