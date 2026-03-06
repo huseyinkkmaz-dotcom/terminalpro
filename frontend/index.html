@@ -632,7 +632,7 @@ async function analyzeAlert(btn, tA, tB, pA, pB, z, rowId) {
       }
       if (rw.expectedProfit !== undefined && !rw.insufficient) {
         var epClr = rw.expectedProfit >= 0 ? 'var(--low)' : 'var(--high)';
-        h += '<div class="ar-metric"><span class="ar-metric-label">Exp. Profit (Total)</span><span class="ar-metric-val" style="color:' + epClr + '">' + (rw.expectedProfit >= 0 ? '+' : '') + '$' + Math.abs(rw.expectedProfit).toFixed(2) + '</span></div>';
+        h += '<div class="ar-metric"><span class="ar-metric-label">Exp. Profit / Share</span><span class="ar-metric-val" style="color:' + epClr + '">' + (rw.expectedProfit >= 0 ? '+' : '') + '$' + Math.abs(rw.expectedProfit).toFixed(4) + '</span></div>';
       }
       if (rw.z !== undefined && !rw.insufficient) {
         var zClr = Math.abs(rw.z) >= 1.8 ? 'var(--high)' : Math.abs(rw.z) >= 1 ? 'var(--yellow)' : 'var(--low)';
@@ -645,8 +645,8 @@ async function analyzeAlert(btn, tA, tB, pA, pB, z, rowId) {
       var bs = prob.badScenario;
       var wpClr = bs.wideningProb > 60 ? 'var(--high)' : bs.wideningProb > 40 ? 'var(--yellow)' : 'var(--low)';
       h += '<div class="ar-card" style="border-color:rgba(239,68,68,.2)"><div class="ar-card-title" style="color:var(--high)">Downside Risk (' + bs.sampleSize + ' samples)</div>';
-      h += '<div class="ar-metric"><span class="ar-metric-label">Avg Max Loss</span><span class="ar-metric-val" style="color:var(--high)">-$' + Math.abs(bs.avgMaeDollar).toFixed(2) + '</span></div>';
-      h += '<div class="ar-metric"><span class="ar-metric-label">P75 Max Loss</span><span class="ar-metric-val" style="color:var(--high)">-$' + Math.abs(bs.p75MaeDollar).toFixed(2) + '</span></div>';
+      h += '<div class="ar-metric"><span class="ar-metric-label">Avg Max Loss</span><span class="ar-metric-val" style="color:var(--high)">-$' + Math.abs(bs.avgMae).toFixed(4) + '</span></div>';
+      h += '<div class="ar-metric"><span class="ar-metric-label">P75 Max Loss</span><span class="ar-metric-val" style="color:var(--high)">-$' + Math.abs(bs.p75Mae).toFixed(4) + '</span></div>';
       h += '<div class="ar-metric"><span class="ar-metric-label">Widen Prob</span><span class="ar-metric-val" style="color:' + wpClr + '">' + bs.wideningProb + '%</span></div>';
       h += '</div>';
     }
@@ -853,11 +853,18 @@ h+='<div class="pa-banner-stat"><span class="pa-banner-label">Legs</span><span c
 h+='<div class="pa-banner-stat"><span class="pa-banner-label">Valid Legs</span><span class="pa-banner-val" style="color:var(--text)">'+(m.validLegs||0)+'</span></div>';
 h+='<div class="pa-banner-stat"><span class="pa-banner-label">History</span><span class="pa-banner-val" style="color:var(--subtext)">'+(m.historyDays||0)+'d</span></div>';
 var ns=m.netSpread||0;var nsClr=ns>=0?'var(--low)':'var(--high)';
-// In sandbox mode, show entry spread as primary "Net Spread" since the user wants to see metrics based on their inputs
-var displaySpread=(ad.mode==='sandbox'&&m.hypotheticalSpread!==undefined)?m.hypotheticalSpread:ns;
+if(ad.mode==='live'){
+// Live portfolio: show weighted avg Z + net exposure instead of raw spread
+var rz90=m.rollingZ&&m.rollingZ['90d']&&!m.rollingZ['90d'].insufficient?m.rollingZ['90d']:null;
+var avgZ=rz90?rz90.z:0;var avgZClr=healthZColor(avgZ);
+h+='<div class="pa-banner-stat"><span class="pa-banner-label">Basket Z</span><span class="pa-banner-val" style="color:'+avgZClr.c+'">'+(avgZ>=0?'+':'')+avgZ.toFixed(2)+'&sigma;</span></div>';
+var netExp=(m.grossLong||0)-(m.grossShort||0);var netExpClr=Math.abs(netExp)<100?'var(--low)':'var(--yellow)';
+h+='<div class="pa-banner-stat"><span class="pa-banner-label">Net Exposure</span><span class="pa-banner-val" style="color:'+netExpClr+'">'+(netExp>=0?'+':'')+'$'+Math.abs(netExp).toFixed(0)+'</span></div>';
+} else {
+// Sandbox: show entry/market spread
+var displaySpread=(m.hypotheticalSpread!==undefined)?m.hypotheticalSpread:ns;
 var dsClr=displaySpread>=0?'var(--low)':'var(--high)';
-h+='<div class="pa-banner-stat"><span class="pa-banner-label">'+(ad.mode==='sandbox'?'Entry Spread':'Net Spread')+'</span><span class="pa-banner-val" style="color:'+dsClr+'">'+(displaySpread>=0?'+':'')+'$'+Math.abs(displaySpread).toFixed(2)+'</span></div>';
-if(ad.mode==='sandbox'){
+h+='<div class="pa-banner-stat"><span class="pa-banner-label">Entry Spread</span><span class="pa-banner-val" style="color:'+dsClr+'">'+(displaySpread>=0?'+':'')+'$'+Math.abs(displaySpread).toFixed(2)+'</span></div>';
 h+='<div class="pa-banner-stat"><span class="pa-banner-label">Mkt Spread</span><span class="pa-banner-val" style="color:'+nsClr+'">'+(ns>=0?'+':'')+'$'+Math.abs(ns).toFixed(2)+'</span></div>';
 }
 h+='<div class="pa-banner-stat"><span class="pa-banner-label">Long $</span><span class="pa-banner-val" style="color:var(--low)">$'+(m.grossLong||0).toLocaleString()+'</span></div>';
@@ -867,11 +874,12 @@ h+='</div>';
 // PnL bar (live mode only)
 if(ad.mode==='live'&&m.entrySpread!==undefined){
 var cgClr=m.capitalGains>=0?'var(--low)':'var(--high)';var ndClr=m.netDividends>=0?'var(--low)':'var(--high)';var pnlClr=m.totalPnL>=0?'var(--low)':'var(--high)';
+var pnlPct=m.grossExposure>0?((m.totalPnL/m.grossExposure)*100):0;var pnlPctClr=pnlPct>=0?'var(--low)':'var(--high)';
 h+='<div class="pa-pnl-bar">';
-h+='<div class="pa-pnl-card"><div class="pa-pnl-label">Entry Spread</div><div class="pa-pnl-val" style="color:var(--text)">'+(m.entrySpread>=0?'+':'')+'$'+Math.abs(m.entrySpread).toFixed(2)+'</div></div>';
-h+='<div class="pa-pnl-card"><div class="pa-pnl-label">Capital Gains</div><div class="pa-pnl-val" style="color:'+cgClr+'">'+(m.capitalGains>=0?'+':'')+m.capitalGains.toFixed(2)+'$</div></div>';
-h+='<div class="pa-pnl-card"><div class="pa-pnl-label">Net Dividends</div><div class="pa-pnl-val" style="color:'+ndClr+'">'+(m.netDividends>=0?'+':'')+m.netDividends.toFixed(2)+'$</div></div>';
-h+='<div class="pa-pnl-card"><div class="pa-pnl-label">Total PnL</div><div class="pa-pnl-val" style="color:'+pnlClr+'">'+(m.totalPnL>=0?'+':'')+m.totalPnL.toFixed(2)+'$</div></div>';
+h+='<div class="pa-pnl-card"><div class="pa-pnl-label">Capital Gains</div><div class="pa-pnl-val" style="color:'+cgClr+'">'+(m.capitalGains>=0?'+':'')+'$'+Math.abs(m.capitalGains).toFixed(2)+'</div></div>';
+h+='<div class="pa-pnl-card"><div class="pa-pnl-label">Net Dividends</div><div class="pa-pnl-val" style="color:'+ndClr+'">'+(m.netDividends>=0?'+':'')+'$'+Math.abs(m.netDividends).toFixed(2)+'</div></div>';
+h+='<div class="pa-pnl-card"><div class="pa-pnl-label">Total PnL</div><div class="pa-pnl-val" style="color:'+pnlClr+'">'+(m.totalPnL>=0?'+':'')+'$'+Math.abs(m.totalPnL).toFixed(2)+'</div></div>';
+h+='<div class="pa-pnl-card"><div class="pa-pnl-label">Return %</div><div class="pa-pnl-val" style="color:'+pnlPctClr+'">'+(pnlPct>=0?'+':'')+pnlPct.toFixed(2)+'%</div></div>';
 h+='</div>';
 }
 // Missing tickers warning (sandbox)
@@ -893,16 +901,15 @@ var bs=prob.badScenario;
 h+='<div class="pa-bad-scenario">';
 h+='<div class="pa-bad-header"><span class="pa-bad-title">&#9888; Bad Scenario — Downside Risk</span><span class="pa-bad-sample">'+bs.sampleSize+' historical trigger'+(bs.sampleSize!==1?'s':'')+'</span></div>';
 h+='<div class="pa-bad-grid">';
-h+='<div class="pa-bad-cell"><div class="pa-bad-cell-label">Avg Max Loss</div><div class="pa-bad-cell-val" style="color:var(--high)">-$'+Math.abs(bs.avgMaeDollar).toFixed(2)+'</div><div class="pa-bad-cell-sub">'+bs.avgMae.toFixed(4)+' / share</div></div>';
+h+='<div class="pa-bad-cell"><div class="pa-bad-cell-label">Avg Max Loss</div><div class="pa-bad-cell-val" style="color:var(--high)">-$'+Math.abs(bs.avgMae).toFixed(4)+'</div><div class="pa-bad-cell-sub">per share adverse excursion</div></div>';
 var wpClr=bs.wideningProb>60?'var(--high)':bs.wideningProb>40?'var(--yellow)':'var(--low)';
-h+='<div class="pa-bad-cell"><div class="pa-bad-cell-label">P75 Max Loss</div><div class="pa-bad-cell-val" style="color:var(--high)">-$'+Math.abs(bs.p75MaeDollar).toFixed(2)+'</div><div class="pa-bad-cell-sub">75th percentile worst case</div></div>';
+h+='<div class="pa-bad-cell"><div class="pa-bad-cell-label">P75 Max Loss</div><div class="pa-bad-cell-val" style="color:var(--high)">-$'+Math.abs(bs.p75Mae).toFixed(4)+'</div><div class="pa-bad-cell-sub">75th percentile worst case</div></div>';
 h+='<div class="pa-bad-cell"><div class="pa-bad-cell-label">Widening Probability</div><div class="pa-bad-cell-val" style="color:'+wpClr+'">'+bs.wideningProb+'%</div><div class="pa-bad-cell-sub">chance spread widens next day</div></div>';
 h+='</div></div>';
 }
 // 30/60/90 window cards
 var rz=m.rollingZ||{};
 var windows=[{k:'30d',l:'30-Day'},{k:'60d',l:'60-Day'},{k:'90d',l:'90-Day'}];
-var tw=m.totalWeight||1;
 var curSpread=m.netSpread||0;
 var entrySpread=(ad.mode==='sandbox'&&m.hypotheticalSpread!==undefined)?m.hypotheticalSpread:null;
 var winRates=prob.winRates||{};
@@ -912,10 +919,8 @@ var w=rz[windows[i].k];
 var hasData=w&&!w.insufficient;
 var z=hasData?w.z:0;
 var zs=healthZColor(z);
-var epPerUnit=hasData?(w.expectedProfitPerUnit||0):0;
-var epClr=epPerUnit>=0?'var(--low)':'var(--high)';
-var totalEp=hasData?w.expectedProfit:0;
-var totalEpClr=totalEp>=0?'var(--low)':'var(--high)';
+var ep=hasData?w.expectedProfit:0;
+var epClr=ep>=0?'var(--low)':'var(--high)';
 var wr=winRates[windows[i].k];
 h+='<div class="pa-window-card">';
 h+='<div class="pa-window-label">'+windows[i].l+'<span class="pa-window-badge">'+(hasData?w.dataPoints+'d data':'insufficient data')+'</span></div>';
@@ -927,8 +932,7 @@ var wrClr=wr.rate>=60?'var(--low)':wr.rate>=40?'var(--yellow)':'var(--high)';
 var wrBg=wr.rate>=60?'rgba(16,185,129,.08)':wr.rate>=40?'rgba(245,158,11,.08)':'rgba(239,68,68,.08)';
 h+='<div class="pa-metric-row"><span class="pa-metric-label">Mean Reversion Prob.</span><span class="pa-winrate" style="color:'+wrClr+';background:'+wrBg+'">'+wr.rate+'% <span class="pa-winrate-sub">('+wr.wins+'/'+wr.eligible+')</span></span></div>';
 }
-h+='<div class="pa-metric-row"><span class="pa-metric-label">Exp. Profit / Share</span><span class="pa-metric-val" style="color:'+epClr+'">'+(epPerUnit>=0?'+':'')+'$'+Math.abs(epPerUnit).toFixed(2)+'</span></div>';
-h+='<div class="pa-metric-row"><span class="pa-metric-label">Total Exp. PnL</span><span class="pa-metric-val" style="color:'+totalEpClr+';font-size:16px;font-weight:900">'+(totalEp>=0?'+':'')+'$'+Math.abs(totalEp).toFixed(2)+'</span></div>';
+h+='<div class="pa-metric-row"><span class="pa-metric-label">Exp. Profit / Share</span><span class="pa-metric-val" style="color:'+epClr+';font-size:16px;font-weight:900">'+(ep>=0?'+':'')+'$'+Math.abs(ep).toFixed(4)+'</span></div>';
 // Visual range bar: mean ± 2σ range with current spread + entry markers
 var rMean=w.mean,rStd=w.std;
 var lo=rMean-2.5*rStd,hi=rMean+2.5*rStd;

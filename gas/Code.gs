@@ -868,18 +868,16 @@ function computeBasketMetrics_(legs, histMap) {
       for (var k = 0; k < slice.length; k++) sq += (slice[k] - mean) * (slice[k] - mean);
       var std = Math.sqrt(sq / (slice.length - 1));
       var z = std > 0.0001 ? (currentValue - mean) / std : 0;
-      var expectedProfitPerUnit = mean - currentValue; // positive = portfolio should revert UP
-      var expectedProfitDollar = expectedProfitPerUnit * totalWeight; // scale to total $ like MAE
+      var expectedProfit = mean - currentValue; // positive = portfolio should revert UP (per-share)
       rollingZ[n + 'd'] = {
         z: parseFloat(z.toFixed(2)),
         mean: parseFloat(mean.toFixed(2)),
         std: parseFloat(std.toFixed(2)),
-        expectedProfit: parseFloat(expectedProfitDollar.toFixed(2)),
-        expectedProfitPerUnit: parseFloat(expectedProfitPerUnit.toFixed(4)),
+        expectedProfit: parseFloat(expectedProfit.toFixed(4)),
         dataPoints: slice.length
       };
     } else {
-      rollingZ[n + 'd'] = { z: 0, mean: 0, std: 0, expectedProfit: 0, expectedProfitPerUnit: 0, dataPoints: dailyValues.length, insufficient: true };
+      rollingZ[n + 'd'] = { z: 0, mean: 0, std: 0, expectedProfit: 0, dataPoints: dailyValues.length, insufficient: true };
     }
   }
 
@@ -1247,6 +1245,20 @@ function getPortfolioAnalytics(mode, legsJson) {
       metrics.netDividends = parseFloat((totalRcvdDiv - totalPaidDiv).toFixed(2));
       metrics.totalPnL = parseFloat((currentLiveValue - entrySpreadDollar + totalRcvdDiv - totalPaidDiv).toFixed(2));
 
+      // Wide-tolerance fallback for probability engine (live mode)
+      if (metrics.dailyValuesFull_ && metrics.dailyValuesFull_.length >= 20) {
+        var stdTriggers = metrics.probabilities ? metrics.probabilities.triggers : 0;
+        if (stdTriggers < 3) {
+          var liveRef = metrics.dailyValuesFull_[metrics.dailyValuesFull_.length - 1];
+          var wideProb = computeHistoricalProbabilitiesWide_(
+            metrics.dailyValuesFull_, liveRef, metrics.rollingZ, metrics.totalWeight
+          );
+          if (wideProb.triggers > stdTriggers) {
+            metrics.probabilities = wideProb;
+          }
+        }
+      }
+
       delete metrics.dailyValuesFull_; // strip internal array before response
       return { mode: 'live', trades: openData.length - 1, legs: legs.length, metrics: metrics };
     }
@@ -1287,12 +1299,9 @@ function getPortfolioAnalytics(mode, legsJson) {
       // Sandbox user wants to know "if spread reverts to mean from MY ENTRY, how much do I profit?"
       // Default computation uses market spread vs mean (irrelevant to user's entry position).
       var rz = metrics.rollingZ || {};
-      var sandboxTw = metrics.totalWeight || 1;
       for (var wKey in rz) {
         if (rz[wKey] && !rz[wKey].insufficient) {
-          var epPerUnit = rz[wKey].mean - metrics.hypotheticalSpread;
-          rz[wKey].expectedProfitPerUnit = parseFloat(epPerUnit.toFixed(4));
-          rz[wKey].expectedProfit = parseFloat((epPerUnit * sandboxTw).toFixed(2));
+          rz[wKey].expectedProfit = parseFloat((rz[wKey].mean - metrics.hypotheticalSpread).toFixed(4));
         }
       }
 
@@ -1985,7 +1994,7 @@ function runNightlyScreener() {
             id: a.id, tA: a.tA, tB: a.tB, mode: a._mode,
             z: parseFloat(a.z), expProfit: parseFloat(a.expProfit),
             wr30: wr30, wr60: wr60, wr90: wr90,
-            avgMae: bs.avgMaeDollar || null, p75Mae: bs.p75MaeDollar || null,
+            avgMae: bs.avgMae || null, p75Mae: bs.p75Mae || null,
             wideningProb: bs.wideningProb || null, triggers: prob.triggers || 0,
             ep30: (analysis.metrics.rollingZ && analysis.metrics.rollingZ['30d']) ? analysis.metrics.rollingZ['30d'].expectedProfit : null,
             ep60: (analysis.metrics.rollingZ && analysis.metrics.rollingZ['60d']) ? analysis.metrics.rollingZ['60d'].expectedProfit : null,
