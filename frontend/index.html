@@ -618,7 +618,13 @@ h+='<div class="pa-banner-stat"><span class="pa-banner-label">Legs</span><span c
 h+='<div class="pa-banner-stat"><span class="pa-banner-label">Valid Legs</span><span class="pa-banner-val" style="color:var(--text)">'+(m.validLegs||0)+'</span></div>';
 h+='<div class="pa-banner-stat"><span class="pa-banner-label">History</span><span class="pa-banner-val" style="color:var(--subtext)">'+(m.historyDays||0)+'d</span></div>';
 var ns=m.netSpread||0;var nsClr=ns>=0?'var(--low)':'var(--high)';
-h+='<div class="pa-banner-stat"><span class="pa-banner-label">Net Spread</span><span class="pa-banner-val" style="color:'+nsClr+'">'+(ns>=0?'+':'')+'$'+Math.abs(ns).toFixed(2)+'</span></div>';
+// In sandbox mode, show entry spread as primary "Net Spread" since the user wants to see metrics based on their inputs
+var displaySpread=(ad.mode==='sandbox'&&m.hypotheticalSpread!==undefined)?m.hypotheticalSpread:ns;
+var dsClr=displaySpread>=0?'var(--low)':'var(--high)';
+h+='<div class="pa-banner-stat"><span class="pa-banner-label">'+(ad.mode==='sandbox'?'Entry Spread':'Net Spread')+'</span><span class="pa-banner-val" style="color:'+dsClr+'">'+(displaySpread>=0?'+':'')+'$'+Math.abs(displaySpread).toFixed(2)+'</span></div>';
+if(ad.mode==='sandbox'){
+h+='<div class="pa-banner-stat"><span class="pa-banner-label">Mkt Spread</span><span class="pa-banner-val" style="color:'+nsClr+'">'+(ns>=0?'+':'')+'$'+Math.abs(ns).toFixed(2)+'</span></div>';
+}
 h+='<div class="pa-banner-stat"><span class="pa-banner-label">Long $</span><span class="pa-banner-val" style="color:var(--low)">$'+(m.grossLong||0).toLocaleString()+'</span></div>';
 h+='<div class="pa-banner-stat"><span class="pa-banner-label">Short $</span><span class="pa-banner-val" style="color:var(--high)">$'+(m.grossShort||0).toLocaleString()+'</span></div>';
 h+='<div class="pa-banner-stat"><span class="pa-banner-label">Gross Exposure</span><span class="pa-banner-val" style="color:var(--text)">$'+(m.grossExposure||0).toLocaleString()+'</span></div>';
@@ -636,14 +642,14 @@ h+='</div>';
 // Missing tickers warning (sandbox)
 if(m.missingTickers&&m.missingTickers.length>0){
 h+='<div style="background:rgba(245,158,11,.08);border:1px solid var(--yellow);border-radius:8px;padding:12px 16px;margin-bottom:24px;font-size:11px;color:var(--yellow);font-weight:700">Missing history for: '+m.missingTickers.join(', ')+' — these legs are excluded from calculations.</div>';}
-// Hypothetical entry (sandbox)
+// Hypothetical entry comparison (sandbox)
 if(ad.mode==='sandbox'&&m.hypotheticalSpread!==undefined){
 var hSpreadDelta=(m.netSpread||0)-(m.hypotheticalSpread||0);var hDClr=hSpreadDelta>=0?'var(--low)':'var(--high)';
 h+='<div class="pa-pnl-bar">';
-h+='<div class="pa-pnl-card"><div class="pa-pnl-label">Entry Spread</div><div class="pa-pnl-val" style="color:var(--text)">'+(m.hypotheticalSpread>=0?'+':'')+'$'+Math.abs(m.hypotheticalSpread).toFixed(2)+'</div></div>';
-h+='<div class="pa-pnl-card"><div class="pa-pnl-label">Current Spread</div><div class="pa-pnl-val" style="color:var(--text)">'+(ns>=0?'+':'')+'$'+Math.abs(ns).toFixed(2)+'</div></div>';
 h+='<div class="pa-pnl-card"><div class="pa-pnl-label">Spread Change</div><div class="pa-pnl-val" style="color:'+hDClr+'">'+(hSpreadDelta>=0?'+':'')+'$'+Math.abs(hSpreadDelta).toFixed(2)+'</div></div>';
 h+='<div class="pa-pnl-card"><div class="pa-pnl-label">Entry Gross $</div><div class="pa-pnl-val" style="color:var(--text)">$'+(m.hypotheticalGrossExposure||0).toLocaleString()+'</div></div>';
+h+='<div class="pa-pnl-card"><div class="pa-pnl-label">Long $</div><div class="pa-pnl-val" style="color:var(--low)">$'+(m.hypotheticalGrossLong||0).toLocaleString()+'</div></div>';
+h+='<div class="pa-pnl-card"><div class="pa-pnl-label">Short $</div><div class="pa-pnl-val" style="color:var(--high)">$'+(m.hypotheticalGrossShort||0).toLocaleString()+'</div></div>';
 h+='</div>';}
 // 30/60/90 window cards
 var rz=m.rollingZ||{};
