@@ -868,16 +868,18 @@ function computeBasketMetrics_(legs, histMap) {
       for (var k = 0; k < slice.length; k++) sq += (slice[k] - mean) * (slice[k] - mean);
       var std = Math.sqrt(sq / (slice.length - 1));
       var z = std > 0.0001 ? (currentValue - mean) / std : 0;
-      var expectedProfit = mean - currentValue; // positive = portfolio should revert UP
+      var expectedProfitPerUnit = mean - currentValue; // positive = portfolio should revert UP
+      var expectedProfitDollar = expectedProfitPerUnit * totalWeight; // scale to total $ like MAE
       rollingZ[n + 'd'] = {
         z: parseFloat(z.toFixed(2)),
         mean: parseFloat(mean.toFixed(2)),
         std: parseFloat(std.toFixed(2)),
-        expectedProfit: parseFloat(expectedProfit.toFixed(2)),
+        expectedProfit: parseFloat(expectedProfitDollar.toFixed(2)),
+        expectedProfitPerUnit: parseFloat(expectedProfitPerUnit.toFixed(4)),
         dataPoints: slice.length
       };
     } else {
-      rollingZ[n + 'd'] = { z: 0, mean: 0, std: 0, expectedProfit: 0, dataPoints: dailyValues.length, insufficient: true };
+      rollingZ[n + 'd'] = { z: 0, mean: 0, std: 0, expectedProfit: 0, expectedProfitPerUnit: 0, dataPoints: dailyValues.length, insufficient: true };
     }
   }
 
@@ -1285,9 +1287,12 @@ function getPortfolioAnalytics(mode, legsJson) {
       // Sandbox user wants to know "if spread reverts to mean from MY ENTRY, how much do I profit?"
       // Default computation uses market spread vs mean (irrelevant to user's entry position).
       var rz = metrics.rollingZ || {};
+      var sandboxTw = metrics.totalWeight || 1;
       for (var wKey in rz) {
         if (rz[wKey] && !rz[wKey].insufficient) {
-          rz[wKey].expectedProfit = parseFloat((rz[wKey].mean - metrics.hypotheticalSpread).toFixed(2));
+          var epPerUnit = rz[wKey].mean - metrics.hypotheticalSpread;
+          rz[wKey].expectedProfitPerUnit = parseFloat(epPerUnit.toFixed(4));
+          rz[wKey].expectedProfit = parseFloat((epPerUnit * sandboxTw).toFixed(2));
         }
       }
 
@@ -1297,6 +1302,16 @@ function getPortfolioAnalytics(mode, legsJson) {
         metrics.probabilities = computeHistoricalProbabilities_(
           metrics.dailyValuesFull_, metrics.hypotheticalSpread, rz, metrics.totalWeight
         );
+        // If standard tolerance found too few triggers, try wide-tolerance fallback
+        var stdTriggers = metrics.probabilities ? metrics.probabilities.triggers : 0;
+        if (stdTriggers < 3) {
+          var wideProb = computeHistoricalProbabilitiesWide_(
+            metrics.dailyValuesFull_, metrics.hypotheticalSpread, rz, metrics.totalWeight
+          );
+          if (wideProb.triggers > stdTriggers) {
+            metrics.probabilities = wideProb;
+          }
+        }
       }
 
       // Flag which tickers are missing history

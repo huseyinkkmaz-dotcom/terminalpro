@@ -632,7 +632,7 @@ async function analyzeAlert(btn, tA, tB, pA, pB, z, rowId) {
       }
       if (rw.expectedProfit !== undefined && !rw.insufficient) {
         var epClr = rw.expectedProfit >= 0 ? 'var(--low)' : 'var(--high)';
-        h += '<div class="ar-metric"><span class="ar-metric-label">Exp. Profit</span><span class="ar-metric-val" style="color:' + epClr + '">' + (rw.expectedProfit >= 0 ? '+' : '') + '$' + Math.abs(rw.expectedProfit).toFixed(2) + '</span></div>';
+        h += '<div class="ar-metric"><span class="ar-metric-label">Exp. Profit (Total)</span><span class="ar-metric-val" style="color:' + epClr + '">' + (rw.expectedProfit >= 0 ? '+' : '') + '$' + Math.abs(rw.expectedProfit).toFixed(2) + '</span></div>';
       }
       if (rw.z !== undefined && !rw.insufficient) {
         var zClr = Math.abs(rw.z) >= 1.8 ? 'var(--high)' : Math.abs(rw.z) >= 1 ? 'var(--yellow)' : 'var(--low)';
@@ -912,9 +912,9 @@ var w=rz[windows[i].k];
 var hasData=w&&!w.insufficient;
 var z=hasData?w.z:0;
 var zs=healthZColor(z);
-var ep=hasData?w.expectedProfit:0;
-var epClr=ep>=0?'var(--low)':'var(--high)';
-var totalEp=ep*tw;
+var epPerUnit=hasData?(w.expectedProfitPerUnit||0):0;
+var epClr=epPerUnit>=0?'var(--low)':'var(--high)';
+var totalEp=hasData?w.expectedProfit:0;
 var totalEpClr=totalEp>=0?'var(--low)':'var(--high)';
 var wr=winRates[windows[i].k];
 h+='<div class="pa-window-card">';
@@ -927,7 +927,7 @@ var wrClr=wr.rate>=60?'var(--low)':wr.rate>=40?'var(--yellow)':'var(--high)';
 var wrBg=wr.rate>=60?'rgba(16,185,129,.08)':wr.rate>=40?'rgba(245,158,11,.08)':'rgba(239,68,68,.08)';
 h+='<div class="pa-metric-row"><span class="pa-metric-label">Mean Reversion Prob.</span><span class="pa-winrate" style="color:'+wrClr+';background:'+wrBg+'">'+wr.rate+'% <span class="pa-winrate-sub">('+wr.wins+'/'+wr.eligible+')</span></span></div>';
 }
-h+='<div class="pa-metric-row"><span class="pa-metric-label">Exp. Profit / Share</span><span class="pa-metric-val" style="color:'+epClr+'">'+(ep>=0?'+':'')+'$'+Math.abs(ep).toFixed(2)+'</span></div>';
+h+='<div class="pa-metric-row"><span class="pa-metric-label">Exp. Profit / Share</span><span class="pa-metric-val" style="color:'+epClr+'">'+(epPerUnit>=0?'+':'')+'$'+Math.abs(epPerUnit).toFixed(2)+'</span></div>';
 h+='<div class="pa-metric-row"><span class="pa-metric-label">Total Exp. PnL</span><span class="pa-metric-val" style="color:'+totalEpClr+';font-size:16px;font-weight:900">'+(totalEp>=0?'+':'')+'$'+Math.abs(totalEp).toFixed(2)+'</span></div>';
 // Visual range bar: mean ± 2σ range with current spread + entry markers
 var rMean=w.mean,rStd=w.std;
