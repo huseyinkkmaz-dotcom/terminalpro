@@ -1538,7 +1538,7 @@ function buildTickerHistorySheet_(ss, tickers) {
   // Column B: GOOGLEFINANCE historical (expands horizontally)
   var histFormulas = tickers.map(function(t, i) {
     var r = i + 2;
-    return ['=IFERROR(TRANSPOSE(QUERY(GOOGLEFINANCE(A' + r + ',"price",TODAY()-140,TODAY()),"select Col2 offset 1",0)),)'];
+    return ['=IFERROR(TRANSPOSE(QUERY(GOOGLEFINANCE(A' + r + ',"price",TODAY()-180,TODAY()),"select Col2 offset 1",0)),)'];
   });
   sheet.getRange(2, 2, tickers.length, 1).setFormulas(histFormulas);
   sheet.setFrozenRows(1);

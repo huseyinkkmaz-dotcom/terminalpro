@@ -833,12 +833,16 @@ function computeBasketMetrics_(legs, histMap) {
   var currentValue = dailyValues.length > 0 ? dailyValues[dailyValues.length - 1] : 0;
 
   // Compute rolling stats for 30, 60, 90 day windows
+  // Allow 10% shortfall (e.g. 81+ days satisfies 90-day window) since GOOGLEFINANCE
+  // may return slightly fewer trading days due to holidays or data gaps
   var rollingZ = {};
   var windows = [30, 60, 90];
   for (var w = 0; w < windows.length; w++) {
     var n = windows[w];
-    if (dailyValues.length >= n) {
-      var slice = dailyValues.slice(dailyValues.length - n);
+    var minRequired = Math.floor(n * 0.9);
+    if (dailyValues.length >= minRequired) {
+      var actualN = Math.min(n, dailyValues.length);
+      var slice = dailyValues.slice(dailyValues.length - actualN);
       var sum = 0;
       for (var k = 0; k < slice.length; k++) sum += slice[k];
       var mean = sum / slice.length;
@@ -1009,6 +1013,16 @@ function getPortfolioAnalytics(mode, legsJson) {
       metrics.hypotheticalGrossLong = parseFloat(hypotheticalGrossLong.toFixed(2));
       metrics.hypotheticalGrossShort = parseFloat(hypotheticalGrossShort.toFixed(2));
       metrics.hypotheticalGrossExposure = parseFloat((hypotheticalGrossLong + hypotheticalGrossShort).toFixed(2));
+
+      // Override expectedProfit in each rolling window to use entry spread:
+      // Sandbox user wants to know "if spread reverts to mean from MY ENTRY, how much do I profit?"
+      // Default computation uses market spread vs mean (irrelevant to user's entry position).
+      var rz = metrics.rollingZ || {};
+      for (var wKey in rz) {
+        if (rz[wKey] && !rz[wKey].insufficient) {
+          rz[wKey].expectedProfit = parseFloat((rz[wKey].mean - metrics.hypotheticalSpread).toFixed(2));
+        }
+      }
 
       // Flag which tickers are missing history
       var missing = [];

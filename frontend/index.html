@@ -662,7 +662,7 @@ if(hasData){
 h+='<div class="pa-metric-row"><span class="pa-metric-label">Z-Score</span><span class="pa-metric-val big" style="color:'+zs.c+'">'+(z>=0?'+':'')+z.toFixed(2)+'&sigma;</span></div>';
 h+='<div class="pa-metric-row"><span class="pa-metric-label">Exp. Profit (Mean Reversion)</span><span class="pa-metric-val" style="color:'+epClr+'">'+(ep>=0?'+':'')+'$'+Math.abs(ep).toFixed(2)+'</span></div>';
 h+='<div class="pa-metric-row"><span class="pa-metric-label">Spread Mean</span><span class="pa-metric-val" style="color:var(--subtext)">'+(w.mean>=0?'+':'')+'$'+Math.abs(w.mean).toFixed(2)+'</span></div>';
-h+='<div class="pa-metric-row"><span class="pa-metric-label">Spread Std Dev</span><span class="pa-metric-val" style="color:var(--subtext)">$'+w.std.toFixed(2)+'</span></div>';
+h+='<div class="pa-metric-row"><span class="pa-metric-label">Spread Std Dev</span><span class="pa-metric-val" style="color:var(--subtext)">'+w.std.toFixed(2)+'</span></div>';
 }else{
 h+='<div style="text-align:center;padding:20px;color:var(--subtext);font-weight:700">Need '+windows[i].k.replace('d','')+' days of history</div>';}
 // Sparkline (use daily values trimmed to this window)
