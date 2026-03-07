@@ -854,12 +854,10 @@ h+='<div class="pa-banner-stat"><span class="pa-banner-label">Valid Legs</span><
 h+='<div class="pa-banner-stat"><span class="pa-banner-label">History</span><span class="pa-banner-val" style="color:var(--subtext)">'+(m.historyDays||0)+'d</span></div>';
 var ns=m.netSpread||0;var nsClr=ns>=0?'var(--low)':'var(--high)';
 if(ad.mode==='live'){
-// Live portfolio: show weighted avg Z + net exposure instead of raw spread
+// Live portfolio: show weighted avg Z instead of raw spread
 var rz90=m.rollingZ&&m.rollingZ['90d']&&!m.rollingZ['90d'].insufficient?m.rollingZ['90d']:null;
 var avgZ=rz90?rz90.z:0;var avgZClr=healthZColor(avgZ);
 h+='<div class="pa-banner-stat"><span class="pa-banner-label">Basket Z</span><span class="pa-banner-val" style="color:'+avgZClr.c+'">'+(avgZ>=0?'+':'')+avgZ.toFixed(2)+'&sigma;</span></div>';
-var netExp=(m.grossLong||0)-(m.grossShort||0);var netExpClr=Math.abs(netExp)<100?'var(--low)':'var(--yellow)';
-h+='<div class="pa-banner-stat"><span class="pa-banner-label">Net Exposure</span><span class="pa-banner-val" style="color:'+netExpClr+'">'+(netExp>=0?'+':'')+'$'+Math.abs(netExp).toFixed(0)+'</span></div>';
 } else {
 // Sandbox: show entry/market spread
 var displaySpread=(m.hypotheticalSpread!==undefined)?m.hypotheticalSpread:ns;
@@ -874,12 +872,12 @@ h+='</div>';
 // PnL bar (live mode only)
 if(ad.mode==='live'&&m.entrySpread!==undefined){
 var cgClr=m.capitalGains>=0?'var(--low)':'var(--high)';var ndClr=m.netDividends>=0?'var(--low)':'var(--high)';var pnlClr=m.totalPnL>=0?'var(--low)':'var(--high)';
-var pnlPct=m.grossExposure>0?((m.totalPnL/m.grossExposure)*100):0;var pnlPctClr=pnlPct>=0?'var(--low)':'var(--high)';
+var tradeCount=ad.trades||1;var avgPnl=m.totalPnL/tradeCount;var avgPnlClr=avgPnl>=0?'var(--low)':'var(--high)';
 h+='<div class="pa-pnl-bar">';
 h+='<div class="pa-pnl-card"><div class="pa-pnl-label">Capital Gains</div><div class="pa-pnl-val" style="color:'+cgClr+'">'+(m.capitalGains>=0?'+':'')+'$'+Math.abs(m.capitalGains).toFixed(2)+'</div></div>';
 h+='<div class="pa-pnl-card"><div class="pa-pnl-label">Net Dividends</div><div class="pa-pnl-val" style="color:'+ndClr+'">'+(m.netDividends>=0?'+':'')+'$'+Math.abs(m.netDividends).toFixed(2)+'</div></div>';
 h+='<div class="pa-pnl-card"><div class="pa-pnl-label">Total PnL</div><div class="pa-pnl-val" style="color:'+pnlClr+'">'+(m.totalPnL>=0?'+':'')+'$'+Math.abs(m.totalPnL).toFixed(2)+'</div></div>';
-h+='<div class="pa-pnl-card"><div class="pa-pnl-label">Return %</div><div class="pa-pnl-val" style="color:'+pnlPctClr+'">'+(pnlPct>=0?'+':'')+pnlPct.toFixed(2)+'%</div></div>';
+h+='<div class="pa-pnl-card"><div class="pa-pnl-label">Avg PnL / Trade</div><div class="pa-pnl-val" style="color:'+avgPnlClr+'">'+(avgPnl>=0?'+':'')+'$'+Math.abs(avgPnl).toFixed(2)+'</div></div>';
 h+='</div>';
 }
 // Missing tickers warning (sandbox)
