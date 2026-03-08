@@ -895,6 +895,9 @@ function computeBasketMetrics_(legs, histMap) {
   // then compute forward-looking max adverse excursion and mean reversion rates.
   var probResult = computeHistoricalProbabilities_(dailyValues, currentValue, rollingZ, totalWeight);
 
+  // ── MAE + Recovery Days (basket-level) ──
+  var maeRecovery = computeBasketMAE_(dailyValues, rollingZ, totalWeight);
+
   return {
     rollingZ: rollingZ,
     netSpread: parseFloat(currentValue.toFixed(2)),
@@ -906,8 +909,180 @@ function computeBasketMetrics_(legs, histMap) {
     validLegs: validLegs.length,
     historyDays: maxDays,
     totalWeight: totalWeight,
-    probabilities: probResult
+    probabilities: probResult,
+    maeRecovery: maeRecovery
   };
+}
+
+/**
+ * Basket-level Max Adverse Excursion + Recovery Days.
+ * Scans the full daily spread history for every point where the spread
+ * deviated from the rolling mean, tracking:
+ *   - The worst single deviation from mean (MAE) across all history
+ *   - The average number of trading days to recover back to mean after
+ *     each excursion beyond ±1σ
+ *
+ * @param {number[]} dailyValues - Full daily spread array (oldest first)
+ * @param {Object} rollingZ - The rollingZ object with per-window mean/std
+ * @param {number} totalWeight - Position size multiplier for dollar conversion
+ * @return {Object} {maxMae, maxMaeDollar, avgRecoveryDays, medianRecoveryDays, excursionCount}
+ */
+function computeBasketMAE_(dailyValues, rollingZ, totalWeight) {
+  var result = { maxMae: 0, maxMaeDollar: 0, avgRecoveryDays: 0, medianRecoveryDays: 0, excursionCount: 0 };
+  var len = dailyValues.length;
+  if (len < 20) return result;
+
+  // Use the longest available window for mean/std
+  var rz = null;
+  var windowKeys = ['90d', '60d', '30d'];
+  for (var w = 0; w < windowKeys.length; w++) {
+    if (rollingZ[windowKeys[w]] && !rollingZ[windowKeys[w]].insufficient) {
+      rz = rollingZ[windowKeys[w]]; break;
+    }
+  }
+  if (!rz) return result;
+
+  var mean = rz.mean;
+  var std = rz.std;
+  if (std < 0.0001) return result;
+
+  // Track the worst deviation from mean across the entire series
+  var worstMae = 0;
+  for (var i = 0; i < len; i++) {
+    var dev = Math.abs(dailyValues[i] - mean);
+    if (dev > worstMae) worstMae = dev;
+  }
+
+  // Find excursion events: stretches where spread goes beyond ±1σ from mean
+  // Track how many trading days each excursion takes to recover (touch the mean ±0.25σ)
+  var recoveryDays = [];
+  var meanTolerance = std * 0.25;
+  var excursionThreshold = std * 1.0;
+  var inExcursion = false;
+  var excursionStart = 0;
+
+  for (var i = 0; i < len; i++) {
+    var dev = Math.abs(dailyValues[i] - mean);
+    if (!inExcursion && dev >= excursionThreshold) {
+      // Entering excursion territory
+      inExcursion = true;
+      excursionStart = i;
+    } else if (inExcursion && dev <= meanTolerance) {
+      // Recovered to mean
+      var days = i - excursionStart;
+      if (days > 0) recoveryDays.push(days);
+      inExcursion = false;
+    }
+  }
+
+  // Sort recovery days for median
+  var sorted = recoveryDays.slice().sort(function(a, b) { return a - b; });
+  var avgRec = 0;
+  if (sorted.length > 0) {
+    var sum = 0;
+    for (var i = 0; i < sorted.length; i++) sum += sorted[i];
+    avgRec = sum / sorted.length;
+  }
+  var medianRec = 0;
+  if (sorted.length > 0) {
+    var mid = Math.floor(sorted.length / 2);
+    medianRec = sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
+  }
+
+  result.maxMae = parseFloat(worstMae.toFixed(4));
+  result.maxMaeDollar = parseFloat((worstMae * totalWeight).toFixed(2));
+  result.avgRecoveryDays = parseFloat(avgRec.toFixed(1));
+  result.medianRecoveryDays = parseFloat(medianRec.toFixed(1));
+  result.excursionCount = recoveryDays.length;
+  // If still in an excursion at end of series, note it (unresolved)
+  result.openExcursion = inExcursion;
+  return result;
+}
+
+/**
+ * Active Pair Correlation.
+ * For each open pair, builds a daily spread series (priceA - priceB) from
+ * TickerHistory, then computes daily changes (first differences). The average
+ * pairwise Pearson correlation across all pairs measures how independently
+ * the pairs are mean-reverting.
+ *
+ * @param {Array} openData - OpenTrades sheet data (row 0 = header)
+ * @param {Object} histMap - {TICKER: [price0..priceN]} oldest-first
+ * @return {Object} {avg, min, max, count, pairs: [{idA, idB, corr}]}
+ */
+function computePairCorrelation_(openData, histMap) {
+  var result = { avg: 0, min: 0, max: 0, count: 0 };
+
+  // Build per-pair daily spread change series
+  var pairSeries = []; // [{id, changes: []}]
+  for (var j = 1; j < openData.length; j++) {
+    var rawId = openData[j][0];
+    if (!rawId) continue;
+    var info = parseTickerInfo(rawId);
+    var hA = histMap[info.tA.toUpperCase()];
+    var hB = histMap[info.tB.toUpperCase()];
+    if (!hA || !hB) continue;
+    var minLen = Math.min(hA.length, hB.length);
+    if (minLen < 10) continue;
+    // Build spread series and then daily changes
+    var spreads = [];
+    for (var d = 0; d < minLen; d++) {
+      spreads.push(hA[hA.length - minLen + d] - hB[hB.length - minLen + d]);
+    }
+    var changes = [];
+    for (var d = 1; d < spreads.length; d++) {
+      changes.push(spreads[d] - spreads[d - 1]);
+    }
+    if (changes.length >= 10) {
+      pairSeries.push({ id: info.id, changes: changes });
+    }
+  }
+
+  if (pairSeries.length < 2) return result;
+
+  // Compute pairwise Pearson correlation on daily changes
+  var correlations = [];
+  for (var i = 0; i < pairSeries.length; i++) {
+    for (var k = i + 1; k < pairSeries.length; k++) {
+      var a = pairSeries[i].changes;
+      var b = pairSeries[k].changes;
+      // Align to the shorter series (both are roughly the same length)
+      var n = Math.min(a.length, b.length);
+      // Use the most recent n observations
+      var aSlice = a.slice(a.length - n);
+      var bSlice = b.slice(b.length - n);
+
+      var sumA = 0, sumB = 0;
+      for (var d = 0; d < n; d++) { sumA += aSlice[d]; sumB += bSlice[d]; }
+      var meanA = sumA / n, meanB = sumB / n;
+
+      var covAB = 0, varA = 0, varB = 0;
+      for (var d = 0; d < n; d++) {
+        var da = aSlice[d] - meanA, db = bSlice[d] - meanB;
+        covAB += da * db;
+        varA += da * da;
+        varB += db * db;
+      }
+      var corr = (varA > 0 && varB > 0) ? covAB / Math.sqrt(varA * varB) : 0;
+      correlations.push(parseFloat(corr.toFixed(3)));
+    }
+  }
+
+  if (correlations.length === 0) return result;
+
+  var sum = 0, minC = correlations[0], maxC = correlations[0];
+  for (var i = 0; i < correlations.length; i++) {
+    sum += correlations[i];
+    if (correlations[i] < minC) minC = correlations[i];
+    if (correlations[i] > maxC) maxC = correlations[i];
+  }
+
+  result.avg = parseFloat((sum / correlations.length).toFixed(3));
+  result.min = minC;
+  result.max = maxC;
+  result.count = correlations.length;
+  result.pairs = pairSeries.length;
+  return result;
 }
 
 /**
@@ -1258,6 +1433,11 @@ function getPortfolioAnalytics(mode, legsJson) {
           }
         }
       }
+
+      // ── Active Pair Correlation ──
+      // Compute avg pairwise correlation of daily spread changes across all open pairs
+      var pairCorrelation = computePairCorrelation_(openData, histMap);
+      metrics.pairCorrelation = pairCorrelation;
 
       delete metrics.dailyValuesFull_; // strip internal array before response
       return { mode: 'live', trades: openData.length - 1, legs: legs.length, metrics: metrics };

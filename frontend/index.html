@@ -887,6 +887,44 @@ h+='<div class="pa-pnl-card"><div class="pa-pnl-label">Net Dividends</div><div c
 h+='<div class="pa-pnl-card"><div class="pa-pnl-label">Total PnL</div><div class="pa-pnl-val" style="color:'+pnlClr+'">'+(m.totalPnL>=0?'+':'-')+'$'+Math.abs(m.totalPnL).toFixed(2)+'</div></div>';
 h+='<div class="pa-pnl-card"><div class="pa-pnl-label">Profit Capture</div><div class="pa-pnl-val" style="color:'+captureClr+'">'+capturePct.toFixed(1)+'%</div></div>';
 h+='</div>';
+// Risk metrics row: MAE + Recovery Days | Pair Correlation
+var mae=m.maeRecovery||{};var pc=m.pairCorrelation||{};
+if(mae.excursionCount>0||pc.count>0){
+h+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:24px">';
+// MAE + Recovery card
+if(mae.excursionCount>0){
+var maeClr=mae.maxMaeDollar>500?'var(--high)':mae.maxMaeDollar>200?'var(--yellow)':'var(--low)';
+var recClr=mae.medianRecoveryDays>20?'var(--high)':mae.medianRecoveryDays>10?'var(--yellow)':'var(--low)';
+h+='<div class="pa-pnl-card" style="text-align:left;padding:18px 22px">';
+h+='<div class="pa-pnl-label" style="margin-bottom:12px">Max Adverse Excursion</div>';
+h+='<div style="display:flex;gap:20px;align-items:baseline;margin-bottom:8px">';
+h+='<div><div style="font-size:9px;font-weight:900;color:var(--subtext);text-transform:uppercase;margin-bottom:4px">Worst Deviation</div><div class="pa-pnl-val" style="color:'+maeClr+';font-size:18px">-$'+Math.abs(mae.maxMaeDollar).toFixed(2)+'</div></div>';
+h+='<div><div style="font-size:9px;font-weight:900;color:var(--subtext);text-transform:uppercase;margin-bottom:4px">Median Recovery</div><div class="pa-pnl-val" style="color:'+recClr+';font-size:18px">'+mae.medianRecoveryDays+'d</div></div>';
+h+='<div><div style="font-size:9px;font-weight:900;color:var(--subtext);text-transform:uppercase;margin-bottom:4px">Avg Recovery</div><div class="pa-pnl-val" style="color:var(--subtext);font-size:14px">'+mae.avgRecoveryDays+'d</div></div>';
+h+='</div>';
+h+='<div style="font-size:9px;color:var(--subtext);font-weight:700">'+mae.excursionCount+' excursion'+(mae.excursionCount!==1?'s':'')+' beyond 1&sigma;'+(mae.openExcursion?' &middot; <span style="color:var(--yellow)">currently in excursion</span>':'')+'</div>';
+h+='</div>';
+} else {
+h+='<div class="pa-pnl-card" style="text-align:center"><div class="pa-pnl-label">Max Adverse Excursion</div><div style="color:var(--subtext);font-size:11px;margin-top:8px">Insufficient history</div></div>';
+}
+// Pair Correlation card
+if(pc.count>0){
+var corrClr=Math.abs(pc.avg)>=0.7?'var(--high)':Math.abs(pc.avg)>=0.3?'var(--yellow)':'var(--low)';
+var corrLabel=Math.abs(pc.avg)>=0.7?'HIGH RISK':Math.abs(pc.avg)>=0.3?'MODERATE':'DIVERSIFIED';
+h+='<div class="pa-pnl-card" style="text-align:left;padding:18px 22px">';
+h+='<div class="pa-pnl-label" style="margin-bottom:12px">Pair Correlation</div>';
+h+='<div style="display:flex;gap:20px;align-items:baseline;margin-bottom:8px">';
+h+='<div><div style="font-size:9px;font-weight:900;color:var(--subtext);text-transform:uppercase;margin-bottom:4px">Average</div><div class="pa-pnl-val" style="color:'+corrClr+';font-size:18px">'+pc.avg.toFixed(2)+'</div></div>';
+h+='<div><div style="font-size:9px;font-weight:900;color:var(--subtext);text-transform:uppercase;margin-bottom:4px">Range</div><div class="pa-pnl-val" style="color:var(--subtext);font-size:14px">'+pc.min.toFixed(2)+' / '+pc.max.toFixed(2)+'</div></div>';
+h+='<div><div style="font-size:9px;font-weight:900;color:var(--subtext);text-transform:uppercase;margin-bottom:4px">Status</div><div style="font-size:12px;font-weight:900;color:'+corrClr+'">'+corrLabel+'</div></div>';
+h+='</div>';
+h+='<div style="font-size:9px;color:var(--subtext);font-weight:700">'+pc.count+' pairwise correlation'+(pc.count!==1?'s':'')+' across '+pc.pairs+' active pairs</div>';
+h+='</div>';
+} else {
+h+='<div class="pa-pnl-card" style="text-align:center"><div class="pa-pnl-label">Pair Correlation</div><div style="color:var(--subtext);font-size:11px;margin-top:8px">Need 2+ pairs for correlation</div></div>';
+}
+h+='</div>';
+}
 }
 // Missing tickers warning (sandbox)
 if(m.missingTickers&&m.missingTickers.length>0){
