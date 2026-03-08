@@ -1302,7 +1302,7 @@ function computeHistoricalProbabilities_(dailyValues, refValue, rollingZ, totalW
   var saInvertedCount = 0;
   for (var si = 0; si < len - 5; si++) {
     if (Math.abs(Math.abs(dailyValues[si]) - saAbsRef) <= saTolerance && (si - saLastDay) >= 5) {
-      var inverted = (refValue >= 0 && dailyValues[si] < -saTolerance) || (refValue < 0 && dailyValues[si] > saTolerance);
+      var inverted = (refValue > 0 && dailyValues[si] < 0) || (refValue < 0 && dailyValues[si] > 0);
       saTriggers.push({ idx: si, inverted: inverted });
       if (inverted) saInvertedCount++;
       saLastDay = si;
@@ -1343,7 +1343,7 @@ function computeHistoricalProbabilities_(dailyValues, refValue, rollingZ, totalW
     var dtmMid = Math.floor(dtmSorted.length / 2);
     spreadAnalysis.avgDaysToMean = parseFloat((dtmSum / dtmSorted.length).toFixed(1));
     spreadAnalysis.medianDaysToMean = dtmSorted.length % 2 === 0 ? (dtmSorted[dtmMid - 1] + dtmSorted[dtmMid]) / 2 : dtmSorted[dtmMid];
-    spreadAnalysis.reversionRate = parseFloat((daysToMean.length / triggers.length * 100).toFixed(1));
+    spreadAnalysis.reversionRate = parseFloat((daysToMean.length / saTriggers.length * 100).toFixed(1));
     spreadAnalysis.reverted = daysToMean.length;
   }
   if (peakDevFromRef.length > 0) {
@@ -1479,7 +1479,7 @@ function computeHistoricalProbabilitiesWide_(dailyValues, refValue, rollingZ, to
   var saInvertedCount = 0;
   for (var si = 0; si < len - 5; si++) {
     if (Math.abs(Math.abs(dailyValues[si]) - saAbsRef) <= saTolerance && (si - saLastDay) >= 3) {
-      var inverted = (refValue >= 0 && dailyValues[si] < -saTolerance) || (refValue < 0 && dailyValues[si] > saTolerance);
+      var inverted = (refValue > 0 && dailyValues[si] < 0) || (refValue < 0 && dailyValues[si] > 0);
       saTriggers.push({ idx: si, inverted: inverted });
       if (inverted) saInvertedCount++;
       saLastDay = si;
@@ -1515,7 +1515,7 @@ function computeHistoricalProbabilitiesWide_(dailyValues, refValue, rollingZ, to
     var dtmMid = Math.floor(dtmSorted.length / 2);
     spreadAnalysis.avgDaysToMean = parseFloat((dtmSum / dtmSorted.length).toFixed(1));
     spreadAnalysis.medianDaysToMean = dtmSorted.length % 2 === 0 ? (dtmSorted[dtmMid - 1] + dtmSorted[dtmMid]) / 2 : dtmSorted[dtmMid];
-    spreadAnalysis.reversionRate = parseFloat((daysToMean.length / triggers.length * 100).toFixed(1));
+    spreadAnalysis.reversionRate = parseFloat((daysToMean.length / saTriggers.length * 100).toFixed(1));
     spreadAnalysis.reverted = daysToMean.length;
   }
   if (peakDevFromRef.length > 0) {
