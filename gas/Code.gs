@@ -959,9 +959,11 @@ function computeBasketMAE_(dailyValues, rollingZ, totalWeight) {
   var excursionDetails = []; // {startDay, duration, peakDev, peakDevDollar, direction, recovered}
   var meanTolerance = std * 0.25;
   var excursionThreshold = std * 1.0;
+  var windowSize = rz === rollingZ['90d'] ? 90 : rz === rollingZ['60d'] ? 60 : 30;
   var inExcursion = false;
   var excursionStart = 0;
   var excursionPeakDev = 0;
+  var excursionPeakDay = 0;
   var excursionDir = '';
 
   for (var i = 0; i < len; i++) {
@@ -971,12 +973,19 @@ function computeBasketMAE_(dailyValues, rollingZ, totalWeight) {
       inExcursion = true;
       excursionStart = i;
       excursionPeakDev = dev;
+      excursionPeakDay = i;
       excursionDir = dir;
     } else if (inExcursion) {
-      if (dev > excursionPeakDev) excursionPeakDev = dev;
+      if (dev > excursionPeakDev) { excursionPeakDev = dev; excursionPeakDay = i; }
       if (dev <= meanTolerance) {
         var days = i - excursionStart;
         if (days > 0) {
+          // Compute shifted mean at recovery point: trailing window absorbs excursion
+          var trailStart = Math.max(0, i - windowSize);
+          var trailSum = 0;
+          for (var t = trailStart; t <= i; t++) trailSum += dailyValues[t];
+          var shiftedMean = trailSum / (i - trailStart + 1);
+          var shiftedDev = Math.abs(dailyValues[excursionPeakDay] - shiftedMean);
           recoveryDays.push(days);
           excursionDetails.push({
             startDay: excursionStart,
@@ -985,7 +994,8 @@ function computeBasketMAE_(dailyValues, rollingZ, totalWeight) {
             peakDev: parseFloat(excursionPeakDev.toFixed(4)),
             peakDevDollar: parseFloat((excursionPeakDev * totalWeight).toFixed(2)),
             direction: excursionDir,
-            recovered: true
+            recovered: true,
+            meanRevProfit: parseFloat((shiftedDev * totalWeight).toFixed(2))
           });
         }
         inExcursion = false;
@@ -997,6 +1007,11 @@ function computeBasketMAE_(dailyValues, rollingZ, totalWeight) {
   // If still in excursion at end
   if (inExcursion) {
     var openDays = len - excursionStart;
+    var trailStart = Math.max(0, len - 1 - windowSize);
+    var trailSum = 0;
+    for (var t = trailStart; t < len; t++) trailSum += dailyValues[t];
+    var shiftedMean = trailSum / (len - trailStart);
+    var shiftedDev = Math.abs(dailyValues[excursionPeakDay] - shiftedMean);
     excursionDetails.push({
       startDay: excursionStart,
       daysAgo: openDays,
@@ -1004,7 +1019,8 @@ function computeBasketMAE_(dailyValues, rollingZ, totalWeight) {
       peakDev: parseFloat(excursionPeakDev.toFixed(4)),
       peakDevDollar: parseFloat((excursionPeakDev * totalWeight).toFixed(2)),
       direction: excursionDir,
-      recovered: false
+      recovered: false,
+      meanRevProfit: parseFloat((shiftedDev * totalWeight).toFixed(2))
     });
   }
 
