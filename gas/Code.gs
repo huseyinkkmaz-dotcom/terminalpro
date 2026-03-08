@@ -1309,6 +1309,7 @@ function computeHistoricalProbabilities_(dailyValues, refValue, rollingZ, totalW
     }
   }
 
+  var saDetails = [];
   for (var t = 0; t < saTriggers.length; t++) {
     var idx = saTriggers[t].idx;
     var remaining = len - idx - 1;
@@ -1332,10 +1333,21 @@ function computeHistoricalProbabilities_(dailyValues, refValue, rollingZ, totalW
     }
     peakDevFromRef.push(peakDev);
     if (revertDay > 0) daysToMean.push(revertDay);
+    // Compute mean reversion profit: how much spread moved toward mean from trigger
+    var endIdx = revertDay > 0 ? idx + revertDay : idx + lookAhead;
+    var mrProfit = trigAboveMean ? dailyValues[idx] - dailyValues[endIdx] : dailyValues[endIdx] - dailyValues[idx];
+    saDetails.push({
+      daysAgo: len - idx,
+      peakDevDollar: parseFloat((peakDev * totalWeight).toFixed(2)),
+      duration: revertDay > 0 ? revertDay : null,
+      reverted: revertDay > 0,
+      inverted: saTriggers[t].inverted,
+      meanRevProfit: parseFloat((mrProfit * totalWeight).toFixed(2))
+    });
   }
 
   // Compute summary stats
-  var spreadAnalysis = { triggers: saTriggers.length, refValue: parseFloat(refValue.toFixed(2)), meanTarget: parseFloat(meanTarget.toFixed(2)), invertedCount: saInvertedCount };
+  var spreadAnalysis = { triggers: saTriggers.length, refValue: parseFloat(refValue.toFixed(2)), meanTarget: parseFloat(meanTarget.toFixed(2)), invertedCount: saInvertedCount, details: saDetails };
   if (daysToMean.length > 0) {
     var dtmSorted = daysToMean.slice().sort(function(a, b) { return a - b; });
     var dtmSum = 0;
@@ -1486,6 +1498,7 @@ function computeHistoricalProbabilitiesWide_(dailyValues, refValue, rollingZ, to
     }
   }
 
+  var saDetails = [];
   for (var t = 0; t < saTriggers.length; t++) {
     var idx = saTriggers[t].idx;
     var remaining = len - idx - 1;
@@ -1505,9 +1518,19 @@ function computeHistoricalProbabilitiesWide_(dailyValues, refValue, rollingZ, to
     }
     peakDevFromRef.push(peakDev);
     if (revertDay > 0) daysToMean.push(revertDay);
+    var endIdx = revertDay > 0 ? idx + revertDay : idx + lookAhead;
+    var mrProfit = trigAboveMean ? dailyValues[idx] - dailyValues[endIdx] : dailyValues[endIdx] - dailyValues[idx];
+    saDetails.push({
+      daysAgo: len - idx,
+      peakDevDollar: parseFloat((peakDev * totalWeight).toFixed(2)),
+      duration: revertDay > 0 ? revertDay : null,
+      reverted: revertDay > 0,
+      inverted: saTriggers[t].inverted,
+      meanRevProfit: parseFloat((mrProfit * totalWeight).toFixed(2))
+    });
   }
 
-  var spreadAnalysis = { triggers: saTriggers.length, refValue: parseFloat(refValue.toFixed(2)), meanTarget: parseFloat(meanTarget.toFixed(2)), invertedCount: saInvertedCount };
+  var spreadAnalysis = { triggers: saTriggers.length, refValue: parseFloat(refValue.toFixed(2)), meanTarget: parseFloat(meanTarget.toFixed(2)), invertedCount: saInvertedCount, details: saDetails };
   if (daysToMean.length > 0) {
     var dtmSorted = daysToMean.slice().sort(function(a, b) { return a - b; });
     var dtmSum = 0;
@@ -1619,7 +1642,8 @@ function getPortfolioAnalytics(mode, legsJson) {
         totalRcvdDiv += parseMoney(openData[j][8]);
       }
 
-      metrics.entrySpread = parseFloat((entrySpreadDollar / entryWeight).toFixed(2));
+      var rawEntrySpread = entrySpreadDollar / entryWeight;
+      metrics.entrySpread = isFinite(rawEntrySpread) ? parseFloat(rawEntrySpread.toFixed(2)) : 0;
       metrics.entryGrossLong = parseFloat(entryGrossLong.toFixed(2));
       metrics.entryGrossShort = parseFloat(entryGrossShort.toFixed(2));
       metrics.entryGrossExposure = parseFloat((entryGrossLong + entryGrossShort).toFixed(2));

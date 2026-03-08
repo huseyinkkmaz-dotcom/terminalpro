@@ -927,7 +927,7 @@ h+='<div id="'+maeDetailId+'" style="display:none;margin-top:12px;border-top:1px
 var excList=mae.excursions||[];
 if(excList.length>0){
 h+='<table style="width:100%;font-size:10px;border-collapse:collapse">';
-h+='<tr style="color:var(--subtext);font-weight:900;text-transform:uppercase"><td style="padding:4px 6px">Days Ago</td><td style="padding:4px 6px">Peak Z</td><td style="padding:4px 6px">Peak Dev</td><td style="padding:4px 6px">Duration</td><td style="padding:4px 6px">Rev. Profit</td><td style="padding:4px 6px">Status</td></tr>';
+h+='<tr style="color:var(--subtext);font-weight:900;text-transform:uppercase"><td style="padding:4px 6px">Days Ago</td><td style="padding:4px 6px">Peak Z</td><td style="padding:4px 6px">Peak Dev</td><td style="padding:4px 6px">Duration</td><td style="padding:4px 6px" title="Profit from spread reverting toward its mean">Reversion $</td><td style="padding:4px 6px">Status</td></tr>';
 for(var ei=0;ei<excList.length;ei++){var ex=excList[ei];
 var exClr=ex.recovered?'var(--low)':'var(--yellow)';
 var pzVal=ex.peakZ||0;var pzClr=healthZColor(pzVal);
@@ -967,6 +967,7 @@ h+='<div class="pa-pnl-label" style="margin-bottom:14px">Spread-Level History</d
 h+='<div style="display:flex;gap:16px;flex-wrap:wrap">';
 // Build a card renderer for spread analysis
 function renderSACard(sa,label,refLabel,refVal){
+if(!isFinite(refVal))refVal=sa.refValue||0;
 var cardH='<div style="flex:1;min-width:200px;background:var(--cardbg);border:1px solid var(--border);border-radius:10px;padding:14px 16px">';
 cardH+='<div style="font-size:10px;font-weight:900;color:var(--subtext);text-transform:uppercase;margin-bottom:10px">'+label+'</div>';
 cardH+='<div style="font-size:10px;color:var(--subtext);margin-bottom:8px">'+refLabel+': <span style="color:var(--text);font-weight:700">'+(refVal>=0?'+':'-')+'$'+Math.abs(refVal).toFixed(2)+'</span> &rarr; Mean: <span style="color:var(--text);font-weight:700">'+(sa.meanTarget>=0?'+':'-')+'$'+Math.abs(sa.meanTarget).toFixed(2)+'</span></div>';
@@ -986,7 +987,29 @@ cardH+='<div><div style="font-size:8px;font-weight:900;color:var(--subtext);text
 cardH+='</div>';
 var saInv=sa.invertedCount||0;
 var saSame=sa.triggers-saInv;
+var saDetailId='saDetail_'+Math.random().toString(36).substr(2,6);
+cardH+='<div style="display:flex;align-items:center;justify-content:space-between;cursor:pointer;user-select:none;margin-top:4px" onclick="var d=document.getElementById(\''+saDetailId+'\');d.style.display=d.style.display===\'none\'?\'block\':\'none\';this.querySelector(\'.pa-detail-arrow\').classList.toggle(\'open\')">';
 cardH+='<div style="font-size:8px;color:var(--subtext)">'+sa.triggers+' historical occurrence'+(sa.triggers!==1?'s':'')+' <span style="color:var(--subtext);opacity:0.7">('+saSame+' same direction'+(saInv>0?', <span style="color:var(--yellow)" title="Role reversal: tickers had swapped long/short positions">'+saInv+' inverted &#x21C4;</span>':'')+')</span></div>';
+cardH+='<div class="pa-detail-arrow" style="font-size:10px;color:var(--subtext);transition:transform .2s">&#9660;</div>';
+cardH+='</div>';
+var saList=sa.details||[];
+if(saList.length>0){
+cardH+='<div id="'+saDetailId+'" style="display:none;margin-top:8px;border-top:1px solid var(--border);padding-top:8px">';
+cardH+='<table style="width:100%;font-size:10px;border-collapse:collapse">';
+cardH+='<tr style="color:var(--subtext);font-weight:900;text-transform:uppercase"><td style="padding:3px 5px">Days Ago</td><td style="padding:3px 5px">Peak Adverse</td><td style="padding:3px 5px">Duration</td><td style="padding:3px 5px">Reversion $</td><td style="padding:3px 5px">Status</td></tr>';
+for(var di=0;di<saList.length;di++){var det=saList[di];
+var detClr=det.reverted?'var(--low)':'var(--yellow)';
+var durText=det.duration?det.duration+'d':'—';
+var mrp=det.meanRevProfit||0;var mrpClr=mrp>0?'var(--low)':'var(--subtext)';
+cardH+='<tr style="border-top:1px solid var(--border)">';
+cardH+='<td style="padding:3px 5px;color:var(--text)">'+det.daysAgo+'d'+(det.inverted?' <span style="color:var(--yellow)" title="Inverted">&#x21C4;</span>':'')+'</td>';
+cardH+='<td style="padding:3px 5px;color:var(--high)">-$'+Math.abs(det.peakDevDollar).toFixed(2)+'</td>';
+cardH+='<td style="padding:3px 5px;color:var(--text)">'+durText+'</td>';
+cardH+='<td style="padding:3px 5px;color:'+mrpClr+'">'+(mrp>=0?'+':'-')+'$'+Math.abs(mrp).toFixed(2)+'</td>';
+cardH+='<td style="padding:3px 5px;color:'+detClr+'">'+(det.reverted?'Reverted':'No revert')+'</td>';
+cardH+='</tr>';}
+cardH+='</table></div>';
+}
 cardH+='</div>';
 return cardH;
 }
