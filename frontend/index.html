@@ -949,6 +949,7 @@ h+='</div>';
 // Shows historical duration & peak deviation when spread was at entry or current level
 // Live: probabilities=current spread ref, entryProbabilities=entry spread ref
 // Sandbox: probabilities=entry spread ref, currentProbabilities=current market spread ref
+var prob=m.probabilities||{};
 var curSA,entrySA;
 if(ad.mode==='sandbox'){
 var sbEntryProbs=prob;
@@ -1030,7 +1031,6 @@ h+='</div>';
 h+='</div>';
 }
 // ── Bad Scenario Card ──
-var prob=m.probabilities||{};
 if(prob.badScenario&&prob.triggers>=2){
 var bs=prob.badScenario;
 h+='<div class="pa-bad-scenario">';
