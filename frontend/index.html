@@ -258,6 +258,7 @@ td:last-child{border-radius:0 10px 10px 0;border-right:1px solid var(--border)}
 .pa-winrate-sub{font-size:10px;font-weight:700;color:var(--subtext);font-family:'JetBrains Mono'}
 .pa-pnl-bar{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:24px}
 .pa-pnl-card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px;text-align:center}
+.pa-detail-arrow{display:inline-block;transition:transform .2s}.pa-detail-arrow.open{transform:rotate(180deg)}
 .pa-pnl-label{font-size:9px;font-weight:900;text-transform:uppercase;letter-spacing:1px;color:var(--subtext);margin-bottom:8px}
 .pa-pnl-val{font-family:'JetBrains Mono';font-weight:900;font-size:20px}
 .pa-empty{text-align:center;padding:80px 20px;color:var(--subtext)}
@@ -887,44 +888,6 @@ h+='<div class="pa-pnl-card"><div class="pa-pnl-label">Net Dividends</div><div c
 h+='<div class="pa-pnl-card"><div class="pa-pnl-label">Total PnL</div><div class="pa-pnl-val" style="color:'+pnlClr+'">'+(m.totalPnL>=0?'+':'-')+'$'+Math.abs(m.totalPnL).toFixed(2)+'</div></div>';
 h+='<div class="pa-pnl-card"><div class="pa-pnl-label">Profit Capture</div><div class="pa-pnl-val" style="color:'+captureClr+'">'+capturePct.toFixed(1)+'%</div></div>';
 h+='</div>';
-// Risk metrics row: MAE + Recovery Days | Pair Correlation
-var mae=m.maeRecovery||{};var pc=m.pairCorrelation||{};
-if(mae.excursionCount>0||pc.count>0){
-h+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:24px">';
-// MAE + Recovery card
-if(mae.excursionCount>0){
-var maeClr=mae.maxMaeDollar>500?'var(--high)':mae.maxMaeDollar>200?'var(--yellow)':'var(--low)';
-var recClr=mae.medianRecoveryDays>20?'var(--high)':mae.medianRecoveryDays>10?'var(--yellow)':'var(--low)';
-h+='<div class="pa-pnl-card" style="text-align:left;padding:18px 22px">';
-h+='<div class="pa-pnl-label" style="margin-bottom:12px">Max Adverse Excursion</div>';
-h+='<div style="display:flex;gap:20px;align-items:baseline;margin-bottom:8px">';
-h+='<div><div style="font-size:9px;font-weight:900;color:var(--subtext);text-transform:uppercase;margin-bottom:4px">Worst Deviation</div><div class="pa-pnl-val" style="color:'+maeClr+';font-size:18px">-$'+Math.abs(mae.maxMaeDollar).toFixed(2)+'</div></div>';
-h+='<div><div style="font-size:9px;font-weight:900;color:var(--subtext);text-transform:uppercase;margin-bottom:4px">Median Recovery</div><div class="pa-pnl-val" style="color:'+recClr+';font-size:18px">'+mae.medianRecoveryDays+'d</div></div>';
-h+='<div><div style="font-size:9px;font-weight:900;color:var(--subtext);text-transform:uppercase;margin-bottom:4px">Avg Recovery</div><div class="pa-pnl-val" style="color:var(--subtext);font-size:14px">'+mae.avgRecoveryDays+'d</div></div>';
-h+='</div>';
-h+='<div style="font-size:9px;color:var(--subtext);font-weight:700">'+mae.excursionCount+' excursion'+(mae.excursionCount!==1?'s':'')+' beyond 1&sigma;'+(mae.openExcursion?' &middot; <span style="color:var(--yellow)">currently in excursion</span>':'')+'</div>';
-h+='</div>';
-} else {
-h+='<div class="pa-pnl-card" style="text-align:center"><div class="pa-pnl-label">Max Adverse Excursion</div><div style="color:var(--subtext);font-size:11px;margin-top:8px">Insufficient history</div></div>';
-}
-// Pair Correlation card
-if(pc.count>0){
-var corrClr=Math.abs(pc.avg)>=0.7?'var(--high)':Math.abs(pc.avg)>=0.3?'var(--yellow)':'var(--low)';
-var corrLabel=Math.abs(pc.avg)>=0.7?'HIGH RISK':Math.abs(pc.avg)>=0.3?'MODERATE':'DIVERSIFIED';
-h+='<div class="pa-pnl-card" style="text-align:left;padding:18px 22px">';
-h+='<div class="pa-pnl-label" style="margin-bottom:12px">Pair Correlation</div>';
-h+='<div style="display:flex;gap:20px;align-items:baseline;margin-bottom:8px">';
-h+='<div><div style="font-size:9px;font-weight:900;color:var(--subtext);text-transform:uppercase;margin-bottom:4px">Average</div><div class="pa-pnl-val" style="color:'+corrClr+';font-size:18px">'+pc.avg.toFixed(2)+'</div></div>';
-h+='<div><div style="font-size:9px;font-weight:900;color:var(--subtext);text-transform:uppercase;margin-bottom:4px">Range</div><div class="pa-pnl-val" style="color:var(--subtext);font-size:14px">'+pc.min.toFixed(2)+' / '+pc.max.toFixed(2)+'</div></div>';
-h+='<div><div style="font-size:9px;font-weight:900;color:var(--subtext);text-transform:uppercase;margin-bottom:4px">Status</div><div style="font-size:12px;font-weight:900;color:'+corrClr+'">'+corrLabel+'</div></div>';
-h+='</div>';
-h+='<div style="font-size:9px;color:var(--subtext);font-weight:700">'+pc.count+' pairwise correlation'+(pc.count!==1?'s':'')+' across '+pc.pairs+' active pairs</div>';
-h+='</div>';
-} else {
-h+='<div class="pa-pnl-card" style="text-align:center"><div class="pa-pnl-label">Pair Correlation</div><div style="color:var(--subtext);font-size:11px;margin-top:8px">Need 2+ pairs for correlation</div></div>';
-}
-h+='</div>';
-}
 }
 // Missing tickers warning (sandbox)
 if(m.missingTickers&&m.missingTickers.length>0){
@@ -938,6 +901,87 @@ h+='<div class="pa-pnl-card"><div class="pa-pnl-label">Entry Gross $</div><div c
 h+='<div class="pa-pnl-card"><div class="pa-pnl-label">Long $</div><div class="pa-pnl-val" style="color:var(--low)">$'+(m.hypotheticalGrossLong||0).toLocaleString()+'</div></div>';
 h+='<div class="pa-pnl-card"><div class="pa-pnl-label">Short $</div><div class="pa-pnl-val" style="color:var(--high)">$'+(m.hypotheticalGrossShort||0).toLocaleString()+'</div></div>';
 h+='</div>';}
+// ── Risk Metrics: MAE + Recovery Days (shared) | Pair Correlation (live only) ──
+var mae=m.maeRecovery||{};var pc=m.pairCorrelation||{};
+var hasMAE=mae.excursionCount>0;var hasCorr=pc.count>0;
+if(hasMAE||hasCorr){
+var riskCols=hasMAE&&hasCorr?'1fr 1fr':hasMAE?'1fr':'1fr';
+h+='<div style="display:grid;grid-template-columns:'+riskCols+';gap:16px;margin-bottom:24px">';
+if(hasMAE){
+var maeClr=mae.maxMaeDollar>500?'var(--high)':mae.maxMaeDollar>200?'var(--yellow)':'var(--low)';
+var recClr=mae.medianRecoveryDays>20?'var(--high)':mae.medianRecoveryDays>10?'var(--yellow)':'var(--low)';
+var maeDetailId='maeDetail_'+Math.random().toString(36).substr(2,6);
+h+='<div class="pa-pnl-card" style="text-align:left;padding:18px 22px">';
+h+='<div class="pa-pnl-label" style="margin-bottom:12px">Max Adverse Excursion</div>';
+h+='<div style="display:flex;gap:20px;align-items:baseline;margin-bottom:8px">';
+h+='<div><div style="font-size:9px;font-weight:900;color:var(--subtext);text-transform:uppercase;margin-bottom:4px">Worst Deviation</div><div class="pa-pnl-val" style="color:'+maeClr+';font-size:18px">-$'+Math.abs(mae.maxMaeDollar).toFixed(2)+'</div></div>';
+h+='<div><div style="font-size:9px;font-weight:900;color:var(--subtext);text-transform:uppercase;margin-bottom:4px">Median Recovery</div><div class="pa-pnl-val" style="color:'+recClr+';font-size:18px">'+mae.medianRecoveryDays+'d</div></div>';
+h+='<div><div style="font-size:9px;font-weight:900;color:var(--subtext);text-transform:uppercase;margin-bottom:4px">Avg Recovery</div><div class="pa-pnl-val" style="color:var(--subtext);font-size:14px">'+mae.avgRecoveryDays+'d</div></div>';
+h+='</div>';
+h+='<div style="display:flex;align-items:center;justify-content:space-between;cursor:pointer;user-select:none" onclick="var d=document.getElementById(\''+maeDetailId+'\');d.style.display=d.style.display===\'none\'?\'block\':\'none\';this.querySelector(\'.pa-detail-arrow\').classList.toggle(\'open\')">';
+h+='<div style="font-size:9px;color:var(--subtext);font-weight:700">'+mae.excursionCount+' excursion'+(mae.excursionCount!==1?'s':'')+' beyond 1&sigma;'+(mae.openExcursion?' &middot; <span style="color:var(--yellow)">currently in excursion</span>':'')+'</div>';
+h+='<div class="pa-detail-arrow" style="font-size:10px;color:var(--subtext);transition:transform .2s">&#9660;</div>';
+h+='</div>';
+// Expandable excursion detail table
+h+='<div id="'+maeDetailId+'" style="display:none;margin-top:12px;border-top:1px solid var(--border);padding-top:10px">';
+var excList=mae.excursions||[];
+if(excList.length>0){
+h+='<table style="width:100%;font-size:10px;border-collapse:collapse">';
+h+='<tr style="color:var(--subtext);font-weight:900;text-transform:uppercase"><td style="padding:4px 6px">Days Ago</td><td style="padding:4px 6px">Direction</td><td style="padding:4px 6px">Peak Dev</td><td style="padding:4px 6px">Duration</td><td style="padding:4px 6px">Status</td></tr>';
+for(var ei=0;ei<excList.length;ei++){var ex=excList[ei];
+var exClr=ex.recovered?'var(--low)':'var(--yellow)';
+var dirIcon=ex.direction==='above'?'&#9650;':'&#9660;';
+var dirClr=ex.direction==='above'?'var(--high)':'var(--low)';
+h+='<tr style="border-top:1px solid var(--border)">';
+h+='<td style="padding:4px 6px;color:var(--text)">'+ex.daysAgo+'d</td>';
+h+='<td style="padding:4px 6px;color:'+dirClr+'">'+dirIcon+' '+ex.direction+'</td>';
+h+='<td style="padding:4px 6px;color:var(--high)">-$'+Math.abs(ex.peakDevDollar).toFixed(2)+'</td>';
+h+='<td style="padding:4px 6px;color:var(--text)">'+ex.duration+'d</td>';
+h+='<td style="padding:4px 6px;color:'+exClr+'">'+(ex.recovered?'Recovered':'Open')+'</td>';
+h+='</tr>';}
+h+='</table>';
+} else { h+='<div style="font-size:10px;color:var(--subtext)">No excursion detail available</div>'; }
+h+='</div>';
+h+='</div>';
+}
+// Pair Correlation card (live only — sandbox has no active pairs to correlate)
+if(hasCorr){
+var corrClr=Math.abs(pc.avg)>=0.7?'var(--high)':Math.abs(pc.avg)>=0.3?'var(--yellow)':'var(--low)';
+var corrLabel=Math.abs(pc.avg)>=0.7?'HIGH RISK':Math.abs(pc.avg)>=0.3?'MODERATE':'DIVERSIFIED';
+var corrDetailId='corrDetail_'+Math.random().toString(36).substr(2,6);
+h+='<div class="pa-pnl-card" style="text-align:left;padding:18px 22px">';
+h+='<div class="pa-pnl-label" style="margin-bottom:12px">Pair Correlation</div>';
+h+='<div style="display:flex;gap:20px;align-items:baseline;margin-bottom:8px">';
+h+='<div><div style="font-size:9px;font-weight:900;color:var(--subtext);text-transform:uppercase;margin-bottom:4px">Average</div><div class="pa-pnl-val" style="color:'+corrClr+';font-size:18px">'+pc.avg.toFixed(2)+'</div></div>';
+h+='<div><div style="font-size:9px;font-weight:900;color:var(--subtext);text-transform:uppercase;margin-bottom:4px">Range</div><div class="pa-pnl-val" style="color:var(--subtext);font-size:14px">'+pc.min.toFixed(2)+' / '+pc.max.toFixed(2)+'</div></div>';
+h+='<div><div style="font-size:9px;font-weight:900;color:var(--subtext);text-transform:uppercase;margin-bottom:4px">Status</div><div style="font-size:12px;font-weight:900;color:'+corrClr+'">'+corrLabel+'</div></div>';
+h+='</div>';
+h+='<div style="display:flex;align-items:center;justify-content:space-between;cursor:pointer;user-select:none" onclick="var d=document.getElementById(\''+corrDetailId+'\');d.style.display=d.style.display===\'none\'?\'block\':\'none\';this.querySelector(\'.pa-detail-arrow\').classList.toggle(\'open\')">';
+h+='<div style="font-size:9px;color:var(--subtext);font-weight:700">'+pc.count+' pairwise correlation'+(pc.count!==1?'s':'')+' across '+pc.pairs+' active pairs</div>';
+h+='<div class="pa-detail-arrow" style="font-size:10px;color:var(--subtext);transition:transform .2s">&#9660;</div>';
+h+='</div>';
+// Expandable correlation detail table
+h+='<div id="'+corrDetailId+'" style="display:none;margin-top:12px;border-top:1px solid var(--border);padding-top:10px">';
+var corrDetails=pc.details||[];
+if(corrDetails.length>0){
+h+='<table style="width:100%;font-size:10px;border-collapse:collapse">';
+h+='<tr style="color:var(--subtext);font-weight:900;text-transform:uppercase"><td style="padding:4px 6px">Pair A</td><td style="padding:4px 6px">Pair B</td><td style="padding:4px 6px">Correlation</td><td style="padding:4px 6px">Risk</td></tr>';
+for(var ci=0;ci<corrDetails.length;ci++){var cd=corrDetails[ci];
+var cdClr=Math.abs(cd.corr)>=0.7?'var(--high)':Math.abs(cd.corr)>=0.3?'var(--yellow)':'var(--low)';
+var cdLabel=Math.abs(cd.corr)>=0.7?'High':Math.abs(cd.corr)>=0.3?'Moderate':'Low';
+h+='<tr style="border-top:1px solid var(--border)">';
+h+='<td style="padding:4px 6px;color:var(--text);font-weight:700">'+cd.pairA+'</td>';
+h+='<td style="padding:4px 6px;color:var(--text);font-weight:700">'+cd.pairB+'</td>';
+h+='<td style="padding:4px 6px;color:'+cdClr+';font-weight:900">'+(cd.corr>=0?'+':'')+cd.corr.toFixed(3)+'</td>';
+h+='<td style="padding:4px 6px;color:'+cdClr+';font-weight:700">'+cdLabel+'</td>';
+h+='</tr>';}
+h+='</table>';
+} else { h+='<div style="font-size:10px;color:var(--subtext)">No correlation detail available</div>'; }
+h+='</div>';
+h+='</div>';
+}
+h+='</div>';
+}
 // ── Bad Scenario Card ──
 var prob=m.probabilities||{};
 if(prob.badScenario&&prob.triggers>=2){
@@ -955,7 +999,7 @@ h+='</div></div>';
 var rz=m.rollingZ||{};
 var windows=[{k:'30d',l:'30-Day'},{k:'60d',l:'60-Day'},{k:'90d',l:'90-Day'}];
 var curSpread=m.netSpread||0;
-var entrySpread=(ad.mode==='sandbox'&&m.hypotheticalSpread!==undefined)?m.hypotheticalSpread:null;
+var entrySpread=(ad.mode==='sandbox'&&m.hypotheticalSpread!==undefined)?m.hypotheticalSpread:(ad.mode==='live'&&m.entrySpread!==undefined)?m.entrySpread:null;
 var winRates=prob.winRates||{};
 h+='<div class="pa-windows">';
 for(var i=0;i<windows.length;i++){

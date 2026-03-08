@@ -956,23 +956,56 @@ function computeBasketMAE_(dailyValues, rollingZ, totalWeight) {
   // Find excursion events: stretches where spread goes beyond ±1σ from mean
   // Track how many trading days each excursion takes to recover (touch the mean ±0.25σ)
   var recoveryDays = [];
+  var excursionDetails = []; // {startDay, duration, peakDev, peakDevDollar, direction, recovered}
   var meanTolerance = std * 0.25;
   var excursionThreshold = std * 1.0;
   var inExcursion = false;
   var excursionStart = 0;
+  var excursionPeakDev = 0;
+  var excursionDir = '';
 
   for (var i = 0; i < len; i++) {
     var dev = Math.abs(dailyValues[i] - mean);
+    var dir = dailyValues[i] >= mean ? 'above' : 'below';
     if (!inExcursion && dev >= excursionThreshold) {
-      // Entering excursion territory
       inExcursion = true;
       excursionStart = i;
-    } else if (inExcursion && dev <= meanTolerance) {
-      // Recovered to mean
-      var days = i - excursionStart;
-      if (days > 0) recoveryDays.push(days);
-      inExcursion = false;
+      excursionPeakDev = dev;
+      excursionDir = dir;
+    } else if (inExcursion) {
+      if (dev > excursionPeakDev) excursionPeakDev = dev;
+      if (dev <= meanTolerance) {
+        var days = i - excursionStart;
+        if (days > 0) {
+          recoveryDays.push(days);
+          excursionDetails.push({
+            startDay: excursionStart,
+            daysAgo: len - excursionStart,
+            duration: days,
+            peakDev: parseFloat(excursionPeakDev.toFixed(4)),
+            peakDevDollar: parseFloat((excursionPeakDev * totalWeight).toFixed(2)),
+            direction: excursionDir,
+            recovered: true
+          });
+        }
+        inExcursion = false;
+        excursionPeakDev = 0;
+      }
     }
+  }
+
+  // If still in excursion at end
+  if (inExcursion) {
+    var openDays = len - excursionStart;
+    excursionDetails.push({
+      startDay: excursionStart,
+      daysAgo: openDays,
+      duration: openDays,
+      peakDev: parseFloat(excursionPeakDev.toFixed(4)),
+      peakDevDollar: parseFloat((excursionPeakDev * totalWeight).toFixed(2)),
+      direction: excursionDir,
+      recovered: false
+    });
   }
 
   // Sort recovery days for median
@@ -993,9 +1026,10 @@ function computeBasketMAE_(dailyValues, rollingZ, totalWeight) {
   result.maxMaeDollar = parseFloat((worstMae * totalWeight).toFixed(2));
   result.avgRecoveryDays = parseFloat(avgRec.toFixed(1));
   result.medianRecoveryDays = parseFloat(medianRec.toFixed(1));
-  result.excursionCount = recoveryDays.length;
-  // If still in an excursion at end of series, note it (unresolved)
+  result.excursionCount = excursionDetails.length;
   result.openExcursion = inExcursion;
+  // Include up to 10 most recent excursions for detail dropdown
+  result.excursions = excursionDetails.slice(-10).reverse();
   return result;
 }
 
@@ -1070,6 +1104,22 @@ function computePairCorrelation_(openData, histMap) {
 
   if (correlations.length === 0) return result;
 
+  // Build detail list with pair IDs
+  var details = [];
+  var idx = 0;
+  for (var i = 0; i < pairSeries.length; i++) {
+    for (var k = i + 1; k < pairSeries.length; k++) {
+      details.push({
+        pairA: pairSeries[i].id,
+        pairB: pairSeries[k].id,
+        corr: correlations[idx]
+      });
+      idx++;
+    }
+  }
+  // Sort by absolute correlation descending (most correlated first)
+  details.sort(function(a, b) { return Math.abs(b.corr) - Math.abs(a.corr); });
+
   var sum = 0, minC = correlations[0], maxC = correlations[0];
   for (var i = 0; i < correlations.length; i++) {
     sum += correlations[i];
@@ -1082,6 +1132,7 @@ function computePairCorrelation_(openData, histMap) {
   result.max = maxC;
   result.count = correlations.length;
   result.pairs = pairSeries.length;
+  result.details = details.slice(0, 15); // top 15 by |corr|
   return result;
 }
 
