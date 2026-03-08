@@ -232,12 +232,15 @@ td:last-child{border-radius:0 10px 10px 0;border-right:1px solid var(--border)}
 .pa-metric-val.big{font-size:22px}
 .pa-range-wrap{padding:10px 0 4px;margin-top:4px}
 .pa-range-labels{display:flex;justify-content:space-between;font-size:9px;font-weight:700;color:var(--subtext);font-family:'JetBrains Mono';margin-bottom:6px}
-.pa-range-track{position:relative;height:18px;border-radius:9px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.06);overflow:visible}
+.pa-range-track{position:relative;height:18px;border-radius:9px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.06);overflow:visible;margin-bottom:18px}
 .pa-range-band{position:absolute;top:1px;bottom:1px;border-radius:8px;background:rgba(99,102,241,.12);border:1px solid rgba(99,102,241,.2)}
 .pa-range-mean{position:absolute;top:-2px;bottom:-2px;width:2px;border-radius:1px;background:var(--subtext);transform:translateX(-1px)}
 .pa-range-marker{position:absolute;top:50%;width:10px;height:10px;border-radius:50%;transform:translate(-50%,-50%);border:2px solid;z-index:2}
 .pa-range-marker.current{background:var(--accent);border-color:var(--accent);box-shadow:0 0 6px rgba(99,102,241,.5)}
 .pa-range-marker.entry{background:transparent;border-color:var(--yellow);box-shadow:0 0 6px rgba(245,158,11,.3)}
+.pa-range-val-label{position:absolute;top:calc(50% + 12px);transform:translateX(-50%);font-family:'JetBrains Mono',monospace;font-size:9px;font-weight:900;white-space:nowrap;z-index:3}
+.pa-range-val-label.current{color:var(--accent)}
+.pa-range-val-label.entry{color:var(--yellow)}
 .pa-range-legend{display:flex;gap:12px;margin-top:6px;font-size:9px;font-weight:700;color:var(--subtext)}
 .pa-range-legend-dot{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:3px;vertical-align:middle}
 .pa-sparkline-wrap{margin-top:14px;height:50px;position:relative}
@@ -632,7 +635,7 @@ async function analyzeAlert(btn, tA, tB, pA, pB, z, rowId) {
       }
       if (rw.expectedProfit !== undefined && !rw.insufficient) {
         var epClr = rw.expectedProfit >= 0 ? 'var(--low)' : 'var(--high)';
-        h += '<div class="ar-metric"><span class="ar-metric-label">Exp. Profit / Share</span><span class="ar-metric-val" style="color:' + epClr + '">' + (rw.expectedProfit >= 0 ? '+' : '') + '$' + Math.abs(rw.expectedProfit).toFixed(4) + '</span></div>';
+        h += '<div class="ar-metric"><span class="ar-metric-label">Exp. Profit / Share</span><span class="ar-metric-val" style="color:' + epClr + '">' + (rw.expectedProfit >= 0 ? '+' : '-') + '$' + Math.abs(rw.expectedProfit).toFixed(4) + '</span></div>';
       }
       if (rw.z !== undefined && !rw.insufficient) {
         var zClr = Math.abs(rw.z) >= 1.8 ? 'var(--high)' : Math.abs(rw.z) >= 1 ? 'var(--yellow)' : 'var(--low)';
@@ -872,12 +875,12 @@ h+='</div>';
 // PnL bar (live mode only)
 if(ad.mode==='live'&&m.entrySpread!==undefined){
 var cgClr=m.capitalGains>=0?'var(--low)':'var(--high)';var ndClr=m.netDividends>=0?'var(--low)':'var(--high)';var pnlClr=m.totalPnL>=0?'var(--low)':'var(--high)';
-var tradeCount=ad.trades||1;var avgPnl=m.totalPnL/tradeCount;var avgPnlClr=avgPnl>=0?'var(--low)':'var(--high)';
+var grossExp=m.grossExposure||0;var rocPct=grossExp>0?(m.totalPnL/grossExp*100):0;var rocClr=rocPct>=0?'var(--low)':'var(--high)';
 h+='<div class="pa-pnl-bar">';
-h+='<div class="pa-pnl-card"><div class="pa-pnl-label">Capital Gains</div><div class="pa-pnl-val" style="color:'+cgClr+'">'+(m.capitalGains>=0?'+':'')+'$'+Math.abs(m.capitalGains).toFixed(2)+'</div></div>';
-h+='<div class="pa-pnl-card"><div class="pa-pnl-label">Net Dividends</div><div class="pa-pnl-val" style="color:'+ndClr+'">'+(m.netDividends>=0?'+':'')+'$'+Math.abs(m.netDividends).toFixed(2)+'</div></div>';
-h+='<div class="pa-pnl-card"><div class="pa-pnl-label">Total PnL</div><div class="pa-pnl-val" style="color:'+pnlClr+'">'+(m.totalPnL>=0?'+':'')+'$'+Math.abs(m.totalPnL).toFixed(2)+'</div></div>';
-h+='<div class="pa-pnl-card"><div class="pa-pnl-label">Avg PnL / Trade</div><div class="pa-pnl-val" style="color:'+avgPnlClr+'">'+(avgPnl>=0?'+':'')+'$'+Math.abs(avgPnl).toFixed(2)+'</div></div>';
+h+='<div class="pa-pnl-card"><div class="pa-pnl-label">Capital Gains</div><div class="pa-pnl-val" style="color:'+cgClr+'">'+(m.capitalGains>=0?'+':'-')+'$'+Math.abs(m.capitalGains).toFixed(2)+'</div></div>';
+h+='<div class="pa-pnl-card"><div class="pa-pnl-label">Net Dividends</div><div class="pa-pnl-val" style="color:'+ndClr+'">'+(m.netDividends>=0?'+':'-')+'$'+Math.abs(m.netDividends).toFixed(2)+'</div></div>';
+h+='<div class="pa-pnl-card"><div class="pa-pnl-label">Total PnL</div><div class="pa-pnl-val" style="color:'+pnlClr+'">'+(m.totalPnL>=0?'+':'-')+'$'+Math.abs(m.totalPnL).toFixed(2)+'</div></div>';
+h+='<div class="pa-pnl-card"><div class="pa-pnl-label">Return on Capital</div><div class="pa-pnl-val" style="color:'+rocClr+'">'+(rocPct>=0?'+':'-')+Math.abs(rocPct).toFixed(2)+'%</div></div>';
 h+='</div>';
 }
 // Missing tickers warning (sandbox)
@@ -887,7 +890,7 @@ h+='<div style="background:rgba(245,158,11,.08);border:1px solid var(--yellow);b
 if(ad.mode==='sandbox'&&m.hypotheticalSpread!==undefined){
 var hSpreadDelta=(m.netSpread||0)-(m.hypotheticalSpread||0);var hDClr=hSpreadDelta>=0?'var(--low)':'var(--high)';
 h+='<div class="pa-pnl-bar">';
-h+='<div class="pa-pnl-card"><div class="pa-pnl-label">Spread Change</div><div class="pa-pnl-val" style="color:'+hDClr+'">'+(hSpreadDelta>=0?'+':'')+'$'+Math.abs(hSpreadDelta).toFixed(2)+'</div></div>';
+h+='<div class="pa-pnl-card"><div class="pa-pnl-label">Spread Change</div><div class="pa-pnl-val" style="color:'+hDClr+'">'+(hSpreadDelta>=0?'+':'-')+'$'+Math.abs(hSpreadDelta).toFixed(2)+'</div></div>';
 h+='<div class="pa-pnl-card"><div class="pa-pnl-label">Entry Gross $</div><div class="pa-pnl-val" style="color:var(--text)">$'+(m.hypotheticalGrossExposure||0).toLocaleString()+'</div></div>';
 h+='<div class="pa-pnl-card"><div class="pa-pnl-label">Long $</div><div class="pa-pnl-val" style="color:var(--low)">$'+(m.hypotheticalGrossLong||0).toLocaleString()+'</div></div>';
 h+='<div class="pa-pnl-card"><div class="pa-pnl-label">Short $</div><div class="pa-pnl-val" style="color:var(--high)">$'+(m.hypotheticalGrossShort||0).toLocaleString()+'</div></div>';
@@ -930,7 +933,7 @@ var wrClr=wr.rate>=60?'var(--low)':wr.rate>=40?'var(--yellow)':'var(--high)';
 var wrBg=wr.rate>=60?'rgba(16,185,129,.08)':wr.rate>=40?'rgba(245,158,11,.08)':'rgba(239,68,68,.08)';
 h+='<div class="pa-metric-row"><span class="pa-metric-label">Mean Reversion Prob.</span><span class="pa-winrate" style="color:'+wrClr+';background:'+wrBg+'">'+wr.rate+'% <span class="pa-winrate-sub">('+wr.wins+'/'+wr.eligible+')</span></span></div>';
 }
-h+='<div class="pa-metric-row"><span class="pa-metric-label">Exp. Profit / Share</span><span class="pa-metric-val" style="color:'+epClr+';font-size:16px;font-weight:900">'+(ep>=0?'+':'')+'$'+Math.abs(ep).toFixed(4)+'</span></div>';
+h+='<div class="pa-metric-row"><span class="pa-metric-label">Exp. Profit / Share</span><span class="pa-metric-val" style="color:'+epClr+';font-size:16px;font-weight:900">'+(ep>=0?'+':'-')+'$'+Math.abs(ep).toFixed(2)+'</span></div>';
 // Visual range bar: mean ± 2σ range with current spread + entry markers
 var rMean=w.mean,rStd=w.std;
 var lo=rMean-2.5*rStd,hi=rMean+2.5*rStd;
@@ -944,8 +947,10 @@ h+='<div class="pa-range-track">';
 h+='<div class="pa-range-band" style="left:'+band1L+'%;right:'+band1R+'%"></div>';
 h+='<div class="pa-range-mean" style="left:'+meanPct+'%"></div>';
 h+='<div class="pa-range-marker current" style="left:'+curPct+'%" title="Current: $'+curSpread.toFixed(2)+'"></div>';
+h+='<div class="pa-range-val-label current" style="left:'+curPct+'%">'+(curSpread>=0?'+':'-')+'$'+Math.abs(curSpread).toFixed(2)+'</div>';
 if(entrySpread!==null){var ePct=Math.max(0,Math.min(100,(entrySpread-lo)/rangeW*100));
-h+='<div class="pa-range-marker entry" style="left:'+ePct+'%" title="Entry: $'+entrySpread.toFixed(2)+'"></div>';}
+h+='<div class="pa-range-marker entry" style="left:'+ePct+'%" title="Entry: $'+entrySpread.toFixed(2)+'"></div>';
+h+='<div class="pa-range-val-label entry" style="left:'+ePct+'%">'+(entrySpread>=0?'+':'-')+'$'+Math.abs(entrySpread).toFixed(2)+'</div>';}
 h+='</div>';
 h+='<div class="pa-range-legend"><span><span class="pa-range-legend-dot" style="background:var(--subtext)"></span>Mean</span><span><span class="pa-range-legend-dot" style="background:rgba(99,102,241,.3);border:1px solid rgba(99,102,241,.5)"></span>&plusmn;1&sigma;</span><span><span class="pa-range-legend-dot" style="background:var(--accent)"></span>Current</span>';
 if(entrySpread!==null)h+='<span><span class="pa-range-legend-dot" style="background:transparent;border:2px solid var(--yellow)"></span>Entry</span>';
