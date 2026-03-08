@@ -1286,33 +1286,46 @@ function computeHistoricalProbabilities_(dailyValues, refValue, rollingZ, totalW
   }
 
   // ── FEATURE 3: Spread-Level Analysis ──
-  // For each trigger point (where spread ≈ refValue), track:
-  //   - Days until spread touches the 90d mean (duration to revert)
-  //   - Peak deviation from the trigger level before reverting
-  // This tells us: "historically when spread was at THIS level, how long did it take and how far did it go?"
+  // Finds historical days where spread MAGNITUDE ≈ current (10% tolerance), regardless of sign.
+  // This captures both same-direction triggers AND inverted (role-reversal) triggers where
+  // tickers swapped long/short positions. Direction is determined per-trigger based on actual value.
   var daysToMean = [];
   var peakDevFromRef = [];
   var meanTarget = mean90;
   var meanTolRef = Math.abs(refValue - meanTarget) * 0.15;
   if (meanTolRef < 0.01) meanTolRef = 0.01;
 
-  for (var t = 0; t < triggers.length; t++) {
-    var idx = triggers[t];
+  var saAbsRef = Math.abs(refValue);
+  var saTolerance = fullRange * 0.10; // 10% of range for spread-level matching
+  var saTriggers = [];
+  var saLastDay = -10;
+  var saInvertedCount = 0;
+  for (var si = 0; si < len - 5; si++) {
+    if (Math.abs(Math.abs(dailyValues[si]) - saAbsRef) <= saTolerance && (si - saLastDay) >= 5) {
+      var inverted = (refValue >= 0 && dailyValues[si] < -saTolerance) || (refValue < 0 && dailyValues[si] > saTolerance);
+      saTriggers.push({ idx: si, inverted: inverted });
+      if (inverted) saInvertedCount++;
+      saLastDay = si;
+    }
+  }
+
+  for (var t = 0; t < saTriggers.length; t++) {
+    var idx = saTriggers[t].idx;
     var remaining = len - idx - 1;
     if (remaining < 5) continue;
     var lookAhead = Math.min(90, remaining);
     var peakDev = 0;
     var revertDay = -1;
+    // Determine adverse direction from this trigger's actual value vs mean
+    var trigAboveMean = dailyValues[idx] >= meanTarget;
     for (var f = 1; f <= lookAhead; f++) {
-      // Track peak deviation from trigger level (adverse direction)
       var devFromTrigger;
-      if (isAboveMean) {
+      if (trigAboveMean) {
         devFromTrigger = dailyValues[idx + f] - dailyValues[idx]; // further above = adverse
       } else {
         devFromTrigger = dailyValues[idx] - dailyValues[idx + f]; // further below = adverse
       }
       if (devFromTrigger > peakDev) peakDev = devFromTrigger;
-      // Check if touched mean
       if (revertDay < 0 && Math.abs(dailyValues[idx + f] - meanTarget) <= meanTolRef) {
         revertDay = f;
       }
@@ -1322,7 +1335,7 @@ function computeHistoricalProbabilities_(dailyValues, refValue, rollingZ, totalW
   }
 
   // Compute summary stats
-  var spreadAnalysis = { triggers: triggers.length, refValue: parseFloat(refValue.toFixed(2)), meanTarget: parseFloat(meanTarget.toFixed(2)) };
+  var spreadAnalysis = { triggers: saTriggers.length, refValue: parseFloat(refValue.toFixed(2)), meanTarget: parseFloat(meanTarget.toFixed(2)), invertedCount: saInvertedCount };
   if (daysToMean.length > 0) {
     var dtmSorted = daysToMean.slice().sort(function(a, b) { return a - b; });
     var dtmSum = 0;
@@ -1452,22 +1465,38 @@ function computeHistoricalProbabilitiesWide_(dailyValues, refValue, rollingZ, to
   }
 
   // ── Spread-Level Analysis (wide variant) ──
+  // Matches by absolute spread magnitude (10% tolerance), captures role-reversal triggers
   var daysToMean = [];
   var peakDevFromRef = [];
   var meanTarget = mean90;
   var meanTolRef = Math.abs(refValue - meanTarget) * 0.15;
   if (meanTolRef < 0.01) meanTolRef = 0.01;
 
-  for (var t = 0; t < triggers.length; t++) {
-    var idx = triggers[t];
+  var saAbsRef = Math.abs(refValue);
+  var saTolerance = fullRange * 0.10;
+  var saTriggers = [];
+  var saLastDay = -5;
+  var saInvertedCount = 0;
+  for (var si = 0; si < len - 5; si++) {
+    if (Math.abs(Math.abs(dailyValues[si]) - saAbsRef) <= saTolerance && (si - saLastDay) >= 3) {
+      var inverted = (refValue >= 0 && dailyValues[si] < -saTolerance) || (refValue < 0 && dailyValues[si] > saTolerance);
+      saTriggers.push({ idx: si, inverted: inverted });
+      if (inverted) saInvertedCount++;
+      saLastDay = si;
+    }
+  }
+
+  for (var t = 0; t < saTriggers.length; t++) {
+    var idx = saTriggers[t].idx;
     var remaining = len - idx - 1;
     if (remaining < 5) continue;
     var lookAhead = Math.min(90, remaining);
     var peakDev = 0;
     var revertDay = -1;
+    var trigAboveMean = dailyValues[idx] >= meanTarget;
     for (var f = 1; f <= lookAhead; f++) {
       var devFromTrigger;
-      if (isAboveMean) { devFromTrigger = dailyValues[idx + f] - dailyValues[idx]; }
+      if (trigAboveMean) { devFromTrigger = dailyValues[idx + f] - dailyValues[idx]; }
       else { devFromTrigger = dailyValues[idx] - dailyValues[idx + f]; }
       if (devFromTrigger > peakDev) peakDev = devFromTrigger;
       if (revertDay < 0 && Math.abs(dailyValues[idx + f] - meanTarget) <= meanTolRef) {
@@ -1478,7 +1507,7 @@ function computeHistoricalProbabilitiesWide_(dailyValues, refValue, rollingZ, to
     if (revertDay > 0) daysToMean.push(revertDay);
   }
 
-  var spreadAnalysis = { triggers: triggers.length, refValue: parseFloat(refValue.toFixed(2)), meanTarget: parseFloat(meanTarget.toFixed(2)) };
+  var spreadAnalysis = { triggers: saTriggers.length, refValue: parseFloat(refValue.toFixed(2)), meanTarget: parseFloat(meanTarget.toFixed(2)), invertedCount: saInvertedCount };
   if (daysToMean.length > 0) {
     var dtmSorted = daysToMean.slice().sort(function(a, b) { return a - b; });
     var dtmSum = 0;

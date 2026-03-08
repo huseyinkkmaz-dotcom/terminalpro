@@ -984,7 +984,9 @@ cardH+='<div><div style="font-size:8px;font-weight:900;color:var(--subtext);text
 cardH+='<div><div style="font-size:8px;font-weight:900;color:var(--subtext);text-transform:uppercase;margin-bottom:3px">P75 Peak Dev</div><div style="font-size:14px;font-weight:700;color:var(--high)">-$'+Math.abs(sa.p75PeakDevDollar).toFixed(2)+'</div></div>';
 }
 cardH+='</div>';
-cardH+='<div style="font-size:8px;color:var(--subtext)">'+sa.triggers+' historical occurrence'+(sa.triggers!==1?'s':'')+'</div>';
+var saInv=sa.invertedCount||0;
+var saSame=sa.triggers-saInv;
+cardH+='<div style="font-size:8px;color:var(--subtext)">'+sa.triggers+' historical occurrence'+(sa.triggers!==1?'s':'')+' <span style="color:var(--subtext);opacity:0.7">('+saSame+' same direction'+(saInv>0?', <span style="color:var(--yellow)" title="Role reversal: tickers had swapped long/short positions">'+saInv+' inverted &#x21C4;</span>':'')+')</span></div>';
 cardH+='</div>';
 return cardH;
 }
