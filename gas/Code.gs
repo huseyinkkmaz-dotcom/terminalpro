@@ -1696,6 +1696,22 @@ function getPortfolioAnalytics(mode, legsJson) {
             metrics.probabilities = wideProb;
           }
         }
+
+        // ── Current (market) Spread Analysis for sandbox ──
+        // probabilities uses entry spread as reference; also run for current market spread
+        var mktRef = metrics.dailyValuesFull_[metrics.dailyValuesFull_.length - 1];
+        var mktProb = computeHistoricalProbabilities_(
+          metrics.dailyValuesFull_, mktRef, rz, metrics.totalWeight
+        );
+        if (mktProb.triggers < 3) {
+          var mktWideProb = computeHistoricalProbabilitiesWide_(
+            metrics.dailyValuesFull_, mktRef, rz, metrics.totalWeight
+          );
+          if (mktWideProb.triggers > mktProb.triggers) {
+            mktProb = mktWideProb;
+          }
+        }
+        metrics.currentProbabilities = mktProb;
       }
 
       // Flag which tickers are missing history

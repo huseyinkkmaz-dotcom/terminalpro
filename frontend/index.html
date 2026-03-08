@@ -947,9 +947,19 @@ h+='</div>';
 }
 // ── Spread-Level Analysis Cards ──
 // Shows historical duration & peak deviation when spread was at entry or current level
-var curSA=(prob.spreadAnalysis&&prob.spreadAnalysis.triggers>=2)?prob.spreadAnalysis:null;
+// Live: probabilities=current spread ref, entryProbabilities=entry spread ref
+// Sandbox: probabilities=entry spread ref, currentProbabilities=current market spread ref
+var curSA,entrySA;
+if(ad.mode==='sandbox'){
+var sbEntryProbs=prob;
+var sbCurProbs=m.currentProbabilities||{};
+entrySA=(sbEntryProbs.spreadAnalysis&&sbEntryProbs.spreadAnalysis.triggers>=2)?sbEntryProbs.spreadAnalysis:null;
+curSA=(sbCurProbs.spreadAnalysis&&sbCurProbs.spreadAnalysis.triggers>=2)?sbCurProbs.spreadAnalysis:null;
+}else{
+curSA=(prob.spreadAnalysis&&prob.spreadAnalysis.triggers>=2)?prob.spreadAnalysis:null;
 var entryProbs=m.entryProbabilities||{};
-var entrySA=(entryProbs.spreadAnalysis&&entryProbs.spreadAnalysis.triggers>=2)?entryProbs.spreadAnalysis:null;
+entrySA=(entryProbs.spreadAnalysis&&entryProbs.spreadAnalysis.triggers>=2)?entryProbs.spreadAnalysis:null;
+}
 if(curSA||entrySA){
 h+='<div class="pa-pnl-card" style="text-align:left;padding:18px 22px">';
 h+='<div class="pa-pnl-label" style="margin-bottom:14px">Spread-Level History</div>';
