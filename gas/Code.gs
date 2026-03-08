@@ -953,12 +953,12 @@ function computeBasketMAE_(dailyValues, rollingZ, totalWeight) {
     if (dev > worstMae) worstMae = dev;
   }
 
-  // Find excursion events: stretches where spread goes beyond ±1σ from mean
+  // Find excursion events: stretches where spread goes beyond ±1.5σ from mean
   // Track how many trading days each excursion takes to recover (touch the mean ±0.25σ)
   var recoveryDays = [];
-  var excursionDetails = []; // {startDay, duration, peakDev, peakDevDollar, direction, recovered}
+  var excursionDetails = []; // {startDay, duration, peakDev, peakDevDollar, peakZ, recovered}
   var meanTolerance = std * 0.25;
-  var excursionThreshold = std * 1.0;
+  var excursionThreshold = std * 1.5;
   var windowSize = rz === rollingZ['90d'] ? 90 : rz === rollingZ['60d'] ? 60 : 30;
   var inExcursion = false;
   var excursionStart = 0;
@@ -993,7 +993,7 @@ function computeBasketMAE_(dailyValues, rollingZ, totalWeight) {
             duration: days,
             peakDev: parseFloat(excursionPeakDev.toFixed(4)),
             peakDevDollar: parseFloat((excursionPeakDev * totalWeight).toFixed(2)),
-            direction: excursionDir,
+            peakZ: parseFloat((excursionPeakDev / std).toFixed(2)),
             recovered: true,
             meanRevProfit: parseFloat((shiftedDev * totalWeight).toFixed(2))
           });
@@ -1018,7 +1018,7 @@ function computeBasketMAE_(dailyValues, rollingZ, totalWeight) {
       duration: openDays,
       peakDev: parseFloat(excursionPeakDev.toFixed(4)),
       peakDevDollar: parseFloat((excursionPeakDev * totalWeight).toFixed(2)),
-      direction: excursionDir,
+      peakZ: parseFloat((excursionPeakDev / std).toFixed(2)),
       recovered: false,
       meanRevProfit: parseFloat((shiftedDev * totalWeight).toFixed(2))
     });
@@ -1285,6 +1285,66 @@ function computeHistoricalProbabilities_(dailyValues, refValue, rollingZ, totalW
     };
   }
 
+  // ── FEATURE 3: Spread-Level Analysis ──
+  // For each trigger point (where spread ≈ refValue), track:
+  //   - Days until spread touches the 90d mean (duration to revert)
+  //   - Peak deviation from the trigger level before reverting
+  // This tells us: "historically when spread was at THIS level, how long did it take and how far did it go?"
+  var daysToMean = [];
+  var peakDevFromRef = [];
+  var meanTarget = mean90;
+  var meanTolRef = Math.abs(refValue - meanTarget) * 0.15;
+  if (meanTolRef < 0.01) meanTolRef = 0.01;
+
+  for (var t = 0; t < triggers.length; t++) {
+    var idx = triggers[t];
+    var remaining = len - idx - 1;
+    if (remaining < 5) continue;
+    var lookAhead = Math.min(90, remaining);
+    var peakDev = 0;
+    var revertDay = -1;
+    for (var f = 1; f <= lookAhead; f++) {
+      // Track peak deviation from trigger level (adverse direction)
+      var devFromTrigger;
+      if (isAboveMean) {
+        devFromTrigger = dailyValues[idx + f] - dailyValues[idx]; // further above = adverse
+      } else {
+        devFromTrigger = dailyValues[idx] - dailyValues[idx + f]; // further below = adverse
+      }
+      if (devFromTrigger > peakDev) peakDev = devFromTrigger;
+      // Check if touched mean
+      if (revertDay < 0 && Math.abs(dailyValues[idx + f] - meanTarget) <= meanTolRef) {
+        revertDay = f;
+      }
+    }
+    peakDevFromRef.push(peakDev);
+    if (revertDay > 0) daysToMean.push(revertDay);
+  }
+
+  // Compute summary stats
+  var spreadAnalysis = { triggers: triggers.length, refValue: parseFloat(refValue.toFixed(2)), meanTarget: parseFloat(meanTarget.toFixed(2)) };
+  if (daysToMean.length > 0) {
+    var dtmSorted = daysToMean.slice().sort(function(a, b) { return a - b; });
+    var dtmSum = 0;
+    for (var i = 0; i < dtmSorted.length; i++) dtmSum += dtmSorted[i];
+    var dtmMid = Math.floor(dtmSorted.length / 2);
+    spreadAnalysis.avgDaysToMean = parseFloat((dtmSum / dtmSorted.length).toFixed(1));
+    spreadAnalysis.medianDaysToMean = dtmSorted.length % 2 === 0 ? (dtmSorted[dtmMid - 1] + dtmSorted[dtmMid]) / 2 : dtmSorted[dtmMid];
+    spreadAnalysis.reversionRate = parseFloat((daysToMean.length / triggers.length * 100).toFixed(1));
+    spreadAnalysis.reverted = daysToMean.length;
+  }
+  if (peakDevFromRef.length > 0) {
+    var pdSorted = peakDevFromRef.slice().sort(function(a, b) { return a - b; });
+    var pdSum = 0;
+    for (var i = 0; i < pdSorted.length; i++) pdSum += pdSorted[i];
+    var p75i = Math.floor(pdSorted.length * 0.75);
+    spreadAnalysis.avgPeakDev = parseFloat((pdSum / pdSorted.length).toFixed(4));
+    spreadAnalysis.avgPeakDevDollar = parseFloat((spreadAnalysis.avgPeakDev * totalWeight).toFixed(2));
+    spreadAnalysis.p75PeakDev = parseFloat(pdSorted[Math.min(p75i, pdSorted.length - 1)].toFixed(4));
+    spreadAnalysis.p75PeakDevDollar = parseFloat((spreadAnalysis.p75PeakDev * totalWeight).toFixed(2));
+  }
+  result.spreadAnalysis = spreadAnalysis;
+
   return result;
 }
 
@@ -1390,6 +1450,57 @@ function computeHistoricalProbabilitiesWide_(dailyValues, refValue, rollingZ, to
       eligible: eligible
     };
   }
+
+  // ── Spread-Level Analysis (wide variant) ──
+  var daysToMean = [];
+  var peakDevFromRef = [];
+  var meanTarget = mean90;
+  var meanTolRef = Math.abs(refValue - meanTarget) * 0.15;
+  if (meanTolRef < 0.01) meanTolRef = 0.01;
+
+  for (var t = 0; t < triggers.length; t++) {
+    var idx = triggers[t];
+    var remaining = len - idx - 1;
+    if (remaining < 5) continue;
+    var lookAhead = Math.min(90, remaining);
+    var peakDev = 0;
+    var revertDay = -1;
+    for (var f = 1; f <= lookAhead; f++) {
+      var devFromTrigger;
+      if (isAboveMean) { devFromTrigger = dailyValues[idx + f] - dailyValues[idx]; }
+      else { devFromTrigger = dailyValues[idx] - dailyValues[idx + f]; }
+      if (devFromTrigger > peakDev) peakDev = devFromTrigger;
+      if (revertDay < 0 && Math.abs(dailyValues[idx + f] - meanTarget) <= meanTolRef) {
+        revertDay = f;
+      }
+    }
+    peakDevFromRef.push(peakDev);
+    if (revertDay > 0) daysToMean.push(revertDay);
+  }
+
+  var spreadAnalysis = { triggers: triggers.length, refValue: parseFloat(refValue.toFixed(2)), meanTarget: parseFloat(meanTarget.toFixed(2)) };
+  if (daysToMean.length > 0) {
+    var dtmSorted = daysToMean.slice().sort(function(a, b) { return a - b; });
+    var dtmSum = 0;
+    for (var i = 0; i < dtmSorted.length; i++) dtmSum += dtmSorted[i];
+    var dtmMid = Math.floor(dtmSorted.length / 2);
+    spreadAnalysis.avgDaysToMean = parseFloat((dtmSum / dtmSorted.length).toFixed(1));
+    spreadAnalysis.medianDaysToMean = dtmSorted.length % 2 === 0 ? (dtmSorted[dtmMid - 1] + dtmSorted[dtmMid]) / 2 : dtmSorted[dtmMid];
+    spreadAnalysis.reversionRate = parseFloat((daysToMean.length / triggers.length * 100).toFixed(1));
+    spreadAnalysis.reverted = daysToMean.length;
+  }
+  if (peakDevFromRef.length > 0) {
+    var pdSorted = peakDevFromRef.slice().sort(function(a, b) { return a - b; });
+    var pdSum = 0;
+    for (var i = 0; i < pdSorted.length; i++) pdSum += pdSorted[i];
+    var p75i = Math.floor(pdSorted.length * 0.75);
+    spreadAnalysis.avgPeakDev = parseFloat((pdSum / pdSorted.length).toFixed(4));
+    spreadAnalysis.avgPeakDevDollar = parseFloat((spreadAnalysis.avgPeakDev * totalWeight).toFixed(2));
+    spreadAnalysis.p75PeakDev = parseFloat(pdSorted[Math.min(p75i, pdSorted.length - 1)].toFixed(4));
+    spreadAnalysis.p75PeakDevDollar = parseFloat((spreadAnalysis.p75PeakDev * totalWeight).toFixed(2));
+  }
+  result.spreadAnalysis = spreadAnalysis;
+
   return result;
 }
 
@@ -1499,6 +1610,23 @@ function getPortfolioAnalytics(mode, legsJson) {
             metrics.probabilities = wideProb;
           }
         }
+
+        // ── Entry Spread Probability Analysis ──
+        // Run the same probability engine but anchored to entry spread instead of current spread.
+        // This tells us: "historically when spread was at MY entry level, what happened?"
+        var entryRef = metrics.entrySpread;
+        var entryProb = computeHistoricalProbabilities_(
+          metrics.dailyValuesFull_, entryRef, metrics.rollingZ, metrics.totalWeight
+        );
+        if (entryProb.triggers < 3) {
+          var entryWideProb = computeHistoricalProbabilitiesWide_(
+            metrics.dailyValuesFull_, entryRef, metrics.rollingZ, metrics.totalWeight
+          );
+          if (entryWideProb.triggers > entryProb.triggers) {
+            entryProb = entryWideProb;
+          }
+        }
+        metrics.entryProbabilities = entryProb;
       }
 
       // ── Active Pair Correlation ──
