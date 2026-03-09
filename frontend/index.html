@@ -276,6 +276,7 @@ td:last-child{border-radius:0 10px 10px 0;border-right:1px solid var(--border)}
 .filter-pill.active-purple{background:var(--purple);color:white;border-color:var(--purple)}
 .filter-label{font-size:9px;font-weight:900;text-transform:uppercase;letter-spacing:1px;color:var(--subtext)}
 .screened-badge{display:inline-flex;align-items:center;gap:3px;font-size:8px;font-weight:900;text-transform:uppercase;letter-spacing:0.5px;padding:2px 6px;border-radius:4px;background:rgba(147,51,234,.1);color:var(--purple);border:1px solid rgba(147,51,234,.3)}
+.screened-hot{font-size:9px;padding:2px 7px;box-shadow:0 0 6px rgba(16,185,129,.3)}
 .analyze-btn{background:none;border:1.5px solid var(--border);color:var(--subtext);width:28px;height:28px;border-radius:6px;cursor:pointer;font-size:12px;display:flex;align-items:center;justify-content:center;transition:.2s;flex-shrink:0}
 .analyze-btn:hover{border-color:var(--accent);color:var(--accent);background:rgba(14,165,233,.05)}
 .analyze-btn.loading{opacity:.5;cursor:wait}
@@ -594,8 +595,6 @@ function sqRender(){
 }
 function sqPopulateCalc(idx){
   var q=sandboxQueue[idx];if(!q)return;
-  // Clear existing legs
-  document.getElementById('sbLegs').innerHTML='';sbLegCounter=0;
   var defSize=parseInt(document.getElementById('sqDefaultSize').value)||1000;
   // Add long leg
   sbLegCounter++;var longDiv=document.createElement('div');longDiv.className='sb-leg-row';longDiv.id='sbLeg-'+sbLegCounter;
@@ -617,8 +616,6 @@ function sqPopulateCalc(idx){
     analyticsTab.classList.add('active');
     document.querySelectorAll('.nav-item').forEach(function(x){if(x.textContent.trim().indexOf('Analytics')!==-1)x.classList.add('active');});
   }
-  // Remove from queue after populating
-  sandboxQueue.splice(idx,1);sqSave();sqRender();
 }
 // ── COMPOSITE SETUP SCORE (0-100) ──
 // Instant frontend computation from existing alert data. No API call.
@@ -883,7 +880,7 @@ var sc=r._score;var scc=scoreColor(sc);
 var scoreTd='<td><div class="score-cell"><span class="score-badge" style="color:'+scc.c+';background:'+scc.bg+'">'+sc+'</span><div class="score-bar"><div class="score-bar-fill" style="width:'+sc+'%;background:'+scc.c+'"></div></div></div></td>';
 // Screener badge + analyze button
 var scrData=screenerCache[cleanIdFE(r.id)];
-var screenBadge='';if(scrData&&scrData.wr30!==null){var bClr=scrData.wr30>=60?'rgba(16,185,129,.1)':scrData.wr30>=40?'rgba(245,158,11,.1)':'rgba(239,68,68,.08)';var bTxt=scrData.wr30>=60?'var(--low)':scrData.wr30>=40?'var(--yellow)':'var(--high)';screenBadge='<span class="screened-badge" style="background:'+bClr+';color:'+bTxt+';border-color:'+bTxt+'" title="Pre-screened: '+scrData.wr30+'% 30d win rate">'+scrData.wr30+'% WR</span>';}
+var screenBadge='';if(scrData&&scrData.wr30!==null&&scrData.wr30!==''&&!isNaN(parseFloat(scrData.wr30))){var wrVal=parseFloat(scrData.wr30);var bClr=wrVal>=70?'rgba(16,185,129,.18)':wrVal>=60?'rgba(16,185,129,.1)':wrVal>=40?'rgba(245,158,11,.1)':'rgba(239,68,68,.08)';var bTxt=wrVal>=70?'var(--low)':wrVal>=60?'var(--low)':wrVal>=40?'var(--yellow)':'var(--high)';var bBorder=wrVal>=70?'rgba(16,185,129,.5)':'';screenBadge='<span class="screened-badge'+(wrVal>=70?' screened-hot':'')+'" style="background:'+bClr+';color:'+bTxt+(bBorder?';border-color:'+bBorder:';border-color:'+bTxt)+'" title="Pre-screened: '+wrVal+'% 30d win rate">'+Math.round(wrVal)+'% WR</span>';}
 var aRid='arow'+rowIdx;
 var pAVal=r.pA||0,pBVal=r.pB||0;
 var analyzeBtn='<button class="analyze-btn" onclick="analyzeAlert(this,\''+sa+'\',\''+sb+'\','+pAVal+','+pBVal+','+z+',\''+aRid+'\')" title="Run probability analysis">&#9881;</button>';
