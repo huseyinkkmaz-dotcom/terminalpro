@@ -1168,7 +1168,8 @@ function computePairCorrelation_(openData, histMap) {
  * @return {Object} probabilities result
  */
 function computeHistoricalProbabilities_(dailyValues, refValue, rollingZ, totalWeight) {
-  var result = { triggers: 0, badScenario: null, winRates: {} };
+  var emptySpreadAnalysis = { triggers: 0, refValue: 0, meanTarget: 0, invertedCount: 0, details: [] };
+  var result = { triggers: 0, badScenario: null, winRates: {}, spreadAnalysis: emptySpreadAnalysis, toleranceWidened: false };
   var len = dailyValues.length;
   if (len < 20) return result; // need minimum history
 
@@ -1187,8 +1188,8 @@ function computeHistoricalProbabilities_(dailyValues, refValue, rollingZ, totalW
   var mean90 = (rollingZ['90d'] && !rollingZ['90d'].insufficient) ? rollingZ['90d'].mean : 0;
   var isAboveMean = refValue >= mean90;
 
-  // Find trigger points: days where spread ≈ refValue (±tolerance)
-  // Exclude the last day (that's "today") and leave room for at least 5 days of forward data
+  // ── Two-Pass Trigger Search ──
+  // Pass 1: ±5% tolerance. Pass 2 (fallback): ±10% if Pass 1 finds 0 triggers.
   var triggers = [];
   var lastTriggerDay = -10; // prevent overlapping triggers (min 5-day gap)
   for (var i = 0; i < len - 5; i++) {
@@ -1197,8 +1198,22 @@ function computeHistoricalProbabilities_(dailyValues, refValue, rollingZ, totalW
       lastTriggerDay = i;
     }
   }
+
+  // Pass 2: Auto-expand to 10% tolerance if Pass 1 found 0 triggers
+  if (triggers.length === 0) {
+    tolerance = fullRange * 0.10;
+    lastTriggerDay = -10;
+    for (var i = 0; i < len - 5; i++) {
+      if (Math.abs(dailyValues[i] - refValue) <= tolerance && (i - lastTriggerDay) >= 5) {
+        triggers.push(i);
+        lastTriggerDay = i;
+      }
+    }
+    if (triggers.length > 0) result.toleranceWidened = true;
+  }
+
   result.triggers = triggers.length;
-  if (triggers.length < 3) return result; // not enough samples for meaningful statistics
+  if (triggers.length < 1) return result; // return with 0 triggers — UI will handle gracefully
 
   // ── FEATURE 1: Bad Scenario (Max Adverse Excursion) ──
   var maeValues = []; // max adverse excursion per trigger (in spread units)
@@ -1347,7 +1362,7 @@ function computeHistoricalProbabilities_(dailyValues, refValue, rollingZ, totalW
   }
 
   // Compute summary stats
-  var spreadAnalysis = { triggers: saTriggers.length, refValue: parseFloat(refValue.toFixed(2)), meanTarget: parseFloat(meanTarget.toFixed(2)), invertedCount: saInvertedCount, details: saDetails };
+  var spreadAnalysis = { triggers: saTriggers.length, refValue: parseFloat(refValue.toFixed(2)), meanTarget: parseFloat(meanTarget.toFixed(2)), invertedCount: saInvertedCount, details: saDetails, toleranceWidened: result.toleranceWidened };
   if (daysToMean.length > 0) {
     var dtmSorted = daysToMean.slice().sort(function(a, b) { return a - b; });
     var dtmSum = 0;
@@ -1380,7 +1395,8 @@ function computeHistoricalProbabilities_(dailyValues, refValue, rollingZ, totalW
  * so the standard 5% tolerance often can't find enough historical occurrences.
  */
 function computeHistoricalProbabilitiesWide_(dailyValues, refValue, rollingZ, totalWeight) {
-  var result = { triggers: 0, badScenario: null, winRates: {} };
+  var emptySpreadAnalysis = { triggers: 0, refValue: 0, meanTarget: 0, invertedCount: 0, details: [] };
+  var result = { triggers: 0, badScenario: null, winRates: {}, spreadAnalysis: emptySpreadAnalysis, toleranceWidened: false };
   var len = dailyValues.length;
   if (len < 20) return result;
 
@@ -1405,7 +1421,7 @@ function computeHistoricalProbabilitiesWide_(dailyValues, refValue, rollingZ, to
     }
   }
   result.triggers = triggers.length;
-  if (triggers.length < 2) return result; // minimum 2 triggers (vs standard 3)
+  if (triggers.length < 1) return result; // return with 0 triggers — UI handles gracefully
 
   var maeValues = [];
   var widenCount = 0;
@@ -1530,7 +1546,7 @@ function computeHistoricalProbabilitiesWide_(dailyValues, refValue, rollingZ, to
     });
   }
 
-  var spreadAnalysis = { triggers: saTriggers.length, refValue: parseFloat(refValue.toFixed(2)), meanTarget: parseFloat(meanTarget.toFixed(2)), invertedCount: saInvertedCount, details: saDetails };
+  var spreadAnalysis = { triggers: saTriggers.length, refValue: parseFloat(refValue.toFixed(2)), meanTarget: parseFloat(meanTarget.toFixed(2)), invertedCount: saInvertedCount, details: saDetails, toleranceWidened: result.toleranceWidened };
   if (daysToMean.length > 0) {
     var dtmSorted = daysToMean.slice().sort(function(a, b) { return a - b; });
     var dtmSum = 0;

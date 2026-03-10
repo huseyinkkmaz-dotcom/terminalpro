@@ -165,7 +165,7 @@ function setupAllBatched() {
     // --- PHASE 4: Ticker-level GOOGLEFINANCE sheets ---
     // Instead of CreditLevels (1 GOOGLEFINANCE per pair = 30K+ calls), we build:
     //   TickerData: ~200 tickers × 3 formulas = ~600 calls (live price, volumeavg, volume)
-    //   TickerHistory: ~200 tickers × 1 formula = ~200 calls (90-day historical prices)
+    //   TickerHistory: ~200 tickers × 1 formula = ~200 calls (1-year historical prices)
     // Then computeCreditCache() computes all pair stats from these ticker sheets.
     if (state.phase === 4) {
       Logger.log('Phase 4: Building TickerData + TickerHistory sheets...');
@@ -1529,9 +1529,9 @@ function buildTickerDataSheet_(ss) {
 }
 
 /**
- * Builds TickerHistory sheet: one row per unique ticker with 90-day GOOGLEFINANCE historical prices.
+ * Builds TickerHistory sheet: one row per unique ticker with 1-year GOOGLEFINANCE historical prices.
  * ~200 tickers × 1 formula = ~200 GOOGLEFINANCE calls.
- * Each formula expands horizontally into ~90 price columns.
+ * Each formula expands horizontally into ~252 price columns.
  */
 function buildTickerHistorySheet_(ss, tickers) {
   if (!tickers || tickers.length === 0) return;
@@ -1547,7 +1547,7 @@ function buildTickerHistorySheet_(ss, tickers) {
   // Column B: GOOGLEFINANCE historical (expands horizontally)
   var histFormulas = tickers.map(function(t, i) {
     var r = i + 2;
-    return ['=IFERROR(TRANSPOSE(QUERY(GOOGLEFINANCE(A' + r + ',"price",TODAY()-180,TODAY()),"select Col2 offset 1",0)),)'];
+    return ['=IFERROR(TRANSPOSE(QUERY(GOOGLEFINANCE(A' + r + ',"price",TODAY()-370,TODAY()),"select Col2 offset 1",0)),)'];
   });
   sheet.getRange(2, 2, tickers.length, 1).setFormulas(histFormulas);
   sheet.setFrozenRows(1);
@@ -1560,7 +1560,7 @@ function buildTickerHistorySheet_(ss, tickers) {
  *
  * Flow:
  *   1. Read TickerData (live prices/volumes per ticker) — ~200 rows
- *   2. Read TickerHistory (90-day prices per ticker) — ~200 rows × ~90 cols
+ *   2. Read TickerHistory (1-year prices per ticker) — ~200 rows × ~252 cols
  *   3. Read Master (yields, coupons per ticker) — ~200 rows
  *   4. Read CreditPairs (all pair definitions) — up to 30K rows
  *   5. For each pair: compute spread, mean, stdev, Z-score, percentiles, vol spike
@@ -1591,7 +1591,7 @@ function computeCreditCache() {
       };
     }
 
-    // 2. Read TickerHistory (90-day prices per ticker)
+    // 2. Read TickerHistory (1-year prices per ticker)
     var thSheet = ss.getSheetByName('TickerHistory');
     if (!thSheet || thSheet.getLastRow() <= 1) {
       Logger.log('computeCreditCache: TickerHistory not found or empty. Run setup first.');

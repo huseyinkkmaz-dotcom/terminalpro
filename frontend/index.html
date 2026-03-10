@@ -718,6 +718,7 @@ async function analyzeAlert(btn, tA, tB, pA, pB, z, rowId) {
     h += '<div class="ar-direction" style="background:rgba(239,68,68,.08);color:var(--high)">SHORT ' + shortTk + '</div>';
     h += '<div style="margin-top:8px;font-size:9px;color:var(--subtext)">History: ' + (dbg.historyDays || 0) + 'd</div>';
     h += '<div style="font-size:9px;color:var(--subtext)">Triggers: ' + (prob.triggers || 0) + '</div>';
+    if (prob.toleranceWidened) h += '<div style="font-size:8px;color:var(--yellow);margin-top:4px;font-style:italic">*Tolerance widened to 10%*</div>';
     h += '</div>';
     // Win Rate cards (30/60/90)
     var windows = [{k:'30d',l:'30D'},{k:'60d',l:'60D'},{k:'90d',l:'90D'}];
@@ -752,16 +753,24 @@ async function analyzeAlert(btn, tA, tB, pA, pB, z, rowId) {
       }
       h += '</div>';
     }
-    // Bad Scenario card
-    if (prob.badScenario && prob.triggers >= 2) {
+    // Bad Scenario card — always rendered
+    h += '<div class="ar-card" style="border-color:rgba(239,68,68,.2)"><div class="ar-card-title" style="color:var(--high)">Downside Risk';
+    if (prob.badScenario) {
       var bs = prob.badScenario;
+      h += ' (' + bs.sampleSize + ' samples)';
+      if (prob.toleranceWidened) h += ' <span style="font-size:8px;color:var(--yellow);font-weight:400">*Tolerance widened to 10%*</span>';
+      h += '</div>';
       var wpClr = bs.wideningProb > 60 ? 'var(--high)' : bs.wideningProb > 40 ? 'var(--yellow)' : 'var(--low)';
-      h += '<div class="ar-card" style="border-color:rgba(239,68,68,.2)"><div class="ar-card-title" style="color:var(--high)">Downside Risk (' + bs.sampleSize + ' samples)</div>';
       h += '<div class="ar-metric"><span class="ar-metric-label">Avg Max Loss</span><span class="ar-metric-val" style="color:var(--high)">-$' + Math.abs(bs.avgMae).toFixed(4) + '</span></div>';
       h += '<div class="ar-metric"><span class="ar-metric-label">P75 Max Loss</span><span class="ar-metric-val" style="color:var(--high)">-$' + Math.abs(bs.p75Mae).toFixed(4) + '</span></div>';
       h += '<div class="ar-metric"><span class="ar-metric-label">Widen Prob</span><span class="ar-metric-val" style="color:' + wpClr + '">' + bs.wideningProb + '%</span></div>';
-      h += '</div>';
+    } else {
+      h += ' (0 samples)</div>';
+      h += '<div class="ar-metric"><span class="ar-metric-label">Avg Max Loss</span><span class="ar-metric-val" style="color:var(--subtext)">N/A</span></div>';
+      h += '<div class="ar-metric"><span class="ar-metric-label">P75 Max Loss</span><span class="ar-metric-val" style="color:var(--subtext)">N/A</span></div>';
+      h += '<div class="ar-metric"><span class="ar-metric-label">Widen Prob</span><span class="ar-metric-val" style="color:var(--subtext)">N/A</span></div>';
     }
+    h += '</div>';
     h += '</div></td></tr>';
     // Insert after the alert row
     var alertRow = btn.closest('tr');
@@ -1056,38 +1065,51 @@ h+='</table>';
 h+='</div>';
 h+='</div>';
 }
-// ── Spread-Level Analysis Cards ──
+// ── Spread-Level Analysis Cards — always rendered ──
 // Shows historical duration & peak deviation when spread was at entry or current level
 // Live: probabilities=current spread ref, entryProbabilities=entry spread ref
 // Sandbox: probabilities=entry spread ref, currentProbabilities=current market spread ref
 var prob=m.probabilities||{};
 var curSA,entrySA;
+var emptySpreadAnalysis={triggers:0,refValue:0,meanTarget:0,invertedCount:0,details:[]};
 if(ad.mode==='sandbox'){
 var sbEntryProbs=prob;
 var sbCurProbs=m.currentProbabilities||{};
-entrySA=(sbEntryProbs.spreadAnalysis&&sbEntryProbs.spreadAnalysis.triggers>=2)?sbEntryProbs.spreadAnalysis:null;
-curSA=(sbCurProbs.spreadAnalysis&&sbCurProbs.spreadAnalysis.triggers>=2)?sbCurProbs.spreadAnalysis:null;
+entrySA=sbEntryProbs.spreadAnalysis||emptySpreadAnalysis;
+curSA=sbCurProbs.spreadAnalysis||emptySpreadAnalysis;
 }else{
-curSA=(prob.spreadAnalysis&&prob.spreadAnalysis.triggers>=2)?prob.spreadAnalysis:null;
+curSA=prob.spreadAnalysis||emptySpreadAnalysis;
 var entryProbs=m.entryProbabilities||{};
-entrySA=(entryProbs.spreadAnalysis&&entryProbs.spreadAnalysis.triggers>=2)?entryProbs.spreadAnalysis:null;
+entrySA=entryProbs.spreadAnalysis||emptySpreadAnalysis;
 }
-if(curSA||entrySA){
 h+='<div class="pa-pnl-card" style="text-align:left;padding:18px 22px">';
 h+='<div class="pa-pnl-label" style="margin-bottom:14px">Spread-Level History</div>';
 h+='<div style="display:flex;gap:16px;flex-wrap:wrap">';
-// Build a card renderer for spread analysis
+// Build a card renderer for spread analysis — handles 0 triggers gracefully
 function renderSACard(sa,label,refLabel,refVal){
+if(!sa)sa=emptySpreadAnalysis;
 if(!isFinite(refVal))refVal=sa.refValue||0;
 var cardH='<div style="flex:1;min-width:200px;background:var(--cardbg);border:1px solid var(--border);border-radius:10px;padding:14px 16px">';
-cardH+='<div style="font-size:10px;font-weight:900;color:var(--subtext);text-transform:uppercase;margin-bottom:10px">'+label+'</div>';
+cardH+='<div style="font-size:10px;font-weight:900;color:var(--subtext);text-transform:uppercase;margin-bottom:10px">'+label;
+if(sa.toleranceWidened)cardH+=' <span style="font-size:8px;color:var(--yellow);font-weight:400;font-style:italic">*Tolerance widened to 10%*</span>';
+cardH+='</div>';
 cardH+='<div style="font-size:10px;color:var(--subtext);margin-bottom:8px">'+refLabel+': <span style="color:var(--text);font-weight:700">'+(refVal>=0?'+':'-')+'$'+Math.abs(refVal).toFixed(2)+'</span> &rarr; Mean: <span style="color:var(--text);font-weight:700">'+(sa.meanTarget>=0?'+':'-')+'$'+Math.abs(sa.meanTarget).toFixed(2)+'</span></div>';
+if(sa.triggers===0){
+cardH+='<div style="display:flex;gap:14px;flex-wrap:wrap;margin-bottom:6px">';
+cardH+='<div><div style="font-size:8px;font-weight:900;color:var(--subtext);text-transform:uppercase;margin-bottom:3px">Reversion Rate</div><div style="font-size:14px;font-weight:700;color:var(--subtext)">0/0</div></div>';
+cardH+='<div><div style="font-size:8px;font-weight:900;color:var(--subtext);text-transform:uppercase;margin-bottom:3px">Median Duration</div><div style="font-size:14px;font-weight:700;color:var(--subtext)">N/A</div></div>';
+cardH+='<div><div style="font-size:8px;font-weight:900;color:var(--subtext);text-transform:uppercase;margin-bottom:3px">Avg Peak Dev</div><div style="font-size:14px;font-weight:700;color:var(--subtext)">$0.00</div></div>';
+cardH+='</div>';
+cardH+='<div style="margin-top:8px;padding:10px;font-size:10px;color:var(--subtext);text-align:center;border:1px dashed var(--border);border-radius:6px">No historical matches found within 1-year lookback</div>';
+cardH+='</div>';
+return cardH;
+}
 cardH+='<div style="display:flex;gap:14px;flex-wrap:wrap;margin-bottom:6px">';
 if(sa.medianDaysToMean!==undefined){
 var durClr=sa.medianDaysToMean>20?'var(--high)':sa.medianDaysToMean>10?'var(--yellow)':'var(--low)';
 cardH+='<div><div style="font-size:8px;font-weight:900;color:var(--subtext);text-transform:uppercase;margin-bottom:3px">Median Duration</div><div style="font-size:16px;font-weight:900;color:'+durClr+'">'+sa.medianDaysToMean+'d</div></div>';
 cardH+='<div><div style="font-size:8px;font-weight:900;color:var(--subtext);text-transform:uppercase;margin-bottom:3px">Avg Duration</div><div style="font-size:14px;font-weight:700;color:var(--subtext)">'+sa.avgDaysToMean+'d</div></div>';
-cardH+='<div><div style="font-size:8px;font-weight:900;color:var(--subtext);text-transform:uppercase;margin-bottom:3px">Reversion Rate</div><div style="font-size:14px;font-weight:700;color:var(--low)">'+sa.reversionRate+'%</div><div style="font-size:8px;color:var(--subtext)">'+sa.reverted+'/'+sa.triggers+'</div></div>';
+cardH+='<div><div style="font-size:8px;font-weight:900;color:var(--subtext);text-transform:uppercase;margin-bottom:3px">Reversion Rate</div><div style="font-size:14px;font-weight:700;color:var(--low)">'+sa.reversionRate+'%</div><div style="font-size:8px;color:var(--subtext)">'+(sa.reverted||0)+'/'+sa.triggers+'</div></div>';
 }else{
 cardH+='<div><div style="font-size:10px;color:var(--subtext)">No reversion to mean observed</div></div>';
 }
@@ -1120,14 +1142,15 @@ cardH+='<td style="padding:3px 5px;color:'+mrpClr+'">'+(mrp>=0?'+':'-')+'$'+Math
 cardH+='<td style="padding:3px 5px;color:'+detClr+'">'+(det.reverted?'Reverted':'No revert')+'</td>';
 cardH+='</tr>';}
 cardH+='</table></div>';
+}else{
+cardH+='<div id="'+saDetailId+'" style="display:none;margin-top:8px;padding:10px;font-size:10px;color:var(--subtext);text-align:center;border:1px dashed var(--border);border-radius:6px">No historical matches found</div>';
 }
 cardH+='</div>';
 return cardH;
 }
-if(entrySA){h+=renderSACard(entrySA,'At Entry Spread','Entry',entrySpread!==null?entrySpread:entrySA.refValue);}
-if(curSA){h+=renderSACard(curSA,'At Current Spread','Current',curSpread);}
+h+=renderSACard(entrySA,'At Entry Spread','Entry',entrySpread!==null?entrySpread:entrySA.refValue);
+h+=renderSACard(curSA,'At Current Spread','Current',curSpread);
 h+='</div></div>';
-}
 // Pair Correlation card (live only — sandbox has no active pairs to correlate)
 if(hasCorr){
 var corrClr=Math.abs(pc.avg)>=0.7?'var(--high)':Math.abs(pc.avg)>=0.3?'var(--yellow)':'var(--low)';
@@ -1166,18 +1189,27 @@ h+='</div>';
 }
 h+='</div>';
 }
-// ── Bad Scenario Card ──
-if(prob.badScenario&&prob.triggers>=2){
-var bs=prob.badScenario;
+// ── Bad Scenario Card — always rendered ──
 h+='<div class="pa-bad-scenario">';
-h+='<div class="pa-bad-header"><span class="pa-bad-title">&#9888; Bad Scenario — Downside Risk</span><span class="pa-bad-sample">'+bs.sampleSize+' historical trigger'+(bs.sampleSize!==1?'s':'')+'</span></div>';
+if(prob.badScenario){
+var bs=prob.badScenario;
+var bsTolNote=prob.toleranceWidened?' <span style="font-size:9px;color:var(--yellow);font-style:italic">*Tolerance widened to 10%*</span>':'';
+h+='<div class="pa-bad-header"><span class="pa-bad-title">&#9888; Bad Scenario — Downside Risk'+bsTolNote+'</span><span class="pa-bad-sample">'+bs.sampleSize+' historical trigger'+(bs.sampleSize!==1?'s':'')+'</span></div>';
 h+='<div class="pa-bad-grid">';
 h+='<div class="pa-bad-cell"><div class="pa-bad-cell-label">Avg Max Loss</div><div class="pa-bad-cell-val" style="color:var(--high)">-$'+Math.abs(bs.avgMae).toFixed(4)+'</div><div class="pa-bad-cell-sub">per share adverse excursion</div></div>';
 var wpClr=bs.wideningProb>60?'var(--high)':bs.wideningProb>40?'var(--yellow)':'var(--low)';
 h+='<div class="pa-bad-cell"><div class="pa-bad-cell-label">P75 Max Loss</div><div class="pa-bad-cell-val" style="color:var(--high)">-$'+Math.abs(bs.p75Mae).toFixed(4)+'</div><div class="pa-bad-cell-sub">75th percentile worst case</div></div>';
 h+='<div class="pa-bad-cell"><div class="pa-bad-cell-label">Widening Probability</div><div class="pa-bad-cell-val" style="color:'+wpClr+'">'+bs.wideningProb+'%</div><div class="pa-bad-cell-sub">chance spread widens next day</div></div>';
-h+='</div></div>';
+h+='</div>';
+}else{
+h+='<div class="pa-bad-header"><span class="pa-bad-title">&#9888; Bad Scenario — Downside Risk</span><span class="pa-bad-sample">0 historical triggers</span></div>';
+h+='<div class="pa-bad-grid">';
+h+='<div class="pa-bad-cell"><div class="pa-bad-cell-label">Avg Max Loss</div><div class="pa-bad-cell-val" style="color:var(--subtext)">N/A</div><div class="pa-bad-cell-sub">No historical matches found</div></div>';
+h+='<div class="pa-bad-cell"><div class="pa-bad-cell-label">P75 Max Loss</div><div class="pa-bad-cell-val" style="color:var(--subtext)">N/A</div><div class="pa-bad-cell-sub">No historical matches found</div></div>';
+h+='<div class="pa-bad-cell"><div class="pa-bad-cell-label">Widening Probability</div><div class="pa-bad-cell-val" style="color:var(--subtext)">N/A</div><div class="pa-bad-cell-sub">No historical matches found</div></div>';
+h+='</div>';
 }
+h+='</div>';
 // 30/60/90 window cards
 var rz=m.rollingZ||{};
 var windows=[{k:'30d',l:'30-Day'},{k:'60d',l:'60-Day'},{k:'90d',l:'90-Day'}];
