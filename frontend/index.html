@@ -1065,6 +1065,9 @@ h+='</table>';
 h+='</div>';
 h+='</div>';
 }
+// Define spread values before they're used by both spread-level analysis and 30/60/90 windows
+var curSpread=m.netSpread||0;
+var entrySpread=(ad.mode==='sandbox'&&m.hypotheticalSpread!==undefined)?m.hypotheticalSpread:(ad.mode==='live'&&m.entrySpread!==undefined)?m.entrySpread:null;
 // ── Spread-Level Analysis Cards — always rendered ──
 // Shows historical duration & peak deviation when spread was at entry or current level
 // Live: probabilities=current spread ref, entryProbabilities=entry spread ref
@@ -1213,8 +1216,6 @@ h+='</div>';
 // 30/60/90 window cards
 var rz=m.rollingZ||{};
 var windows=[{k:'30d',l:'30-Day'},{k:'60d',l:'60-Day'},{k:'90d',l:'90-Day'}];
-var curSpread=m.netSpread||0;
-var entrySpread=(ad.mode==='sandbox'&&m.hypotheticalSpread!==undefined)?m.hypotheticalSpread:(ad.mode==='live'&&m.entrySpread!==undefined)?m.entrySpread:null;
 var winRates=prob.winRates||{};
 h+='<div class="pa-windows">';
 for(var i=0;i<windows.length;i++){
