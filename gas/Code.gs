@@ -1824,9 +1824,12 @@ function getPortfolioAnalytics(mode, legsJson) {
         var z30 = pairRZ['30d'] && !pairRZ['30d'].insufficient ? pairRZ['30d'].z : null;
         var z60 = pairRZ['60d'] && !pairRZ['60d'].insufficient ? pairRZ['60d'].z : null;
         var z90 = pairRZ['90d'] && !pairRZ['90d'].insufficient ? pairRZ['90d'].z : null;
-        var wr30 = pairProb.winRates && pairProb.winRates['30d'] != null ? pairProb.winRates['30d'] : null;
-        var wr60 = pairProb.winRates && pairProb.winRates['60d'] != null ? pairProb.winRates['60d'] : null;
-        var wr90 = pairProb.winRates && pairProb.winRates['90d'] != null ? pairProb.winRates['90d'] : null;
+        var wrObj30 = pairProb.winRates && pairProb.winRates['30d'] ? pairProb.winRates['30d'] : null;
+        var wrObj60 = pairProb.winRates && pairProb.winRates['60d'] ? pairProb.winRates['60d'] : null;
+        var wrObj90 = pairProb.winRates && pairProb.winRates['90d'] ? pairProb.winRates['90d'] : null;
+        var wr30 = wrObj30 && wrObj30.eligible >= 2 ? wrObj30.rate : null;
+        var wr60 = wrObj60 && wrObj60.eligible >= 2 ? wrObj60.rate : null;
+        var wr90 = wrObj90 && wrObj90.eligible >= 2 ? wrObj90.rate : null;
         var ep30 = pairRZ['30d'] && !pairRZ['30d'].insufficient ? pairRZ['30d'].expectedProfit : null;
         var ep60 = pairRZ['60d'] && !pairRZ['60d'].insufficient ? pairRZ['60d'].expectedProfit : null;
         var ep90 = pairRZ['90d'] && !pairRZ['90d'].insufficient ? pairRZ['90d'].expectedProfit : null;
