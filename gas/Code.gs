@@ -1707,80 +1707,28 @@ function getPortfolioAnalytics(mode, legsJson) {
       return { mode: 'live', trades: openData.length - 1, legs: legs.length, metrics: metrics };
     }
     else if (mode === 'sandbox') {
+      // ── Cross-Matrix Sandbox: every Long × every Short ──
       // Parse user-provided legs
       var userLegs = [];
       try { userLegs = JSON.parse(legsJson); } catch(e) { return { mode: 'sandbox', error: 'Invalid legs JSON' }; }
+      var longLegs = [], shortLegs = [];
       for (var i = 0; i < userLegs.length; i++) {
         var ul = userLegs[i];
-        if (ul.ticker && ul.size && ul.direction) {
-          legs.push({ ticker: String(ul.ticker).trim().toUpperCase(), size: Math.abs(parseFloat(ul.size) || 0), direction: parseFloat(ul.direction) > 0 ? 1 : -1 });
-        }
-      }
-      if (legs.length === 0) return { mode: 'sandbox', error: 'No valid legs', metrics: { dailyValues: [] } };
-
-      var metrics = computeBasketMetrics_(legs, histMap);
-
-      // Compute hypothetical entry spread + gross exposure from provided prices
-      var hypotheticalSpreadDollar = 0, hypotheticalTotalSize = 0, hypotheticalGrossLong = 0, hypotheticalGrossShort = 0;
-      for (var i = 0; i < userLegs.length; i++) {
-        var ul = userLegs[i];
-        var sz = Math.abs(parseFloat(ul.size) || 0);
-        var dir = parseFloat(ul.direction) > 0 ? 1 : -1;
-        var ep = parseFloat(ul.entryPrice) || 0;
-        hypotheticalSpreadDollar += dir * sz * ep;
-        hypotheticalTotalSize += sz;
-        if (dir > 0) hypotheticalGrossLong += sz * ep; else hypotheticalGrossShort += sz * ep;
-      }
-      // Normalize to size-weighted average spread
-      var hypotheticalWeight = hypotheticalTotalSize / 2;
-      if (hypotheticalWeight === 0) hypotheticalWeight = 1;
-      metrics.hypotheticalSpread = parseFloat((hypotheticalSpreadDollar / hypotheticalWeight).toFixed(2));
-      metrics.hypotheticalGrossLong = parseFloat(hypotheticalGrossLong.toFixed(2));
-      metrics.hypotheticalGrossShort = parseFloat(hypotheticalGrossShort.toFixed(2));
-      metrics.hypotheticalGrossExposure = parseFloat((hypotheticalGrossLong + hypotheticalGrossShort).toFixed(2));
-
-      // Override expectedProfit in each rolling window to use entry spread:
-      // Sandbox user wants to know "if spread reverts to mean from MY ENTRY, how much do I profit?"
-      // Default computation uses market spread vs mean (irrelevant to user's entry position).
-      var rz = metrics.rollingZ || {};
-      for (var wKey in rz) {
-        if (rz[wKey] && !rz[wKey].insufficient) {
-          rz[wKey].expectedProfit = parseFloat((rz[wKey].mean - metrics.hypotheticalSpread).toFixed(4));
-        }
+        if (!ul.ticker || !ul.size || !ul.direction) continue;
+        var parsed = {
+          ticker: String(ul.ticker).trim().toUpperCase(),
+          size: Math.abs(parseFloat(ul.size) || 0),
+          direction: parseFloat(ul.direction) > 0 ? 1 : -1,
+          entryPrice: parseFloat(ul.entryPrice) || 0
+        };
+        if (parsed.size === 0) continue;
+        if (parsed.direction > 0) longLegs.push(parsed); else shortLegs.push(parsed);
+        legs.push(parsed);
       }
 
-      // Re-run probability engine with entry spread as reference point
-      // (default used market spread — sandbox user wants probabilities from THEIR entry level)
-      if (metrics.dailyValuesFull_ && metrics.dailyValuesFull_.length > 0) {
-        metrics.probabilities = computeHistoricalProbabilities_(
-          metrics.dailyValuesFull_, metrics.hypotheticalSpread, rz, metrics.totalWeight
-        );
-        // If standard tolerance found too few triggers, try wide-tolerance fallback
-        var stdTriggers = metrics.probabilities ? metrics.probabilities.triggers : 0;
-        if (stdTriggers < 3) {
-          var wideProb = computeHistoricalProbabilitiesWide_(
-            metrics.dailyValuesFull_, metrics.hypotheticalSpread, rz, metrics.totalWeight
-          );
-          if (wideProb.triggers > stdTriggers) {
-            metrics.probabilities = wideProb;
-          }
-        }
-
-        // ── Current (market) Spread Analysis for sandbox ──
-        // probabilities uses entry spread as reference; also run for current market spread
-        var mktRef = metrics.dailyValuesFull_[metrics.dailyValuesFull_.length - 1];
-        var mktProb = computeHistoricalProbabilities_(
-          metrics.dailyValuesFull_, mktRef, rz, metrics.totalWeight
-        );
-        if (mktProb.triggers < 3) {
-          var mktWideProb = computeHistoricalProbabilitiesWide_(
-            metrics.dailyValuesFull_, mktRef, rz, metrics.totalWeight
-          );
-          if (mktWideProb.triggers > mktProb.triggers) {
-            mktProb = mktWideProb;
-          }
-        }
-        metrics.currentProbabilities = mktProb;
+      // Fallback: if all legs are same direction (no cross possible), run legacy single-basket
+      if (longLegs.length === 0 || shortLegs.length === 0) {
+        return runLegacySandbox_(legs, userLegs, histMap);
       }
 
       // Flag which tickers are missing history
@@ -1788,10 +1736,225 @@ function getPortfolioAnalytics(mode, legsJson) {
       for (var i = 0; i < legs.length; i++) {
         if (!histMap[legs[i].ticker]) missing.push(legs[i].ticker);
       }
-      if (missing.length > 0) metrics.missingTickers = missing;
 
-      delete metrics.dailyValuesFull_; // strip internal array before response
-      return { mode: 'sandbox', legs: legs.length, metrics: metrics };
+      // Compute total shares per side for proportional allocation
+      var totalLongShares = 0, totalShortShares = 0;
+      for (var i = 0; i < longLegs.length; i++) totalLongShares += longLegs[i].size;
+      for (var i = 0; i < shortLegs.length; i++) totalShortShares += shortLegs[i].size;
+
+      // Generate cross-pairs (cap at 20 by weight, sorted descending)
+      var crossPairDefs = [];
+      for (var li = 0; li < longLegs.length; li++) {
+        for (var si = 0; si < shortLegs.length; si++) {
+          var weight = (longLegs[li].size / totalLongShares) * (shortLegs[si].size / totalShortShares);
+          var effLong = longLegs[li].size * (shortLegs[si].size / totalShortShares);
+          var effShort = shortLegs[si].size * (longLegs[li].size / totalLongShares);
+          crossPairDefs.push({
+            longLeg: longLegs[li],
+            shortLeg: shortLegs[si],
+            weight: weight,
+            effLongShares: parseFloat(effLong.toFixed(1)),
+            effShortShares: parseFloat(effShort.toFixed(1))
+          });
+        }
+      }
+      // Sort by weight descending and cap at 20
+      crossPairDefs.sort(function(a,b) { return b.weight - a.weight; });
+      if (crossPairDefs.length > 20) crossPairDefs = crossPairDefs.slice(0, 20);
+
+      // ── Run probability engine on each cross-pair ──
+      var crossPairResults = [];
+      var aggZ30 = 0, aggZ60 = 0, aggZ90 = 0;
+      var aggWR30 = 0, aggWR60 = 0, aggWR90 = 0;
+      var aggEP30 = 0, aggEP60 = 0, aggEP90 = 0;
+      var aggBadAvg = 0, aggBadP75 = 0, aggWidenProb = 0;
+      var aggWeightSum = 0; // for renormalization after excluding missing-ticker pairs
+      var totalGrossLong = 0, totalGrossShort = 0;
+      var worstZ = null, worstZPair = '';
+
+      for (var cp = 0; cp < crossPairDefs.length; cp++) {
+        var def = crossPairDefs[cp];
+        var lTk = def.longLeg.ticker;
+        var sTk = def.shortLeg.ticker;
+
+        // Skip pairs where either ticker is missing history
+        if (!histMap[lTk] || !histMap[sTk]) {
+          crossPairResults.push({
+            longTicker: lTk, shortTicker: sTk,
+            weight: parseFloat((def.weight * 100).toFixed(2)),
+            effLongShares: def.effLongShares, effShortShares: def.effShortShares,
+            error: 'Missing history for ' + (!histMap[lTk] ? lTk : sTk)
+          });
+          continue;
+        }
+
+        // Run with 100 normalized shares per side for clean Z-scores/probabilities
+        var pairLegs = [
+          { ticker: lTk, size: 100, direction: 1 },
+          { ticker: sTk, size: 100, direction: -1 }
+        ];
+        var pairMetrics = computeBasketMetrics_(pairLegs, histMap);
+
+        // Compute entry spread for this pair (using user's entry prices, normalized)
+        var entrySpreadPerShare = def.longLeg.entryPrice - def.shortLeg.entryPrice;
+
+        // Override expected profit to use entry spread
+        var pairRZ = pairMetrics.rollingZ || {};
+        for (var wKey in pairRZ) {
+          if (pairRZ[wKey] && !pairRZ[wKey].insufficient) {
+            pairRZ[wKey].expectedProfit = parseFloat((pairRZ[wKey].mean - entrySpreadPerShare).toFixed(4));
+          }
+        }
+
+        // Run probability engine anchored to entry spread
+        var pairProb = { triggers: 0, badScenario: null, winRates: {} };
+        if (pairMetrics.dailyValuesFull_ && pairMetrics.dailyValuesFull_.length >= 20) {
+          pairProb = computeHistoricalProbabilities_(
+            pairMetrics.dailyValuesFull_, entrySpreadPerShare, pairRZ, pairMetrics.totalWeight
+          );
+          if (pairProb.triggers < 3) {
+            var widePairProb = computeHistoricalProbabilitiesWide_(
+              pairMetrics.dailyValuesFull_, entrySpreadPerShare, pairRZ, pairMetrics.totalWeight
+            );
+            if (widePairProb.triggers > pairProb.triggers) pairProb = widePairProb;
+          }
+        }
+
+        // Extract per-pair metrics
+        var z30 = pairRZ['30d'] && !pairRZ['30d'].insufficient ? pairRZ['30d'].z : null;
+        var z60 = pairRZ['60d'] && !pairRZ['60d'].insufficient ? pairRZ['60d'].z : null;
+        var z90 = pairRZ['90d'] && !pairRZ['90d'].insufficient ? pairRZ['90d'].z : null;
+        var wr30 = pairProb.winRates && pairProb.winRates['30d'] != null ? pairProb.winRates['30d'] : null;
+        var wr60 = pairProb.winRates && pairProb.winRates['60d'] != null ? pairProb.winRates['60d'] : null;
+        var wr90 = pairProb.winRates && pairProb.winRates['90d'] != null ? pairProb.winRates['90d'] : null;
+        var ep30 = pairRZ['30d'] && !pairRZ['30d'].insufficient ? pairRZ['30d'].expectedProfit : null;
+        var ep60 = pairRZ['60d'] && !pairRZ['60d'].insufficient ? pairRZ['60d'].expectedProfit : null;
+        var ep90 = pairRZ['90d'] && !pairRZ['90d'].insufficient ? pairRZ['90d'].expectedProfit : null;
+
+        // Dollar-scale expected profit using proportionally allocated shares
+        var effTotalShares = def.effLongShares + def.effShortShares;
+        var ep30Dollar = ep30 != null ? ep30 * effTotalShares : null;
+        var ep60Dollar = ep60 != null ? ep60 * effTotalShares : null;
+        var ep90Dollar = ep90 != null ? ep90 * effTotalShares : null;
+
+        // Bad scenario dollar amounts
+        var bs = pairProb.badScenario;
+        var badAvgDollar = bs ? bs.avgMae * effTotalShares : null;
+        var badP75Dollar = bs ? bs.p75Mae * effTotalShares : null;
+
+        // Gross exposure for this cross-pair (using latest live prices)
+        var latestLong = histMap[lTk][histMap[lTk].length - 1];
+        var latestShort = histMap[sTk][histMap[sTk].length - 1];
+        var pairGrossLong = def.effLongShares * latestLong;
+        var pairGrossShort = def.effShortShares * latestShort;
+        totalGrossLong += pairGrossLong;
+        totalGrossShort += pairGrossShort;
+
+        // Track worst Z-score pair
+        var absZ90 = z90 != null ? Math.abs(z90) : 0;
+        if (worstZ === null || absZ90 > Math.abs(worstZ)) {
+          worstZ = z90;
+          worstZPair = lTk + ' x ' + sTk;
+        }
+
+        // Accumulate weighted aggregates
+        var w = def.weight;
+        aggWeightSum += w;
+        if (z30 != null) aggZ30 += w * z30;
+        if (z60 != null) aggZ60 += w * z60;
+        if (z90 != null) aggZ90 += w * z90;
+        if (wr30 != null) aggWR30 += w * wr30;
+        if (wr60 != null) aggWR60 += w * wr60;
+        if (wr90 != null) aggWR90 += w * wr90;
+        if (ep30Dollar != null) aggEP30 += ep30Dollar;
+        if (ep60Dollar != null) aggEP60 += ep60Dollar;
+        if (ep90Dollar != null) aggEP90 += ep90Dollar;
+        if (badAvgDollar != null) aggBadAvg += badAvgDollar;
+        if (badP75Dollar != null) aggBadP75 += badP75Dollar;
+        if (bs && bs.widenProb != null) aggWidenProb += w * bs.widenProb;
+
+        // Build result object for this cross-pair
+        crossPairResults.push({
+          longTicker: lTk,
+          shortTicker: sTk,
+          weight: parseFloat((def.weight * 100).toFixed(2)),
+          effLongShares: def.effLongShares,
+          effShortShares: def.effShortShares,
+          entrySpread: parseFloat(entrySpreadPerShare.toFixed(4)),
+          mktSpread: parseFloat(pairMetrics.netSpread.toFixed(4)),
+          z30: z30, z60: z60, z90: z90,
+          wr30: wr30, wr60: wr60, wr90: wr90,
+          ep30: ep30Dollar != null ? parseFloat(ep30Dollar.toFixed(2)) : null,
+          ep60: ep60Dollar != null ? parseFloat(ep60Dollar.toFixed(2)) : null,
+          ep90: ep90Dollar != null ? parseFloat(ep90Dollar.toFixed(2)) : null,
+          badAvg: badAvgDollar != null ? parseFloat(badAvgDollar.toFixed(2)) : null,
+          badP75: badP75Dollar != null ? parseFloat(badP75Dollar.toFixed(2)) : null,
+          widenProb: bs ? bs.widenProb : null,
+          triggers: pairProb.triggers || 0,
+          historyDays: pairMetrics.historyDays,
+          grossLong: parseFloat(pairGrossLong.toFixed(2)),
+          grossShort: parseFloat(pairGrossShort.toFixed(2)),
+          dailyValues: pairMetrics.dailyValues || [],
+          rollingZ: pairRZ,
+          probabilities: pairProb,
+          maeRecovery: pairMetrics.maeRecovery
+        });
+
+        // Clean up internal arrays
+        delete pairMetrics.dailyValuesFull_;
+      }
+
+      // ── Build aggregate metrics ──
+      // Renormalize weighted averages (aggWeightSum may be < 1.0 if some pairs were skipped)
+      var nw = aggWeightSum > 0 ? aggWeightSum : 1;
+      // Count converging pairs (|Z| trending toward 0 over recent history)
+      var convergingCount = 0;
+      for (var cp = 0; cp < crossPairResults.length; cp++) {
+        var cpr = crossPairResults[cp];
+        if (cpr.error) continue;
+        if (cpr.z30 != null && cpr.z90 != null && Math.abs(cpr.z30) < Math.abs(cpr.z90)) convergingCount++;
+      }
+
+      var aggregateMetrics = {
+        crossPairCount: crossPairResults.length,
+        totalLongLegs: longLegs.length,
+        totalShortLegs: shortLegs.length,
+        totalLongShares: totalLongShares,
+        totalShortShares: totalShortShares,
+        grossLong: parseFloat(totalGrossLong.toFixed(2)),
+        grossShort: parseFloat(totalGrossShort.toFixed(2)),
+        grossExposure: parseFloat((totalGrossLong + totalGrossShort).toFixed(2)),
+        // Weighted average Z-scores
+        z30: parseFloat((aggZ30 / nw).toFixed(2)),
+        z60: parseFloat((aggZ60 / nw).toFixed(2)),
+        z90: parseFloat((aggZ90 / nw).toFixed(2)),
+        // Weighted average win rates
+        wr30: parseFloat((aggWR30 / nw).toFixed(1)),
+        wr60: parseFloat((aggWR60 / nw).toFixed(1)),
+        wr90: parseFloat((aggWR90 / nw).toFixed(1)),
+        // Summed dollar amounts (no double counting via proportional allocation)
+        ep30: parseFloat(aggEP30.toFixed(2)),
+        ep60: parseFloat(aggEP60.toFixed(2)),
+        ep90: parseFloat(aggEP90.toFixed(2)),
+        // Summed bad scenario
+        badAvg: parseFloat(aggBadAvg.toFixed(2)),
+        badP75: parseFloat(aggBadP75.toFixed(2)),
+        widenProb: parseFloat((aggWidenProb / nw).toFixed(1)),
+        // Diagnostics
+        worstZ: worstZ,
+        worstZPair: worstZPair,
+        convergingCount: convergingCount,
+        validPairs: crossPairResults.filter(function(c) { return !c.error; }).length,
+        missingTickers: missing.length > 0 ? missing : undefined
+      };
+
+      return {
+        mode: 'sandbox',
+        crossMatrix: true,
+        legs: legs.length,
+        aggregateMetrics: aggregateMetrics,
+        crossPairs: crossPairResults
+      };
     }
     else {
       return { error: 'Unknown mode: ' + mode };
@@ -1800,6 +1963,70 @@ function getPortfolioAnalytics(mode, legsJson) {
     return { error: e.message };
   }
 }
+/**
+ * Legacy sandbox fallback: used when all legs are the same direction (no cross-pairs possible).
+ * Runs the original single-basket analysis.
+ */
+function runLegacySandbox_(legs, userLegs, histMap) {
+  var metrics = computeBasketMetrics_(legs, histMap);
+
+  var hypotheticalSpreadDollar = 0, hypotheticalTotalSize = 0, hypotheticalGrossLong = 0, hypotheticalGrossShort = 0;
+  for (var i = 0; i < userLegs.length; i++) {
+    var ul = userLegs[i];
+    var sz = Math.abs(parseFloat(ul.size) || 0);
+    var dir = parseFloat(ul.direction) > 0 ? 1 : -1;
+    var ep = parseFloat(ul.entryPrice) || 0;
+    hypotheticalSpreadDollar += dir * sz * ep;
+    hypotheticalTotalSize += sz;
+    if (dir > 0) hypotheticalGrossLong += sz * ep; else hypotheticalGrossShort += sz * ep;
+  }
+  var hypotheticalWeight = hypotheticalTotalSize / 2;
+  if (hypotheticalWeight === 0) hypotheticalWeight = 1;
+  metrics.hypotheticalSpread = parseFloat((hypotheticalSpreadDollar / hypotheticalWeight).toFixed(2));
+  metrics.hypotheticalGrossLong = parseFloat(hypotheticalGrossLong.toFixed(2));
+  metrics.hypotheticalGrossShort = parseFloat(hypotheticalGrossShort.toFixed(2));
+  metrics.hypotheticalGrossExposure = parseFloat((hypotheticalGrossLong + hypotheticalGrossShort).toFixed(2));
+
+  var rz = metrics.rollingZ || {};
+  for (var wKey in rz) {
+    if (rz[wKey] && !rz[wKey].insufficient) {
+      rz[wKey].expectedProfit = parseFloat((rz[wKey].mean - metrics.hypotheticalSpread).toFixed(4));
+    }
+  }
+
+  if (metrics.dailyValuesFull_ && metrics.dailyValuesFull_.length > 0) {
+    metrics.probabilities = computeHistoricalProbabilities_(
+      metrics.dailyValuesFull_, metrics.hypotheticalSpread, rz, metrics.totalWeight
+    );
+    var stdTriggers = metrics.probabilities ? metrics.probabilities.triggers : 0;
+    if (stdTriggers < 3) {
+      var wideProb = computeHistoricalProbabilitiesWide_(
+        metrics.dailyValuesFull_, metrics.hypotheticalSpread, rz, metrics.totalWeight
+      );
+      if (wideProb.triggers > stdTriggers) metrics.probabilities = wideProb;
+    }
+    var mktRef = metrics.dailyValuesFull_[metrics.dailyValuesFull_.length - 1];
+    var mktProb = computeHistoricalProbabilities_(
+      metrics.dailyValuesFull_, mktRef, rz, metrics.totalWeight
+    );
+    if (mktProb.triggers < 3) {
+      var mktWideProb = computeHistoricalProbabilitiesWide_(
+        metrics.dailyValuesFull_, mktRef, rz, metrics.totalWeight
+      );
+      if (mktWideProb.triggers > mktProb.triggers) mktProb = mktWideProb;
+    }
+    metrics.currentProbabilities = mktProb;
+  }
+
+  var missing = [];
+  for (var i = 0; i < legs.length; i++) {
+    if (!histMap[legs[i].ticker]) missing.push(legs[i].ticker);
+  }
+  if (missing.length > 0) metrics.missingTickers = missing;
+  delete metrics.dailyValuesFull_;
+  return { mode: 'sandbox', crossMatrix: false, legs: legs.length, metrics: metrics };
+}
+
 // ============================================================
 // WRITE OPERATIONS
 // ============================================================
