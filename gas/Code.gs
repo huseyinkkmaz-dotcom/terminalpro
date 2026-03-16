@@ -1853,11 +1853,11 @@ function getPortfolioAnalytics(mode, legsJson) {
         totalGrossLong += pairGrossLong;
         totalGrossShort += pairGrossShort;
 
-        // Track worst Z-score pair
+        // Track worst Z-score pair (highest |Z| = most extreme deviation)
         var absZ90 = z90 != null ? Math.abs(z90) : 0;
         if (worstZ === null || absZ90 > Math.abs(worstZ)) {
           worstZ = z90;
-          worstZPair = lTk + ' x ' + sTk;
+          worstZPair = lTk + ' (L) x ' + sTk + ' (S)';
         }
 
         // Accumulate weighted aggregates
