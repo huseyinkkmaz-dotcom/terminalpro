@@ -1661,12 +1661,18 @@ function computeCreditCache() {
       var spread = priceA - priceB;
 
       // Historical spread computation
+      // IMPORTANT: Align from the END of each array, not the start.
+      // TickerHistory arrays are oldest-first, but different tickers may have
+      // different lengths (different listing dates, data gaps). Aligning from
+      // the end ensures the most recent entries (same trading days) are paired.
+      // Also cap at 90 trading days to match intra-company pair lookback window.
       var hA = histMap[tA] || [];
       var hB = histMap[tB] || [];
-      var minLen = Math.min(hA.length, hB.length);
+      var LOOKBACK = 90;
+      var minLen = Math.min(hA.length, hB.length, LOOKBACK);
       var spreads = [];
       for (var k = 0; k < minLen; k++) {
-        spreads.push(hA[k] - hB[k]);
+        spreads.push(hA[hA.length - minLen + k] - hB[hB.length - minLen + k]);
       }
 
       var histCount = spreads.length;
