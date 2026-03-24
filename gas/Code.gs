@@ -134,6 +134,37 @@ function doGet(e) {
       var pairZ = parseFloat((e && e.parameter && e.parameter.z) || 0);
       result = { ok: true, analysisData: analyzeSinglePair_(pairTa, pairTb, pairPa, pairPb, pairZ) };
     }
+    else if (action === 'getTradeAlerts') {
+      result = { ok: true, tradeAlerts: getTradeAlerts_() };
+    }
+    else if (action === 'getBacktestResults') {
+      var btZThreshold = parseFloat((e && e.parameter && e.parameter.zThreshold) || 2.0);
+      var btExitZ = parseFloat((e && e.parameter && e.parameter.exitZ) || 0.5);
+      var btMaxHold = parseInt((e && e.parameter && e.parameter.maxHold) || 60);
+      var btMode = (e && e.parameter && e.parameter.mode) ? e.parameter.mode : 'all';
+      result = { ok: true, backtestData: runBacktest_(btZThreshold, btExitZ, btMaxHold, btMode) };
+    }
+    else if (action === 'getJournalAnalytics') {
+      result = { ok: true, journalAnalytics: getJournalAnalytics_() };
+    }
+    else if (action === 'getDividendCapture') {
+      result = { ok: true, divCapture: getDividendCapture_() };
+    }
+    else if (action === 'getRegimeData') {
+      result = { ok: true, regimeData: getRegimeData_() };
+    }
+    else if (action === 'getCorrelationMonitor') {
+      result = { ok: true, correlationData: getCorrelationMonitor_() };
+    }
+    else if (action === 'saveNotificationSettings') {
+      var chatId = (e && e.parameter && e.parameter.chatId) ? e.parameter.chatId : '';
+      var botToken = (e && e.parameter && e.parameter.botToken) ? e.parameter.botToken : '';
+      saveNotificationSettings_(chatId, botToken);
+      result = { ok: true, message: 'Notification settings saved' };
+    }
+    else if (action === 'getNotificationSettings') {
+      result = { ok: true, settings: getNotificationSettings_() };
+    }
     else {
       result = { ok: false, message: "Unknown action: " + action };
     }
@@ -2127,6 +2158,9 @@ function closeTradeInSheet(id) {
       var exitA = live ? live.priceA : costA;
       var exitB = live ? live.priceB : costB;
       var exitZ = live ? live.z : 0;
+      if (!live) {
+        Logger.log('WARNING: closeTradeInSheet — live data unavailable for ' + pairId + '. Using entry prices as exit prices (PnL will be $0 cap gains).');
+      }
       var capGains = ((exitA - costA) * sA) + ((exitB - costB) * sB);
       var pnl = capGains + rcvdDiv - paidDiv;
       // Write to ClosedTrades
@@ -2181,7 +2215,9 @@ function partialCloseTradeInSheet(id, reduceA, reduceB) {
       var exitB = live ? live.priceB : costB;
       var exitZ = live ? live.z : 0;
       // PnL: capital gains on closed portion + proportional dividends
-      var capGains = ((exitA - costA) * closedA * signA) + ((exitB - costB) * closedB * signB);
+      // FIX: capGains uses signed sizes (closedA*signA) for direction, not closedA*signA again
+      // For long (signA=+1): profit = (exit-cost)*shares. For short (signA=-1): profit = (cost-exit)*shares = (exit-cost)*(-shares)
+      var capGains = ((exitA - costA) * (closedA * signA)) + ((exitB - costB) * (closedB * signB));
       var pnl = capGains + closedRcvdDiv - closedPaidDiv;
       // Write closed portion to ClosedTrades
       var closed = ss.getSheetByName('ClosedTrades');
