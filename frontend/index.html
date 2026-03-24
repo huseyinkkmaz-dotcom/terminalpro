@@ -437,6 +437,9 @@ td:last-child{border-radius:0 10px 10px 0;border-right:1px solid var(--border)}
 <div class="nav-item" onclick="tabMacro(this)">Macro Value</div>
 <div class="nav-item" onclick="tabAnalytics(this)">Analytics</div>
 <div class="nav-item" onclick="tab('history',this)">History</div>
+<div class="nav-item" onclick="tabJournal(this)">Journal</div>
+<div class="nav-item" onclick="tabDivCapture(this)">Div Capture</div>
+<div class="nav-item" onclick="tabBacktest(this)">Backtest</div>
 <div class="live-switch"><span class="switch-label">Live (5m)</span><label><input type="checkbox" class="switch-input" id="autoRefresh" onchange="toggleLive()"><div class="switch-slider"></div></label></div>
 <div class="conn-dot loading" id="connDot" title="API Status"></div>
 </div>
@@ -570,6 +573,70 @@ td:last-child{border-radius:0 10px 10px 0;border-right:1px solid var(--border)}
 <div id="historySummary" style="display:flex;gap:15px;margin-bottom:20px"></div>
 <div style="overflow-x:auto">
 <table id="historyTable"><thead><tr><th>Instrument</th><th>Type</th><th>Entry</th><th>Exit</th><th>Size</th><th>Open</th><th>Close</th><th>Hold</th><th class="mono-data">Cap Gains</th><th class="mono-data">Net Div</th><th class="mono-data">Net PnL</th><th>Return</th><th>Journal</th></tr></thead><tbody></tbody></table>
+</div>
+</div>
+<!-- ═══ JOURNAL ANALYTICS TAB ═══ -->
+<div id="journalTab" class="tab-content">
+<h2 style="font-size:14px;font-weight:900;color:var(--subtext);text-transform:uppercase;margin:0 0 25px 0">Trade Journal Analytics</h2>
+<div id="journalLoading" style="text-align:center;padding:40px;color:var(--subtext)">Loading analytics...</div>
+<div id="journalContent" style="display:none">
+<div id="journalCards" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px;margin-bottom:30px"></div>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:25px">
+<div>
+<h3 style="font-size:11px;font-weight:900;color:var(--subtext);text-transform:uppercase;margin:0 0 15px 0">Monthly Performance</h3>
+<div id="journalMonthly" style="overflow-x:auto"><table id="monthlyTable"><thead><tr><th>Month</th><th>Trades</th><th>Win Rate</th><th class="mono-data">PnL</th></tr></thead><tbody></tbody></table></div>
+</div>
+<div>
+<h3 style="font-size:11px;font-weight:900;color:var(--subtext);text-transform:uppercase;margin:0 0 15px 0">Strategy Breakdown</h3>
+<div id="journalStrategy"></div>
+<h3 style="font-size:11px;font-weight:900;color:var(--subtext);text-transform:uppercase;margin:15px 0">Equity Curve</h3>
+<div id="journalEquity" style="height:120px;background:var(--card);border:1px solid var(--border);border-radius:10px;padding:10px;position:relative"></div>
+</div>
+</div>
+</div>
+</div>
+<!-- ═══ DIVIDEND CAPTURE TAB ═══ -->
+<div id="divCaptureTab" class="tab-content">
+<h2 style="font-size:14px;font-weight:900;color:var(--subtext);text-transform:uppercase;margin:0 0 15px 0">Dividend Capture Opportunities</h2>
+<div id="divCapLoading" style="text-align:center;padding:40px;color:var(--subtext)">Loading dividend data...</div>
+<div id="divCapContent" style="display:none">
+<div id="divCapSummary" style="display:flex;gap:12px;margin-bottom:20px"></div>
+<div style="margin-bottom:15px">
+<label style="font-size:9px;font-weight:900;color:var(--subtext);text-transform:uppercase;margin-right:8px">FILTER:</label>
+<button class="filter-pill active" onclick="divCapFilter('all',this)">All</button>
+<button class="filter-pill" onclick="divCapFilter('aligned',this)">Aligned Only</button>
+<button class="filter-pill" onclick="divCapFilter('week',this)">&le; 7 Days</button>
+</div>
+<div style="overflow-x:auto">
+<table id="divCapTable"><thead><tr><th>Pair</th><th>Mode</th><th>Z-Score</th><th>Div Leg</th><th>Days</th><th>Ex-Div A</th><th>Ex-Div B</th><th>Est Div/Qtr</th><th>Yield A</th><th>Yield B</th><th>Aligned</th></tr></thead><tbody></tbody></table>
+</div>
+</div>
+</div>
+<!-- ═══ BACKTEST TAB ═══ -->
+<div id="backtestTab" class="tab-content">
+<h2 style="font-size:14px;font-weight:900;color:var(--subtext);text-transform:uppercase;margin:0 0 20px 0">Backtest Engine</h2>
+<div style="display:flex;gap:15px;align-items:flex-end;margin-bottom:25px;flex-wrap:wrap">
+<div><label style="font-size:9px;font-weight:900;color:var(--subtext);text-transform:uppercase;display:block;margin-bottom:6px">Z Entry Threshold</label><input id="btZEntry" type="number" value="2.0" step="0.1" min="1.0" max="4.0" style="background:var(--card);border:1px solid var(--border);color:var(--text);padding:10px 14px;border-radius:6px;font-family:'JetBrains Mono';font-size:13px;width:90px"></div>
+<div><label style="font-size:9px;font-weight:900;color:var(--subtext);text-transform:uppercase;display:block;margin-bottom:6px">Z Exit Target</label><input id="btZExit" type="number" value="0.5" step="0.1" min="0" max="2.0" style="background:var(--card);border:1px solid var(--border);color:var(--text);padding:10px 14px;border-radius:6px;font-family:'JetBrains Mono';font-size:13px;width:90px"></div>
+<div><label style="font-size:9px;font-weight:900;color:var(--subtext);text-transform:uppercase;display:block;margin-bottom:6px">Max Hold (days)</label><input id="btMaxHold" type="number" value="60" step="5" min="10" max="180" style="background:var(--card);border:1px solid var(--border);color:var(--text);padding:10px 14px;border-radius:6px;font-family:'JetBrains Mono';font-size:13px;width:90px"></div>
+<div><label style="font-size:9px;font-weight:900;color:var(--subtext);text-transform:uppercase;display:block;margin-bottom:6px">Mode</label><select id="btMode" style="background:var(--card);border:1px solid var(--border);color:var(--text);padding:10px 14px;border-radius:6px;font-size:12px;width:110px"><option value="all">All Pairs</option><option value="intra">Intra Only</option><option value="credit">Credit Only</option></select></div>
+<button id="btRunBtn" onclick="runBacktest()" style="background:var(--accent);color:white;border:none;padding:12px 28px;border-radius:6px;font-size:11px;font-weight:900;cursor:pointer;text-transform:uppercase;letter-spacing:1px">Run Backtest</button>
+</div>
+<div id="btLoading" style="display:none;text-align:center;padding:40px;color:var(--subtext)">Running backtest... this may take a minute.</div>
+<div id="btResults" style="display:none">
+<div id="btCards" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px;margin-bottom:25px"></div>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:25px">
+<div>
+<h3 style="font-size:11px;font-weight:900;color:var(--subtext);text-transform:uppercase;margin:0 0 15px 0">Equity Curve</h3>
+<div id="btEquity" style="height:150px;background:var(--card);border:1px solid var(--border);border-radius:10px;padding:10px;position:relative"></div>
+</div>
+<div>
+<h3 style="font-size:11px;font-weight:900;color:var(--subtext);text-transform:uppercase;margin:0 0 15px 0">Top Pairs by Trade Count</h3>
+<div style="overflow-x:auto"><table id="btPairsTable"><thead><tr><th>Pair</th><th>Trades</th><th>Win Rate</th><th class="mono-data">Total PnL</th></tr></thead><tbody></tbody></table></div>
+</div>
+</div>
+<h3 style="font-size:11px;font-weight:900;color:var(--subtext);text-transform:uppercase;margin:25px 0 15px 0">Sample Trades</h3>
+<div style="overflow-x:auto"><table id="btTradesTable"><thead><tr><th>Pair</th><th>Mode</th><th>Entry Z</th><th>Exit Z</th><th>Hold</th><th>Exit Reason</th><th class="mono-data">PnL</th></tr></thead><tbody></tbody></table></div>
 </div>
 </div>
 </div>
@@ -1633,6 +1700,212 @@ function toggleMacroCreditDd(){var el=document.getElementById('macroCreditDropdo
 function macroPickSec(sec,label){macroCurrentSec=sec;var el=document.getElementById('macroSecLabel');if(el)el.innerText=label;var dd=document.getElementById('macroSecDropdown');if(dd)dd.classList.remove('open');macroApplyAllFilters();}
 function macroPickCredit(cr,label){macroCurrentCredit=cr;var el=document.getElementById('macroCreditLabel');if(el)el.innerText=label;var dd=document.getElementById('macroCreditDropdown');if(dd)dd.classList.remove('open');macroApplyAllFilters();}
 document.addEventListener('click',function(e){var d1=document.getElementById('macroSecDropdown');if(d1&&!d1.contains(e.target))d1.classList.remove('open');var d2=document.getElementById('macroCreditDropdown');if(d2&&!d2.contains(e.target))d2.classList.remove('open');});
+// ═══════════════════════════════════════════════════════════════════
+// JOURNAL ANALYTICS TAB
+// ═══════════════════════════════════════════════════════════════════
+async function tabJournal(el){
+document.querySelectorAll('.tab-content').forEach(x=>x.classList.remove('active'));
+document.querySelectorAll('.nav-item').forEach(x=>x.classList.remove('active'));
+document.getElementById('journalTab').classList.add('active');
+el.classList.add('active');
+await loadJournalAnalytics();
+}
+async function loadJournalAnalytics(){
+document.getElementById('journalLoading').style.display='block';
+document.getElementById('journalContent').style.display='none';
+try{
+var data=await apiGet('getJournalAnalytics');
+if(data&&data.ok&&data.journalAnalytics){renderJournalAnalytics(data.journalAnalytics);}
+else{document.getElementById('journalLoading').innerHTML='<div style="font-size:28px;margin-bottom:12px">&#128202;</div><div style="font-weight:900;margin-bottom:8px">No Trade History</div><div>Close some trades to see journal analytics.</div>';}
+}catch(e){document.getElementById('journalLoading').innerHTML='Failed to load analytics.';}
+}
+function renderJournalAnalytics(ja){
+document.getElementById('journalLoading').style.display='none';
+document.getElementById('journalContent').style.display='block';
+if(!ja||ja.trades===0){document.getElementById('journalContent').innerHTML='<div style="text-align:center;padding:40px;color:var(--subtext)"><div style="font-size:28px;margin-bottom:12px">&#128202;</div><div style="font-weight:900">No closed trades yet</div></div>';return;}
+var cards=[
+{label:'Total Trades',val:ja.trades,clr:'var(--accent)'},
+{label:'Win Rate',val:ja.winRate+'%',clr:ja.winRate>=50?'var(--low)':'var(--high)'},
+{label:'Total PnL',val:(ja.totalPnl>=0?'+':'')+ja.totalPnl+'$',clr:ja.totalPnl>=0?'var(--low)':'var(--high)'},
+{label:'Avg PnL/Trade',val:(ja.avgPnl>=0?'+':'')+ja.avgPnl+'$',clr:ja.avgPnl>=0?'var(--low)':'var(--high)'},
+{label:'Avg Return',val:ja.avgReturn+'%',clr:ja.avgReturn>=0?'var(--low)':'var(--high)'},
+{label:'Avg Hold',val:ja.avgHold+'d',clr:'var(--accent)'},
+{label:'Profit Factor',val:ja.profitFactor,clr:ja.profitFactor>=1.5?'var(--low)':(ja.profitFactor>=1?'var(--yellow)':'var(--high)')},
+{label:'Expectancy',val:(ja.expectancy>=0?'+':'')+ja.expectancy+'$',clr:ja.expectancy>=0?'var(--low)':'var(--high)'},
+{label:'Biggest Win',val:'+'+ja.biggestWin+'$',clr:'var(--low)'},
+{label:'Biggest Loss',val:ja.biggestLoss+'$',clr:'var(--high)'},
+{label:'Max Win Streak',val:ja.maxWinStreak,clr:'var(--low)'},
+{label:'Max Loss Streak',val:ja.maxLossStreak,clr:'var(--high)'}
+];
+var ch='';cards.forEach(function(c){ch+='<div style="background:var(--card);border:1px solid var(--border);border-radius:10px;padding:14px 16px"><div style="font-size:9px;font-weight:900;color:var(--subtext);text-transform:uppercase;margin-bottom:8px">'+c.label+'</div><div style="font-family:JetBrains Mono;font-size:18px;font-weight:900;color:'+c.clr+'">'+c.val+'</div></div>';});
+document.getElementById('journalCards').innerHTML=ch;
+// Monthly table
+var mb=document.querySelector('#monthlyTable tbody');
+var mh='';
+if(ja.monthly&&ja.monthly.length>0){
+ja.monthly.forEach(function(m){var pc=m.pnl>=0?'var(--low)':'var(--high)';mh+='<tr><td>'+m.month+'</td><td>'+m.trades+'</td><td>'+m.winRate+'%</td><td class="mono-data" style="color:'+pc+'">'+(m.pnl>=0?'+':'')+m.pnl+'$</td></tr>';});
+}else{mh='<tr><td colspan="4" style="color:var(--subtext);text-align:center">No monthly data</td></tr>';}
+mb.innerHTML=mh;
+// Strategy breakdown
+var stratEl=document.getElementById('journalStrategy');
+var sh='';
+if(ja.byStrategy){Object.keys(ja.byStrategy).forEach(function(k){var s=ja.byStrategy[k];var wr=s.trades>0?(s.wins/s.trades*100).toFixed(1):0;var pc=s.pnl>=0?'var(--low)':'var(--high)';sh+='<div style="background:var(--card);border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:8px"><div style="display:flex;justify-content:space-between;align-items:center"><span style="font-size:11px;font-weight:900;text-transform:uppercase;color:'+(k==='credit'?'var(--purple)':'var(--accent)')+'">'+k+'</span><span style="font-family:JetBrains Mono;font-weight:900;color:'+pc+'">'+(s.pnl>=0?'+':'')+s.pnl.toFixed(2)+'$</span></div><div style="font-size:10px;color:var(--subtext);margin-top:4px">'+s.trades+' trades · '+wr+'% win rate</div></div>';});}
+stratEl.innerHTML=sh;
+// Equity curve (simple SVG from closed trade PnLs — cumulative)
+drawJournalEquity(ja);
+}
+function drawJournalEquity(ja){
+var el=document.getElementById('journalEquity');
+if(!ja.monthly||ja.monthly.length<2){el.innerHTML='<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--subtext);font-size:11px">Need 2+ months of data</div>';return;}
+var cumPnls=[];var cum=0;
+ja.monthly.forEach(function(m){cum+=m.pnl;cumPnls.push(cum);});
+var w=el.clientWidth-20,h=el.clientHeight-20;
+var mn=Math.min.apply(null,cumPnls),mx=Math.max.apply(null,cumPnls);
+if(mn===mx){mn-=1;mx+=1;}
+var pts=cumPnls.map(function(v,i){var x=10+i/(cumPnls.length-1)*w;var y=10+(1-(v-mn)/(mx-mn))*h;return x+','+y;}).join(' ');
+var clr=cum>=0?'var(--low)':'var(--high)';
+el.innerHTML='<svg width="100%" height="100%" viewBox="0 0 '+(w+20)+' '+(h+20)+'"><polyline points="'+pts+'" fill="none" stroke="'+clr+'" stroke-width="2"/></svg>';
+}
+// ═══════════════════════════════════════════════════════════════════
+// DIVIDEND CAPTURE TAB
+// ═══════════════════════════════════════════════════════════════════
+var divCapData=[];
+async function tabDivCapture(el){
+document.querySelectorAll('.tab-content').forEach(x=>x.classList.remove('active'));
+document.querySelectorAll('.nav-item').forEach(x=>x.classList.remove('active'));
+document.getElementById('divCaptureTab').classList.add('active');
+el.classList.add('active');
+await loadDivCapture();
+}
+async function loadDivCapture(){
+document.getElementById('divCapLoading').style.display='block';
+document.getElementById('divCapContent').style.display='none';
+try{
+var data=await apiGet('getDividendCapture');
+if(data&&data.ok&&data.divCapture){divCapData=data.divCapture.pairs||[];renderDivCapture(data.divCapture);}
+else{document.getElementById('divCapLoading').innerHTML='<div style="font-size:28px;margin-bottom:12px">&#128176;</div><div style="font-weight:900">No dividend capture data available</div>';}
+}catch(e){document.getElementById('divCapLoading').innerHTML='Failed to load dividend data.';}
+}
+function renderDivCapture(dc){
+document.getElementById('divCapLoading').style.display='none';
+document.getElementById('divCapContent').style.display='block';
+var s=dc.summary||{};
+var sh='';
+var sumCards=[
+{label:'Total Opportunities',val:s.total||0,clr:'var(--accent)'},
+{label:'Z+Div Aligned',val:s.aligned||0,clr:'var(--low)'},
+{label:'Avg Days to Div',val:(s.avgDaysToDiv||0).toFixed(1),clr:'var(--yellow)'},
+{label:'Est. Div/100sh (Aligned)',val:'$'+(s.totalEstDivPer100Shares||0).toFixed(2),clr:'var(--low)'}
+];
+sumCards.forEach(function(c){sh+='<div style="background:var(--card);border:1px solid var(--border);border-radius:10px;padding:14px 18px;flex:1"><div style="font-size:9px;font-weight:900;color:var(--subtext);text-transform:uppercase;margin-bottom:8px">'+c.label+'</div><div style="font-family:JetBrains Mono;font-size:18px;font-weight:900;color:'+c.clr+'">'+c.val+'</div></div>';});
+document.getElementById('divCapSummary').innerHTML=sh;
+renderDivCapTable(dc.pairs||[]);
+}
+function renderDivCapTable(pairs){
+var tb=document.querySelector('#divCapTable tbody');
+if(!pairs||pairs.length===0){tb.innerHTML='<tr><td colspan="11" style="text-align:center;color:var(--subtext);padding:30px">No dividend capture opportunities found</td></tr>';return;}
+var h='';
+pairs.forEach(function(p){
+var zClr=Math.abs(p.z)>=2?'var(--high)':(Math.abs(p.z)>=1.5?'var(--yellow)':'var(--low)');
+var dayClr=p.divDays<=7?'var(--high)':(p.divDays<=14?'var(--yellow)':'var(--subtext)');
+var alignTag=p.aligned?'<span style="color:var(--low);font-weight:900">&#10003; YES</span>':'<span style="color:var(--subtext)">NO</span>';
+var modeClr=p.mode==='credit'?'var(--purple)':'var(--accent)';
+h+='<tr class="divCap-row" data-aligned="'+p.aligned+'" data-days="'+p.divDays+'">';
+h+='<td><span style="font-weight:900;color:'+modeClr+'">'+p.tA+'</span> <span style="color:var(--subtext)">/</span> <span style="font-weight:900;color:'+modeClr+'">'+p.tB+'</span></td>';
+h+='<td><span style="font-size:10px;font-weight:900;text-transform:uppercase;color:'+modeClr+'">'+p.mode+'</span></td>';
+h+='<td style="font-family:JetBrains Mono;font-weight:900;color:'+zClr+'">'+p.z.toFixed(2)+'&sigma;</td>';
+h+='<td style="font-weight:900">Leg '+p.divLeg+'</td>';
+h+='<td style="font-family:JetBrains Mono;font-weight:900;color:'+dayClr+'">'+p.divDays+'d</td>';
+h+='<td style="font-size:11px">'+(p.divDateA||'—')+'</td>';
+h+='<td style="font-size:11px">'+(p.divDateB||'—')+'</td>';
+h+='<td style="font-family:JetBrains Mono;font-weight:900;color:var(--low)">$'+p.estDivAmt.toFixed(2)+'</td>';
+h+='<td style="font-size:11px">'+p.yA+'%</td>';
+h+='<td style="font-size:11px">'+p.yB+'%</td>';
+h+='<td>'+alignTag+'</td>';
+h+='</tr>';
+});
+tb.innerHTML=h;
+}
+function divCapFilter(type,btn){
+document.querySelectorAll('#divCaptureTab .filter-pill').forEach(function(p){p.classList.remove('active');});
+btn.classList.add('active');
+document.querySelectorAll('.divCap-row').forEach(function(r){
+var aligned=r.getAttribute('data-aligned')==='true';
+var days=parseInt(r.getAttribute('data-days'))||0;
+if(type==='aligned'&&!aligned)r.style.display='none';
+else if(type==='week'&&days>7)r.style.display='none';
+else r.style.display='';
+});
+}
+// ═══════════════════════════════════════════════════════════════════
+// BACKTEST TAB
+// ═══════════════════════════════════════════════════════════════════
+async function tabBacktest(el){
+document.querySelectorAll('.tab-content').forEach(x=>x.classList.remove('active'));
+document.querySelectorAll('.nav-item').forEach(x=>x.classList.remove('active'));
+document.getElementById('backtestTab').classList.add('active');
+el.classList.add('active');
+}
+async function runBacktest(){
+var btn=document.getElementById('btRunBtn');
+btn.disabled=true;btn.innerText='RUNNING...';
+document.getElementById('btLoading').style.display='block';
+document.getElementById('btResults').style.display='none';
+try{
+var data=await apiGet('getBacktestResults',{
+zThreshold:document.getElementById('btZEntry').value,
+exitZ:document.getElementById('btZExit').value,
+maxHold:document.getElementById('btMaxHold').value,
+mode:document.getElementById('btMode').value
+});
+if(data&&data.ok&&data.backtestData){renderBacktest(data.backtestData);}
+else{document.getElementById('btLoading').innerHTML='<div style="color:var(--high)">Backtest failed: '+(data&&data.message?data.message:'unknown error')+'</div>';}
+}catch(e){document.getElementById('btLoading').innerHTML='<div style="color:var(--high)">Error: '+e.message+'</div>';}
+finally{btn.disabled=false;btn.innerText='RUN BACKTEST';}
+}
+function renderBacktest(bt){
+document.getElementById('btLoading').style.display='none';
+document.getElementById('btResults').style.display='block';
+if(!bt||bt.trades===0){document.getElementById('btResults').innerHTML='<div style="text-align:center;padding:40px;color:var(--subtext)"><div style="font-size:28px;margin-bottom:12px">&#128202;</div><div style="font-weight:900">No trades triggered</div><div style="margin-top:8px">Try lowering the Z entry threshold or changing the mode.</div></div>';return;}
+var p=bt.params||{};
+var cards=[
+{label:'Total Trades',val:bt.trades,clr:'var(--accent)'},
+{label:'Win Rate',val:bt.winRate+'%',clr:bt.winRate>=50?'var(--low)':'var(--high)'},
+{label:'Total PnL (100sh)',val:(bt.totalPnl>=0?'+':'')+bt.totalPnl+'$',clr:bt.totalPnl>=0?'var(--low)':'var(--high)'},
+{label:'Avg PnL/Trade',val:(bt.avgPnl>=0?'+':'')+bt.avgPnl+'$',clr:bt.avgPnl>=0?'var(--low)':'var(--high)'},
+{label:'Avg Win',val:'+'+bt.avgWin+'$',clr:'var(--low)'},
+{label:'Avg Loss',val:bt.avgLoss+'$',clr:'var(--high)'},
+{label:'Profit Factor',val:bt.profitFactor,clr:bt.profitFactor>=1.5?'var(--low)':(bt.profitFactor>=1?'var(--yellow)':'var(--high)')},
+{label:'Max Drawdown',val:'-'+bt.maxDrawdown+'$',clr:'var(--high)'},
+{label:'Avg Hold',val:bt.avgHold+'d',clr:'var(--accent)'},
+{label:'Z-Revert Exits',val:bt.zRevertPct+'%',clr:'var(--low)'}
+];
+var ch='';cards.forEach(function(c){ch+='<div style="background:var(--card);border:1px solid var(--border);border-radius:10px;padding:14px 16px"><div style="font-size:9px;font-weight:900;color:var(--subtext);text-transform:uppercase;margin-bottom:8px">'+c.label+'</div><div style="font-family:JetBrains Mono;font-size:18px;font-weight:900;color:'+c.clr+'">'+c.val+'</div></div>';});
+document.getElementById('btCards').innerHTML=ch;
+// Equity curve
+var ec=bt.equityCurve||[];
+var eqEl=document.getElementById('btEquity');
+if(ec.length>=2){
+var w=eqEl.clientWidth-20,h=eqEl.clientHeight-20;
+var mn=Math.min.apply(null,ec),mx=Math.max.apply(null,ec);
+if(mn===mx){mn-=1;mx+=1;}
+// Zero line
+var zeroY=10+(1-(0-mn)/(mx-mn))*h;
+var pts=ec.map(function(v,i){var x=10+i/(ec.length-1)*w;var y=10+(1-(v-mn)/(mx-mn))*h;return x+','+y;}).join(' ');
+var clr=ec[ec.length-1]>=0?'var(--low)':'var(--high)';
+eqEl.innerHTML='<svg width="100%" height="100%" viewBox="0 0 '+(w+20)+' '+(h+20)+'"><line x1="10" y1="'+zeroY+'" x2="'+(w+10)+'" y2="'+zeroY+'" stroke="var(--border)" stroke-dasharray="4"/><polyline points="'+pts+'" fill="none" stroke="'+clr+'" stroke-width="2"/></svg>';
+}else{eqEl.innerHTML='<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--subtext)">Not enough data</div>';}
+// Top pairs table
+var ptb=document.querySelector('#btPairsTable tbody');
+var ph='';
+(bt.topPairs||[]).forEach(function(p){var pc=p.pnl>=0?'var(--low)':'var(--high)';ph+='<tr><td style="font-weight:900">'+p.id+'</td><td>'+p.trades+'</td><td>'+p.winRate+'%</td><td class="mono-data" style="color:'+pc+'">'+(p.pnl>=0?'+':'')+p.pnl+'$</td></tr>';});
+ptb.innerHTML=ph||'<tr><td colspan="4" style="color:var(--subtext);text-align:center">No pair data</td></tr>';
+// Sample trades table
+var stb=document.querySelector('#btTradesTable tbody');
+var th='';
+(bt.sampleTrades||[]).forEach(function(t){var pc=t.pnl>=0?'var(--low)':'var(--high)';var mc=t.mode==='credit'?'var(--purple)':'var(--accent)';th+='<tr><td style="font-weight:900">'+t.tA+' / '+t.tB+'</td><td style="color:'+mc+';font-weight:900;font-size:10px;text-transform:uppercase">'+t.mode+'</td><td style="font-family:JetBrains Mono">'+t.entryZ+'&sigma;</td><td style="font-family:JetBrains Mono">'+t.exitZ+'&sigma;</td><td>'+t.holdDays+'d</td><td style="font-size:10px;font-weight:900">'+(t.exitReason==='Z_REVERT'?'<span style="color:var(--low)">Z REVERT</span>':'<span style="color:var(--yellow)">MAX HOLD</span>')+'</td><td class="mono-data" style="color:'+pc+'">'+(t.pnl>=0?'+':'')+t.pnl+'$</td></tr>';});
+stb.innerHTML=th||'<tr><td colspan="7" style="color:var(--subtext);text-align:center">No sample trades</td></tr>';
+}
 </script>
 </body>
 </html>

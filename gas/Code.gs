@@ -2755,6 +2755,580 @@ function runNightlyScreener() {
   }
 }
 
+// ═══════════════════════════════════════════════════════════════════
+// JOURNAL ANALYTICS — aggregated stats from closed trades
+// ═══════════════════════════════════════════════════════════════════
+function getJournalAnalytics_() {
+  try {
+    var ss = SpreadsheetApp.getActive();
+    var sheet = ss.getSheetByName('ClosedTrades');
+    if (!sheet || sheet.getLastRow() <= 1) return { trades: 0 };
+    var rows = sheet.getDataRange().getValues();
+
+    var wins = 0, losses = 0, totalPnl = 0, totalReturn = 0;
+    var holdDays = [], pnls = [], returns = [];
+    var byMonth = {}, bySector = {}, byStrategy = {};
+    var streak = 0, maxWinStreak = 0, maxLossStreak = 0, curStreakType = null;
+    var biggestWin = 0, biggestLoss = 0;
+
+    // Pre-read credit pair IDs for strategy detection
+    var creditIds = {};
+    var creditSheet = ss.getSheetByName('WebCacheCredit') || ss.getSheetByName('CreditLive');
+    if (creditSheet && creditSheet.getLastRow() > 1) {
+      var cpCol = creditSheet.getRange(2, 1, creditSheet.getLastRow()-1, 1).getValues();
+      for (var ci = 0; ci < cpCol.length; ci++) {
+        if (cpCol[ci][0]) creditIds[cleanId(cpCol[ci][0])] = true;
+      }
+    }
+
+    for (var i = 1; i < rows.length; i++) {
+      var r = rows[i];
+      if (!r[0]) continue;
+      var pnl = parseFloat(r[8]) || 0;
+      var costA = parseFloat(r[2]) || 0;
+      var costB = parseFloat(r[3]) || 0;
+      var sizeA = parseFloat(r[4]) || 0;
+      var sizeB = parseFloat(r[5]) || 0;
+      var entryCost = Math.abs(costA * sizeA) + Math.abs(costB * sizeB);
+      var retPct = entryCost > 0 ? (pnl / entryCost * 100) : 0;
+      var openDate = r[6] instanceof Date ? r[6] : null;
+      var closeDate = r[7] instanceof Date ? r[7] : null;
+      var hold = (openDate && closeDate) ? Math.floor((closeDate.getTime() - openDate.getTime()) / 86400000) : 0;
+      var paidDiv = parseFloat(r[13]) || 0;
+      var rcvdDiv = parseFloat(r[14]) || 0;
+      var entryZ = parseFloat(r[1]) || 0;
+      var exitZ = parseFloat(r[11]) || 0;
+      var sector = '';
+      var cid = cleanId(r[0]);
+      var strategy = creditIds[cid] ? 'credit' : 'intra';
+
+      // Try to get sector from Live/WebCache
+      // (lightweight — just use the pair ID to determine strategy)
+
+      totalPnl += pnl;
+      totalReturn += retPct;
+      pnls.push(pnl);
+      returns.push(retPct);
+      holdDays.push(hold);
+
+      if (pnl > 0) {
+        wins++;
+        if (pnl > biggestWin) biggestWin = pnl;
+        if (curStreakType === 'win') { streak++; }
+        else { streak = 1; curStreakType = 'win'; }
+        if (streak > maxWinStreak) maxWinStreak = streak;
+      } else {
+        losses++;
+        if (pnl < biggestLoss) biggestLoss = pnl;
+        if (curStreakType === 'loss') { streak++; }
+        else { streak = 1; curStreakType = 'loss'; }
+        if (streak > maxLossStreak) maxLossStreak = streak;
+      }
+
+      // Monthly breakdown
+      if (closeDate) {
+        var mk = closeDate.getFullYear() + '-' + ('0' + (closeDate.getMonth()+1)).slice(-2);
+        if (!byMonth[mk]) byMonth[mk] = { pnl: 0, trades: 0, wins: 0 };
+        byMonth[mk].pnl += pnl;
+        byMonth[mk].trades++;
+        if (pnl > 0) byMonth[mk].wins++;
+      }
+
+      // Strategy breakdown
+      if (!byStrategy[strategy]) byStrategy[strategy] = { pnl: 0, trades: 0, wins: 0 };
+      byStrategy[strategy].pnl += pnl;
+      byStrategy[strategy].trades++;
+      if (pnl > 0) byStrategy[strategy].wins++;
+    }
+
+    var totalTrades = wins + losses;
+    var winRate = totalTrades > 0 ? (wins / totalTrades * 100) : 0;
+    var avgPnl = totalTrades > 0 ? totalPnl / totalTrades : 0;
+    var avgReturn = totalTrades > 0 ? totalReturn / totalTrades : 0;
+    var avgHold = holdDays.length > 0 ? holdDays.reduce(function(a,b){return a+b;},0) / holdDays.length : 0;
+    var avgWin = wins > 0 ? pnls.filter(function(p){return p>0;}).reduce(function(a,b){return a+b;},0) / wins : 0;
+    var avgLoss = losses > 0 ? pnls.filter(function(p){return p<=0;}).reduce(function(a,b){return a+b;},0) / losses : 0;
+    var profitFactor = Math.abs(avgLoss) > 0 ? avgWin / Math.abs(avgLoss) : 0;
+
+    // Expectancy = (WinRate × AvgWin) - (LossRate × |AvgLoss|)
+    var expectancy = (winRate/100 * avgWin) - ((1 - winRate/100) * Math.abs(avgLoss));
+
+    // Sortino-like: downside deviation
+    var negReturns = returns.filter(function(r){return r < 0;});
+    var downsideDev = 0;
+    if (negReturns.length > 0) {
+      var sumSq = negReturns.reduce(function(a,r){return a + r*r;}, 0);
+      downsideDev = Math.sqrt(sumSq / negReturns.length);
+    }
+    var sortinoLike = downsideDev > 0 ? (avgReturn / downsideDev) : 0;
+
+    // Monthly array sorted
+    var monthlyArr = Object.keys(byMonth).sort().map(function(k) {
+      return { month: k, pnl: parseFloat(byMonth[k].pnl.toFixed(2)), trades: byMonth[k].trades, winRate: byMonth[k].trades > 0 ? parseFloat((byMonth[k].wins/byMonth[k].trades*100).toFixed(1)) : 0 };
+    });
+
+    return {
+      trades: totalTrades,
+      wins: wins,
+      losses: losses,
+      winRate: parseFloat(winRate.toFixed(1)),
+      totalPnl: parseFloat(totalPnl.toFixed(2)),
+      avgPnl: parseFloat(avgPnl.toFixed(2)),
+      avgReturn: parseFloat(avgReturn.toFixed(2)),
+      avgHold: parseFloat(avgHold.toFixed(1)),
+      avgWin: parseFloat(avgWin.toFixed(2)),
+      avgLoss: parseFloat(avgLoss.toFixed(2)),
+      biggestWin: parseFloat(biggestWin.toFixed(2)),
+      biggestLoss: parseFloat(biggestLoss.toFixed(2)),
+      profitFactor: parseFloat(profitFactor.toFixed(2)),
+      expectancy: parseFloat(expectancy.toFixed(2)),
+      sortinoLike: parseFloat(sortinoLike.toFixed(2)),
+      maxWinStreak: maxWinStreak,
+      maxLossStreak: maxLossStreak,
+      monthly: monthlyArr,
+      byStrategy: byStrategy
+    };
+  } catch(e) {
+    console.error('getJournalAnalytics_ error: ' + e);
+    return { trades: 0, error: e.toString() };
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// DIVIDEND CAPTURE — pairs where div timing + Z-score align
+// ═══════════════════════════════════════════════════════════════════
+function getDividendCapture_() {
+  try {
+    var ss = SpreadsheetApp.getActive();
+    var now = new Date();
+
+    // Load dividend dates
+    var divMap = {};
+    var divSheet = ss.getSheetByName('DivDates');
+    if (divSheet && divSheet.getLastRow() > 1) {
+      var divData = divSheet.getRange(2, 1, divSheet.getLastRow() - 1, 3).getValues();
+      for (var d = 0; d < divData.length; d++) {
+        var tk = String(divData[d][0]).toUpperCase().trim();
+        var dt = divData[d][1];
+        if (tk && dt instanceof Date) divMap[tk] = dt;
+      }
+    }
+
+    // Load all pairs from both WebCache + WebCacheCredit
+    var allPairs = [];
+    var sheets = [
+      { name: 'WebCache', fallback: 'Live', mode: 'intra' },
+      { name: 'WebCacheCredit', fallback: null, mode: 'credit' }
+    ];
+    for (var s = 0; s < sheets.length; s++) {
+      var sh = ss.getSheetByName(sheets[s].name);
+      if ((!sh || sh.getLastRow() <= 1) && sheets[s].fallback) {
+        sh = ss.getSheetByName(sheets[s].fallback);
+      }
+      if (!sh || sh.getLastRow() <= 1) continue;
+      var data = sh.getDataRange().getValues();
+      for (var i = 1; i < data.length; i++) {
+        var row = data[i];
+        if (!row[0]) continue;
+        var tA = String(row[1]).toUpperCase().trim();
+        var tB = String(row[2]).toUpperCase().trim();
+        var priceA = parseFloat(row[3]) || 0;
+        var priceB = parseFloat(row[4]) || 0;
+        if (priceA <= 0 || priceB <= 0) continue;
+        var stdev = parseFloat(row[11]) || 0;
+        if (stdev <= 0.001) continue;
+        var z = parseFloat(row[12]) || 0;
+        var couponA = parseFloat(row[8]) || 0;
+        var couponB = parseFloat(row[9]) || 0;
+        var yieldA = parseFloat(row[6]) || 0;
+        var yieldB = parseFloat(row[7]) || 0;
+
+        // Need at least one leg with upcoming div
+        var divA = divMap[tA] || null;
+        var divB = divMap[tB] || null;
+        if (!divA && !divB) continue;
+
+        // Only show pairs where at least one div is within 45 days
+        var daysA = divA ? Math.floor((divA.getTime() - now.getTime()) / 86400000) : 999;
+        var daysB = divB ? Math.floor((divB.getTime() - now.getTime()) / 86400000) : 999;
+        var nearestDays = Math.min(daysA, daysB);
+        if (nearestDays < -7 || nearestDays > 45) continue; // skip if past or too far
+
+        // Determine which leg is the dividend leg and if Z-score favors going long on it
+        var divLeg = daysA <= daysB ? 'A' : 'B';
+        var divDays = divLeg === 'A' ? daysA : daysB;
+        // Z > 0 means spread above mean → short A / long B
+        // Z < 0 means spread below mean → long A / short B
+        // "Aligned" = Z suggests going LONG on the div-paying leg (capture the dividend)
+        var aligned = false;
+        if (divLeg === 'A' && z < 0) aligned = true;  // Z says long A, A pays div
+        if (divLeg === 'B' && z > 0) aligned = true;  // Z says long B, B pays div
+        // Also capture where BOTH have divs
+        if (divA && divB && daysA >= 0 && daysB >= 0 && daysA <= 45 && daysB <= 45) {
+          aligned = true; // both legs pay — always interesting
+        }
+
+        var divYield = divLeg === 'A' ? couponA : couponB;
+        var divPrice = divLeg === 'A' ? priceA : priceB;
+        var estDivAmt = divPrice > 0 && divYield > 0 ? (divYield / 4) : 0; // quarterly est
+
+        var info = parseTickerInfo(row[0]);
+        allPairs.push({
+          id: info.id, tA: info.tA, tB: info.tB,
+          mode: sheets[s].mode,
+          z: parseFloat(z.toFixed(2)),
+          pA: parseFloat(priceA.toFixed(2)),
+          pB: parseFloat(priceB.toFixed(2)),
+          yA: yieldA > 1 ? parseFloat(yieldA.toFixed(2)) : parseFloat((yieldA*100).toFixed(2)),
+          yB: yieldB > 1 ? parseFloat(yieldB.toFixed(2)) : parseFloat((yieldB*100).toFixed(2)),
+          divLeg: divLeg,
+          divDays: divDays,
+          divDateA: divA ? divA.toISOString().split('T')[0] : null,
+          divDateB: divB ? divB.toISOString().split('T')[0] : null,
+          aligned: aligned,
+          estDivAmt: parseFloat(estDivAmt.toFixed(2)),
+          sec: row[15] || ''
+        });
+      }
+    }
+
+    // Sort: aligned first, then by days to div ascending
+    allPairs.sort(function(a, b) {
+      if (a.aligned !== b.aligned) return a.aligned ? -1 : 1;
+      return a.divDays - b.divDays;
+    });
+
+    // Summary stats
+    var alignedCount = allPairs.filter(function(p){return p.aligned;}).length;
+    var avgDays = allPairs.length > 0 ? allPairs.reduce(function(s,p){return s+p.divDays;},0) / allPairs.length : 0;
+    var totalEstDiv = allPairs.filter(function(p){return p.aligned;}).reduce(function(s,p){return s+p.estDivAmt;},0);
+
+    return {
+      pairs: allPairs,
+      summary: {
+        total: allPairs.length,
+        aligned: alignedCount,
+        avgDaysToDiv: parseFloat(avgDays.toFixed(1)),
+        totalEstDivPer100Shares: parseFloat(totalEstDiv.toFixed(2))
+      }
+    };
+  } catch(e) {
+    console.error('getDividendCapture_ error: ' + e);
+    return { pairs: [], summary: {}, error: e.toString() };
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// BACKTEST ENGINE — historical "what if" simulation
+// ═══════════════════════════════════════════════════════════════════
+function runBacktest_(zThreshold, exitZ, maxHold, mode) {
+  try {
+    var ss = SpreadsheetApp.getActive();
+    var histMap = readTickerHistMap_(ss);
+    if (Object.keys(histMap).length === 0) return { error: 'No history data' };
+
+    // Load all pair definitions
+    var pairDefs = [];
+    var pairSources = [];
+    if (mode === 'all' || mode === 'intra') pairSources.push({ sheet: 'Pairs', mode: 'intra' });
+    if (mode === 'all' || mode === 'credit') pairSources.push({ sheet: 'CreditPairs', mode: 'credit' });
+
+    for (var s = 0; s < pairSources.length; s++) {
+      var pSheet = ss.getSheetByName(pairSources[s].sheet);
+      if (!pSheet || pSheet.getLastRow() <= 1) continue;
+      var pData = pSheet.getDataRange().getValues();
+      for (var p = 1; p < pData.length; p++) {
+        if (!pData[p][0]) continue;
+        var info = parseTickerInfo(pData[p][0]);
+        pairDefs.push({ id: info.id, tA: info.tA, tB: info.tB, sector: pData[p][3] || '', mode: pairSources[s].mode });
+      }
+    }
+
+    // Also load Levels/CreditLevels for mean/stdev
+    var statsMap = {}; // cleanId → {mean, stdev}
+    var lvlSheets = ['Levels', 'CreditLevels'];
+    for (var ls = 0; ls < lvlSheets.length; ls++) {
+      var lvl = ss.getSheetByName(lvlSheets[ls]);
+      if (!lvl || lvl.getLastRow() <= 1) continue;
+      var lvlData = lvl.getDataRange().getValues();
+      // Levels columns: A=PairID, B=Mean, C=StDev, D=Lower, E=Upper, F=HistCount
+      for (var li = 1; li < lvlData.length; li++) {
+        if (!lvlData[li][0]) continue;
+        var cid = cleanId(lvlData[li][0]);
+        var mn = parseFloat(lvlData[li][1]) || 0;
+        var sd = parseFloat(lvlData[li][2]) || 0;
+        if (sd > 0.001) statsMap[cid] = { mean: mn, stdev: sd };
+      }
+    }
+
+    var allTrades = [];
+    var startTime = new Date().getTime();
+    var MAX_MS = 240000; // 4 min safety
+
+    for (var pi = 0; pi < pairDefs.length; pi++) {
+      if (new Date().getTime() - startTime > MAX_MS) break;
+      var pair = pairDefs[pi];
+      var tA = pair.tA.toUpperCase().trim();
+      var tB = pair.tB.toUpperCase().trim();
+      var histA = histMap[tA];
+      var histB = histMap[tB];
+      if (!histA || !histB) continue;
+
+      // Align from end (most recent prices align)
+      var len = Math.min(histA.length, histB.length);
+      if (len < 30) continue; // need minimum history
+      var pricesA = histA.slice(histA.length - len);
+      var pricesB = histB.slice(histB.length - len);
+
+      // Compute rolling 30-day mean and stdev for Z-scores
+      var WINDOW = 30;
+      if (len < WINDOW + 5) continue;
+
+      var openTrade = null;
+      for (var day = WINDOW; day < len; day++) {
+        // Rolling window stats
+        var sumSpr = 0, sumSprSq = 0;
+        for (var w = day - WINDOW; w < day; w++) {
+          var spr = pricesA[w] - pricesB[w];
+          sumSpr += spr;
+          sumSprSq += spr * spr;
+        }
+        var rollMean = sumSpr / WINDOW;
+        var rollVar = (sumSprSq / WINDOW) - (rollMean * rollMean);
+        var rollStdev = rollVar > 0 ? Math.sqrt(rollVar) : 0.001;
+        var spread = pricesA[day] - pricesB[day];
+        var zScore = (spread - rollMean) / rollStdev;
+
+        if (!openTrade) {
+          // Entry signal
+          if (Math.abs(zScore) >= zThreshold) {
+            openTrade = {
+              entryDay: day,
+              entryZ: zScore,
+              entrySpread: spread,
+              entryPriceA: pricesA[day],
+              entryPriceB: pricesB[day],
+              dirA: zScore > 0 ? -1 : 1, // Z>0 → short spread (short A, long B)
+              dirB: zScore > 0 ? 1 : -1
+            };
+          }
+        } else {
+          // Exit conditions: Z crosses back inside exitZ band, or max hold reached
+          var holdDays = day - openTrade.entryDay;
+          var exitNow = Math.abs(zScore) <= exitZ || holdDays >= maxHold;
+          if (exitNow) {
+            var exitSpread = spread;
+            var pnlA = (pricesA[day] - openTrade.entryPriceA) * openTrade.dirA;
+            var pnlB = (pricesB[day] - openTrade.entryPriceB) * openTrade.dirB;
+            var tradePnl = (pnlA + pnlB) * 100; // per 100 shares
+            allTrades.push({
+              id: pair.id, tA: pair.tA, tB: pair.tB,
+              mode: pair.mode, sector: pair.sector,
+              entryDay: openTrade.entryDay, exitDay: day,
+              holdDays: holdDays,
+              entryZ: parseFloat(openTrade.entryZ.toFixed(2)),
+              exitZ: parseFloat(zScore.toFixed(2)),
+              entrySpread: parseFloat(openTrade.entrySpread.toFixed(4)),
+              exitSpread: parseFloat(exitSpread.toFixed(4)),
+              pnl: parseFloat(tradePnl.toFixed(2)),
+              exitReason: holdDays >= maxHold ? 'MAX_HOLD' : 'Z_REVERT'
+            });
+            openTrade = null;
+          }
+        }
+      }
+    }
+
+    // Aggregate stats
+    var totalTrades = allTrades.length;
+    if (totalTrades === 0) return { trades: 0, params: { zThreshold: zThreshold, exitZ: exitZ, maxHold: maxHold, mode: mode } };
+
+    var winTrades = allTrades.filter(function(t){return t.pnl > 0;});
+    var lossTrades = allTrades.filter(function(t){return t.pnl <= 0;});
+    var totalPnl = allTrades.reduce(function(s,t){return s+t.pnl;},0);
+    var avgPnl = totalPnl / totalTrades;
+    var avgHold = allTrades.reduce(function(s,t){return s+t.holdDays;},0) / totalTrades;
+    var avgWin = winTrades.length > 0 ? winTrades.reduce(function(s,t){return s+t.pnl;},0) / winTrades.length : 0;
+    var avgLoss = lossTrades.length > 0 ? lossTrades.reduce(function(s,t){return s+t.pnl;},0) / lossTrades.length : 0;
+    var maxDrawdown = 0, peak = 0, cumPnl = 0;
+    var equityCurve = [];
+    for (var ec = 0; ec < allTrades.length; ec++) {
+      cumPnl += allTrades[ec].pnl;
+      equityCurve.push(parseFloat(cumPnl.toFixed(2)));
+      if (cumPnl > peak) peak = cumPnl;
+      var dd = peak - cumPnl;
+      if (dd > maxDrawdown) maxDrawdown = dd;
+    }
+
+    var zRevertExits = allTrades.filter(function(t){return t.exitReason==='Z_REVERT';}).length;
+
+    // By-pair breakdown (top 10 by trade count)
+    var pairStats = {};
+    for (var bt = 0; bt < allTrades.length; bt++) {
+      var pid = allTrades[bt].id;
+      if (!pairStats[pid]) pairStats[pid] = { trades: 0, pnl: 0, wins: 0 };
+      pairStats[pid].trades++;
+      pairStats[pid].pnl += allTrades[bt].pnl;
+      if (allTrades[bt].pnl > 0) pairStats[pid].wins++;
+    }
+    var topPairs = Object.keys(pairStats).map(function(k) {
+      return { id: k, trades: pairStats[k].trades, pnl: parseFloat(pairStats[k].pnl.toFixed(2)), winRate: parseFloat((pairStats[k].wins/pairStats[k].trades*100).toFixed(1)) };
+    }).sort(function(a,b){return b.trades - a.trades;}).slice(0, 15);
+
+    return {
+      trades: totalTrades,
+      wins: winTrades.length,
+      losses: lossTrades.length,
+      winRate: parseFloat((winTrades.length / totalTrades * 100).toFixed(1)),
+      totalPnl: parseFloat(totalPnl.toFixed(2)),
+      avgPnl: parseFloat(avgPnl.toFixed(2)),
+      avgWin: parseFloat(avgWin.toFixed(2)),
+      avgLoss: parseFloat(avgLoss.toFixed(2)),
+      avgHold: parseFloat(avgHold.toFixed(1)),
+      profitFactor: Math.abs(avgLoss) > 0 ? parseFloat((avgWin / Math.abs(avgLoss)).toFixed(2)) : 0,
+      maxDrawdown: parseFloat(maxDrawdown.toFixed(2)),
+      zRevertPct: parseFloat((zRevertExits / totalTrades * 100).toFixed(1)),
+      equityCurve: equityCurve,
+      topPairs: topPairs,
+      sampleTrades: allTrades.slice(0, 50),
+      params: { zThreshold: zThreshold, exitZ: exitZ, maxHold: maxHold, mode: mode }
+    };
+  } catch(e) {
+    console.error('runBacktest_ error: ' + e);
+    return { trades: 0, error: e.toString() };
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// TRADE ALERTS — smart entry signals from current alert data
+// ═══════════════════════════════════════════════════════════════════
+function getTradeAlerts_() {
+  try {
+    var alerts = [];
+    try { var intra = getAlertData('intra'); if (intra && intra.length) alerts = alerts.concat(intra.map(function(a){a.mode='intra';return a;})); } catch(e){}
+    try { var credit = getAlertData('credit'); if (credit && credit.length) alerts = alerts.concat(credit.map(function(a){a.mode='credit';return a;})); } catch(e){}
+
+    // Score and rank alerts
+    var scored = [];
+    for (var i = 0; i < alerts.length; i++) {
+      var a = alerts[i];
+      var absZ = Math.abs(parseFloat(a.z) || 0);
+      var age = parseInt(a.age) || 0;
+      var liq = parseFloat(a.liq) || 0;
+      var expProfit = parseFloat(a.expProfit) || 0;
+      var volSpike = a.volSpike ? true : false;
+
+      // Trend convergence: check if Z is moving toward 0
+      var trend = a.zTrend || [];
+      var converging = false;
+      if (trend.length >= 2) {
+        var last = Math.abs(parseFloat(trend[trend.length-1]) || 0);
+        var prev = Math.abs(parseFloat(trend[trend.length-2]) || 0);
+        converging = last < prev;
+      }
+
+      // Score (similar to frontend composite but server-side)
+      var score = 0;
+      score += Math.min(absZ / 3.5 * 25, 25); // Z magnitude (25pts)
+      score += Math.min(expProfit / 2.0 * 20, 20); // Expected profit (20pts)
+      score += Math.min(liq / 200000 * 15, 15); // Liquidity (15pts)
+      if (volSpike) score += 5; // Volume spike (5pts)
+      if (converging) score += 10; // Trend convergence (10pts)
+      // Age sweet spot: 3-14 days is ideal
+      if (age >= 3 && age <= 14) score += 10;
+      else if (age > 14 && age <= 30) score += 5;
+      score += Math.min((parseFloat(a.yA)||0) / 10 * 5, 5); // Yield (5pts)
+
+      // Div proximity penalty
+      var divA = a.exDivA ? Math.floor((new Date(a.exDivA).getTime() - new Date().getTime()) / 86400000) : 999;
+      var divB = a.exDivB ? Math.floor((new Date(a.exDivB).getTime() - new Date().getTime()) / 86400000) : 999;
+      if (Math.min(divA, divB) <= 7) score -= 5;
+
+      scored.push({
+        id: a.id, tA: a.tA, tB: a.tB, mode: a.mode,
+        z: a.z, age: age, liq: liq, expProfit: a.expProfit,
+        volSpike: volSpike, converging: converging,
+        score: parseFloat(Math.max(0, Math.min(100, score)).toFixed(1)),
+        yA: a.yA, yB: a.yB, sec: a.sec,
+        exDivA: a.exDivA, exDivB: a.exDivB
+      });
+    }
+
+    scored.sort(function(a,b){ return b.score - a.score; });
+    return scored.slice(0, 30);
+  } catch(e) {
+    console.error('getTradeAlerts_ error: ' + e);
+    return [];
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// POSITION SIZING — capital allocation calculator
+// ═══════════════════════════════════════════════════════════════════
+function getPositionSizing_(capital, maxPctPerTrade) {
+  try {
+    if (!capital || capital <= 0) return { error: 'Capital must be positive' };
+    var maxPct = maxPctPerTrade > 0 ? maxPctPerTrade : 10;
+    var maxPerTrade = capital * (maxPct / 100);
+
+    // Get current alerts for sizing recommendations
+    var alerts = [];
+    try { var intra = getAlertData('intra'); if (intra && intra.length) alerts = alerts.concat(intra); } catch(e){}
+    try { var credit = getAlertData('credit'); if (credit && credit.length) alerts = alerts.concat(credit); } catch(e){}
+
+    // Get open trades for exposure tracking
+    var openTrades = getOpenTrades();
+    var currentExposure = 0;
+    for (var ot = 0; ot < openTrades.length; ot++) {
+      var t = openTrades[ot];
+      currentExposure += Math.abs(parseFloat(t.pA) * t.sA) + Math.abs(parseFloat(t.pB) * t.sB);
+    }
+
+    var recommendations = [];
+    for (var i = 0; i < Math.min(alerts.length, 20); i++) {
+      var a = alerts[i];
+      var pA = parseFloat(a.pA) || 0;
+      var pB = parseFloat(a.pB) || 0;
+      if (pA <= 0 || pB <= 0) continue;
+
+      var absZ = Math.abs(parseFloat(a.z) || 0);
+      // Scale allocation by Z magnitude: higher Z = larger position (conviction)
+      var zScale = Math.min(absZ / 3.0, 1.0); // caps at Z=3
+      var allocAmount = maxPerTrade * zScale;
+      // Shares per leg: split allocation evenly between legs
+      var halfAlloc = allocAmount / 2;
+      var sharesA = Math.floor(halfAlloc / pA);
+      var sharesB = Math.floor(halfAlloc / pB);
+      if (sharesA <= 0 || sharesB <= 0) continue;
+
+      var actualCost = (sharesA * pA) + (sharesB * pB);
+      var pctOfCapital = (actualCost / capital * 100);
+
+      recommendations.push({
+        id: a.id, tA: a.tA, tB: a.tB,
+        z: a.z, pA: pA, pB: pB,
+        sharesA: sharesA, sharesB: sharesB,
+        allocation: parseFloat(actualCost.toFixed(2)),
+        pctOfCapital: parseFloat(pctOfCapital.toFixed(2)),
+        expProfit: a.expProfit
+      });
+    }
+
+    return {
+      capital: capital,
+      maxPctPerTrade: maxPct,
+      maxPerTrade: parseFloat(maxPerTrade.toFixed(2)),
+      openPositions: openTrades.length,
+      currentExposure: parseFloat(currentExposure.toFixed(2)),
+      availableCapital: parseFloat((capital - currentExposure).toFixed(2)),
+      recommendations: recommendations
+    };
+  } catch(e) {
+    console.error('getPositionSizing_ error: ' + e);
+    return { error: e.toString() };
+  }
+}
+
 // Read pre-computed screener results
 function getScreenerData_() {
   try {
