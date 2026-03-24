@@ -139,8 +139,7 @@ function doGet(e) {
     }
     else if (action === 'getPositionSizing') {
       var psMaxLoss = parseFloat((e && e.parameter && e.parameter.maxLoss) || 500);
-      var psStopSigma = parseFloat((e && e.parameter && e.parameter.stopSigma) || 2);
-      result = { ok: true, sizingData: getPositionSizing_(psMaxLoss, psStopSigma) };
+      result = { ok: true, sizingData: getPositionSizing_(psMaxLoss) };
     }
     else if (action === 'getBacktestResults') {
       var btZThreshold = parseFloat((e && e.parameter && e.parameter.zThreshold) || 2.0);
@@ -3265,10 +3264,10 @@ function getTradeAlerts_() {
 // ═══════════════════════════════════════════════════════════════════
 // POSITION SIZING — capital allocation calculator
 // ═══════════════════════════════════════════════════════════════════
-function getPositionSizing_(maxLossPerTrade, stopSigma) {
+function getPositionSizing_(maxLossPerTrade) {
   try {
     if (!maxLossPerTrade || maxLossPerTrade <= 0) return { error: 'Max loss per trade must be positive' };
-    var sigma = stopSigma > 0 ? stopSigma : 2;
+    var sigma = 2; // hardcoded 2σ stop width
 
     // Get current alerts for sizing recommendations
     var alerts = [];
@@ -3350,7 +3349,6 @@ function getPositionSizing_(maxLossPerTrade, stopSigma) {
 
     return {
       maxLossPerTrade: maxLossPerTrade,
-      stopSigma: sigma,
       openPositions: openTrades.length,
       currentExposure: parseFloat(currentExposure.toFixed(2)),
       recommendations: recommendations

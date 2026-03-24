@@ -437,10 +437,9 @@ td:last-child{border-radius:0 10px 10px 0;border-right:1px solid var(--border)}
 <div style="font-weight:900;font-size:16px;text-transform:uppercase">Position Sizer</div>
 <button onclick="closeSizer()" style="background:none;border:none;color:var(--subtext);font-size:22px;cursor:pointer">&times;</button>
 </div>
-<div style="font-size:10px;color:var(--subtext);margin-bottom:16px;line-height:1.5">Size by max dollar loss per trade. Shares = MaxLoss / (StopSigma &times; StDev). Half-Kelly shown when screener data exists.</div>
-<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:20px">
-<div><label style="font-size:9px;font-weight:900;color:var(--subtext);text-transform:uppercase;display:block;margin-bottom:6px">Max Loss Per Trade ($)</label><input id="psMaxLoss" type="number" value="500" step="50" min="50" style="width:100%;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:12px;border-radius:6px;font-family:JetBrains Mono;font-size:13px;box-sizing:border-box"></div>
-<div><label style="font-size:9px;font-weight:900;color:var(--subtext);text-transform:uppercase;display:block;margin-bottom:6px">Stop Width (&sigma;)</label><input id="psStopSigma" type="number" value="2" step="0.5" min="0.5" max="5" style="width:100%;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:12px;border-radius:6px;font-family:JetBrains Mono;font-size:13px;box-sizing:border-box"></div>
+<div style="font-size:10px;color:var(--subtext);margin-bottom:16px;line-height:1.5">Size by max dollar loss per trade. Shares = MaxLoss / (2&sigma; &times; StDev). Half-Kelly shown when screener data exists.</div>
+<div style="margin-bottom:20px">
+<label style="font-size:9px;font-weight:900;color:var(--subtext);text-transform:uppercase;display:block;margin-bottom:6px">Max Loss Per Trade ($)</label><input id="psMaxLoss" type="number" value="500" step="50" min="50" style="width:100%;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:12px;border-radius:6px;font-family:JetBrains Mono;font-size:13px;box-sizing:border-box">
 </div>
 <button onclick="runSizer()" id="psRunBtn" style="background:var(--accent);color:white;border:none;padding:12px 24px;border-radius:6px;font-size:11px;font-weight:900;cursor:pointer;text-transform:uppercase;letter-spacing:1px;width:100%;margin-bottom:20px">Calculate Sizing</button>
 <div id="psLoading" style="display:none;text-align:center;padding:20px;color:var(--subtext)">Calculating...</div>
@@ -1787,7 +1786,7 @@ document.getElementById('psLoading').style.display='block';
 document.getElementById('psSummary').style.display='none';
 document.getElementById('psTable').style.display='none';
 try{
-var data=await apiGet('getPositionSizing',{maxLoss:document.getElementById('psMaxLoss').value,stopSigma:document.getElementById('psStopSigma').value});
+var data=await apiGet('getPositionSizing',{maxLoss:document.getElementById('psMaxLoss').value});
 if(data&&data.ok&&data.sizingData){renderSizer(data.sizingData);}
 else{document.getElementById('psLoading').innerHTML='<span style="color:var(--high)">Failed: '+(data&&data.message?data.message:'unknown')+'</span>';}
 }catch(e){document.getElementById('psLoading').innerHTML='<span style="color:var(--high)">Error: '+e.message+'</span>';}
@@ -1801,7 +1800,7 @@ document.getElementById('psSummary').style.display='block';
 document.getElementById('psSummary').innerHTML=
 '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px">'+
 '<div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:10px"><div style="font-size:9px;font-weight:900;color:var(--subtext);text-transform:uppercase;margin-bottom:4px">Max Loss/Trade</div><div style="font-family:JetBrains Mono;font-weight:900;color:var(--accent)">$'+sd.maxLossPerTrade+'</div></div>'+
-'<div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:10px"><div style="font-size:9px;font-weight:900;color:var(--subtext);text-transform:uppercase;margin-bottom:4px">Stop Width</div><div style="font-family:JetBrains Mono;font-weight:900;color:var(--yellow)">'+sd.stopSigma+'&sigma;</div></div>'+
+'<div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:10px"><div style="font-size:9px;font-weight:900;color:var(--subtext);text-transform:uppercase;margin-bottom:4px">Open Positions</div><div style="font-family:JetBrains Mono;font-weight:900;color:var(--yellow)">'+sd.openPositions+'</div></div>'+
 '<div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:10px"><div style="font-size:9px;font-weight:900;color:var(--subtext);text-transform:uppercase;margin-bottom:4px">Current Exposure</div><div style="font-family:JetBrains Mono;font-weight:900;color:var(--yellow)">$'+sd.currentExposure+'</div></div>'+
 '</div>';
 // Recommendations table
