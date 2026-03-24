@@ -1857,7 +1857,7 @@ zThreshold:document.getElementById('btZEntry').value,
 exitZ:document.getElementById('btZExit').value,
 maxHold:document.getElementById('btMaxHold').value,
 mode:document.getElementById('btMode').value
-});
+},300000);
 if(data&&data.ok&&data.backtestData){renderBacktest(data.backtestData);}
 else{document.getElementById('btLoading').innerHTML='<div style="color:var(--high)">Backtest failed: '+(data&&data.message?data.message:'unknown error')+'</div>';}
 }catch(e){document.getElementById('btLoading').innerHTML='<div style="color:var(--high)">Error: '+e.message+'</div>';}
