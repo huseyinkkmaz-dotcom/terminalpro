@@ -432,19 +432,20 @@ td:last-child{border-radius:0 10px 10px 0;border-right:1px solid var(--border)}
 </div>
 <!-- ═══ POSITION SIZING MODAL ═══ -->
 <div id="posSizeModal" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.7);z-index:2000;justify-content:center;align-items:center">
-<div style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:30px;width:550px;max-width:90vw;max-height:85vh;overflow-y:auto">
+<div style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:30px;width:620px;max-width:90vw;max-height:85vh;overflow-y:auto">
 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px">
 <div style="font-weight:900;font-size:16px;text-transform:uppercase">Position Sizer</div>
 <button onclick="closeSizer()" style="background:none;border:none;color:var(--subtext);font-size:22px;cursor:pointer">&times;</button>
 </div>
+<div style="font-size:10px;color:var(--subtext);margin-bottom:16px;line-height:1.5">Size by max dollar loss per trade. Shares = MaxLoss / (StopSigma &times; StDev). Half-Kelly shown when screener data exists.</div>
 <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:20px">
-<div><label style="font-size:9px;font-weight:900;color:var(--subtext);text-transform:uppercase;display:block;margin-bottom:6px">Total Capital ($)</label><input id="psCapital" type="number" value="100000" step="1000" style="width:100%;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:12px;border-radius:6px;font-family:JetBrains Mono;font-size:13px;box-sizing:border-box"></div>
-<div><label style="font-size:9px;font-weight:900;color:var(--subtext);text-transform:uppercase;display:block;margin-bottom:6px">Max % Per Trade</label><input id="psMaxPct" type="number" value="10" step="1" min="1" max="50" style="width:100%;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:12px;border-radius:6px;font-family:JetBrains Mono;font-size:13px;box-sizing:border-box"></div>
+<div><label style="font-size:9px;font-weight:900;color:var(--subtext);text-transform:uppercase;display:block;margin-bottom:6px">Max Loss Per Trade ($)</label><input id="psMaxLoss" type="number" value="500" step="50" min="50" style="width:100%;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:12px;border-radius:6px;font-family:JetBrains Mono;font-size:13px;box-sizing:border-box"></div>
+<div><label style="font-size:9px;font-weight:900;color:var(--subtext);text-transform:uppercase;display:block;margin-bottom:6px">Stop Width (&sigma;)</label><input id="psStopSigma" type="number" value="2" step="0.5" min="0.5" max="5" style="width:100%;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:12px;border-radius:6px;font-family:JetBrains Mono;font-size:13px;box-sizing:border-box"></div>
 </div>
 <button onclick="runSizer()" id="psRunBtn" style="background:var(--accent);color:white;border:none;padding:12px 24px;border-radius:6px;font-size:11px;font-weight:900;cursor:pointer;text-transform:uppercase;letter-spacing:1px;width:100%;margin-bottom:20px">Calculate Sizing</button>
 <div id="psLoading" style="display:none;text-align:center;padding:20px;color:var(--subtext)">Calculating...</div>
 <div id="psSummary" style="display:none;margin-bottom:16px"></div>
-<div id="psTable" style="display:none;overflow-x:auto"><table id="psResultTable"><thead><tr><th>Pair</th><th>Z</th><th>Shares A</th><th>Shares B</th><th>Allocation</th><th>% Capital</th><th>Exp Profit</th></tr></thead><tbody></tbody></table></div>
+<div id="psTable" style="display:none;overflow-x:auto"><table id="psResultTable"><thead><tr><th>Pair</th><th>Z</th><th>StDev</th><th>Shares</th><th>Notional</th><th>Max Loss</th><th>Kelly</th><th>Exp Profit</th></tr></thead><tbody></tbody></table></div>
 </div>
 </div>
 <!-- ═══ REGIME BANNER ═══ -->
@@ -754,10 +755,10 @@ function computeSetupScore(r, maxEP) {
   var age = parseInt(r.age) || 0;
   var yA = parseFloat(r.yA) || 0, yB = parseFloat(r.yB) || 0;
 
-  // 1. Z-Score magnitude (0-20): non-linear — sweet spot 2.0-2.8, diminishing after 3.0
+  // 1. Z-Score magnitude (0-20): non-linear — sweet spot 2.0-2.8, plateau above (no penalty)
   if (az >= 2.0 && az <= 2.8) score += 15 + (az - 2.0) / 0.8 * 5; // 15-20 in sweet spot
   else if (az > 2.8 && az <= 3.5) score += 20; // plateau — strong but not overextended
-  else if (az > 3.5) score += 18; // slight penalty — may be structural break, not mean-reverting
+  else if (az > 3.5) score += 20; // extended — keep plateau, no penalty
   else score += Math.max(0, (az - 1.8) / 0.2 * 5); // 1.8-2.0 ramp: 0-5pts
 
   // 2. Expected Profit (0-18): scaled to dataset max, slight cap to avoid outlier domination
@@ -1786,7 +1787,7 @@ document.getElementById('psLoading').style.display='block';
 document.getElementById('psSummary').style.display='none';
 document.getElementById('psTable').style.display='none';
 try{
-var data=await apiGet('getPositionSizing',{capital:document.getElementById('psCapital').value,maxPct:document.getElementById('psMaxPct').value});
+var data=await apiGet('getPositionSizing',{maxLoss:document.getElementById('psMaxLoss').value,stopSigma:document.getElementById('psStopSigma').value});
 if(data&&data.ok&&data.sizingData){renderSizer(data.sizingData);}
 else{document.getElementById('psLoading').innerHTML='<span style="color:var(--high)">Failed: '+(data&&data.message?data.message:'unknown')+'</span>';}
 }catch(e){document.getElementById('psLoading').innerHTML='<span style="color:var(--high)">Error: '+e.message+'</span>';}
@@ -1796,30 +1797,35 @@ function renderSizer(sd){
 document.getElementById('psLoading').style.display='none';
 if(sd.error){document.getElementById('psSummary').style.display='block';document.getElementById('psSummary').innerHTML='<div style="color:var(--high)">'+sd.error+'</div>';return;}
 // Summary cards
-var avail=sd.availableCapital||0;
-var ac=avail>=0?'var(--low)':'var(--high)';
 document.getElementById('psSummary').style.display='block';
 document.getElementById('psSummary').innerHTML=
 '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px">'+
-'<div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:10px"><div style="font-size:9px;font-weight:900;color:var(--subtext);text-transform:uppercase;margin-bottom:4px">Max/Trade</div><div style="font-family:JetBrains Mono;font-weight:900;color:var(--accent)">$'+sd.maxPerTrade+'</div></div>'+
+'<div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:10px"><div style="font-size:9px;font-weight:900;color:var(--subtext);text-transform:uppercase;margin-bottom:4px">Max Loss/Trade</div><div style="font-family:JetBrains Mono;font-weight:900;color:var(--accent)">$'+sd.maxLossPerTrade+'</div></div>'+
+'<div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:10px"><div style="font-size:9px;font-weight:900;color:var(--subtext);text-transform:uppercase;margin-bottom:4px">Stop Width</div><div style="font-family:JetBrains Mono;font-weight:900;color:var(--yellow)">'+sd.stopSigma+'&sigma;</div></div>'+
 '<div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:10px"><div style="font-size:9px;font-weight:900;color:var(--subtext);text-transform:uppercase;margin-bottom:4px">Current Exposure</div><div style="font-family:JetBrains Mono;font-weight:900;color:var(--yellow)">$'+sd.currentExposure+'</div></div>'+
-'<div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:10px"><div style="font-size:9px;font-weight:900;color:var(--subtext);text-transform:uppercase;margin-bottom:4px">Available</div><div style="font-family:JetBrains Mono;font-weight:900;color:'+ac+'">$'+avail.toFixed(2)+'</div></div>'+
 '</div>';
 // Recommendations table
 var recs=sd.recommendations||[];
 document.getElementById('psTable').style.display='block';
 var tb=document.querySelector('#psResultTable tbody');
-if(recs.length===0){tb.innerHTML='<tr><td colspan="7" style="text-align:center;color:var(--subtext);padding:20px">No alert pairs available for sizing</td></tr>';return;}
+if(recs.length===0){tb.innerHTML='<tr><td colspan="8" style="text-align:center;color:var(--subtext);padding:20px">No alert pairs available for sizing</td></tr>';return;}
 var h='';
 recs.forEach(function(r){
+var zClr=Math.abs(r.z)>=2?'var(--high)':'var(--yellow)';
+var kellyCell='<span style="color:var(--subtext)">—</span>';
+if(r.kellyShares!==null){
+kellyCell='<span style="color:var(--low);font-weight:900">'+r.kellyShares+'</span>'+
+'<span style="color:var(--subtext);font-size:10px;margin-left:4px">('+r.kellyFraction+'% K, '+r.winRate+'% WR)</span>';
+}
 h+='<tr>';
 h+='<td style="font-weight:900;font-size:12px">'+r.tA+' / '+r.tB+'</td>';
-h+='<td style="font-family:JetBrains Mono;color:'+(Math.abs(r.z)>=2?'var(--high)':'var(--yellow)')+'">'+parseFloat(r.z).toFixed(2)+'&sigma;</td>';
-h+='<td style="font-family:JetBrains Mono;font-weight:900">'+r.sharesA+'</td>';
-h+='<td style="font-family:JetBrains Mono;font-weight:900">'+r.sharesB+'</td>';
-h+='<td style="font-family:JetBrains Mono">$'+r.allocation+'</td>';
-h+='<td style="font-family:JetBrains Mono">'+r.pctOfCapital+'%</td>';
-h+='<td style="font-family:JetBrains Mono;color:var(--low)">$'+r.expProfit+'</td>';
+h+='<td style="font-family:JetBrains Mono;color:'+zClr+'">'+parseFloat(r.z).toFixed(2)+'&sigma;</td>';
+h+='<td style="font-family:JetBrains Mono;color:var(--subtext)">'+r.stdev+'</td>';
+h+='<td style="font-family:JetBrains Mono;font-weight:900">'+r.shares+'</td>';
+h+='<td style="font-family:JetBrains Mono">$'+r.notional.toLocaleString()+'</td>';
+h+='<td style="font-family:JetBrains Mono;color:var(--high)">$'+r.maxLoss+'</td>';
+h+='<td style="font-family:JetBrains Mono">'+kellyCell+'</td>';
+h+='<td style="font-family:JetBrains Mono;color:var(--low)">$'+(r.expProfit||'—')+'</td>';
 h+='</tr>';
 });
 tb.innerHTML=h;

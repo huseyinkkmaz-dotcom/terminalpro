@@ -138,9 +138,9 @@ function doGet(e) {
       result = { ok: true, tradeAlerts: getTradeAlerts_() };
     }
     else if (action === 'getPositionSizing') {
-      var psCapital = parseFloat((e && e.parameter && e.parameter.capital) || 0);
-      var psMaxPct = parseFloat((e && e.parameter && e.parameter.maxPct) || 10);
-      result = { ok: true, sizingData: getPositionSizing_(psCapital, psMaxPct) };
+      var psMaxLoss = parseFloat((e && e.parameter && e.parameter.maxLoss) || 500);
+      var psStopSigma = parseFloat((e && e.parameter && e.parameter.stopSigma) || 2);
+      result = { ok: true, sizingData: getPositionSizing_(psMaxLoss, psStopSigma) };
     }
     else if (action === 'getBacktestResults') {
       var btZThreshold = parseFloat((e && e.parameter && e.parameter.zThreshold) || 2.0);
@@ -3265,11 +3265,10 @@ function getTradeAlerts_() {
 // ═══════════════════════════════════════════════════════════════════
 // POSITION SIZING — capital allocation calculator
 // ═══════════════════════════════════════════════════════════════════
-function getPositionSizing_(capital, maxPctPerTrade) {
+function getPositionSizing_(maxLossPerTrade, stopSigma) {
   try {
-    if (!capital || capital <= 0) return { error: 'Capital must be positive' };
-    var maxPct = maxPctPerTrade > 0 ? maxPctPerTrade : 10;
-    var maxPerTrade = capital * (maxPct / 100);
+    if (!maxLossPerTrade || maxLossPerTrade <= 0) return { error: 'Max loss per trade must be positive' };
+    var sigma = stopSigma > 0 ? stopSigma : 2;
 
     // Get current alerts for sizing recommendations
     var alerts = [];
@@ -3284,43 +3283,76 @@ function getPositionSizing_(capital, maxPctPerTrade) {
       currentExposure += Math.abs(parseFloat(t.pA) * t.sA) + Math.abs(parseFloat(t.pB) * t.sB);
     }
 
+    // Load screener cache for Kelly suggestions
+    var screenerMap = {};
+    try {
+      var scrData = getScreenerData_();
+      if (scrData && scrData.length) {
+        for (var s = 0; s < scrData.length; s++) {
+          var key = String(scrData[s].id || '').replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
+          screenerMap[key] = scrData[s];
+        }
+      }
+    } catch(e){}
+
     var recommendations = [];
     for (var i = 0; i < Math.min(alerts.length, 20); i++) {
       var a = alerts[i];
       var pA = parseFloat(a.pA) || 0;
       var pB = parseFloat(a.pB) || 0;
-      if (pA <= 0 || pB <= 0) continue;
+      var stdev = parseFloat(a.stdev) || 0;
+      if (pA <= 0 || pB <= 0 || stdev <= 0) continue;
 
-      var absZ = Math.abs(parseFloat(a.z) || 0);
-      // Scale allocation by Z magnitude: higher Z = larger position (conviction)
-      var zScale = Math.min(absZ / 3.0, 1.0); // caps at Z=3
-      var allocAmount = maxPerTrade * zScale;
-      // Shares per leg: split allocation evenly between legs
-      var halfAlloc = allocAmount / 2;
-      var sharesA = Math.floor(halfAlloc / pA);
-      var sharesB = Math.floor(halfAlloc / pB);
-      if (sharesA <= 0 || sharesB <= 0) continue;
+      // Core sizing: shares = maxLoss / (stopSigma * stdev)
+      // StDev is the spread standard deviation (price-space)
+      var spreadRisk = sigma * stdev;
+      var shares = Math.floor(maxLossPerTrade / spreadRisk);
+      if (shares <= 0) continue;
 
-      var actualCost = (sharesA * pA) + (sharesB * pB);
-      var pctOfCapital = (actualCost / capital * 100);
+      var notional = shares * (pA + pB);
+      var maxLossActual = shares * spreadRisk;
+
+      // Kelly-informed suggestion
+      var kellyShares = null;
+      var kellyFraction = null;
+      var winRate = null;
+      var scrKey = String(a.id || '').replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
+      var scr = screenerMap[scrKey];
+      if (scr && scr.wr30 !== undefined && scr.ep30 !== undefined) {
+        winRate = parseFloat(scr.wr30) / 100;
+        var avgWin = parseFloat(scr.ep30) || 0;
+        var avgLoss = spreadRisk; // use stop as avg loss
+        if (avgWin > 0 && avgLoss > 0 && winRate > 0 && winRate < 1) {
+          // Kelly fraction: f* = (p * b - q) / b where b = avgWin/avgLoss, p = winRate, q = 1-p
+          var b = avgWin / avgLoss;
+          var kelly = (winRate * b - (1 - winRate)) / b;
+          if (kelly > 0) {
+            kellyFraction = parseFloat((kelly * 100).toFixed(1)); // as percentage
+            // Half-Kelly shares (conservative): kelly/2 * maxLoss-based shares
+            kellyShares = Math.floor(shares * Math.min(kelly * 0.5, 1.0));
+          }
+        }
+      }
 
       recommendations.push({
         id: a.id, tA: a.tA, tB: a.tB,
         z: a.z, pA: pA, pB: pB,
-        sharesA: sharesA, sharesB: sharesB,
-        allocation: parseFloat(actualCost.toFixed(2)),
-        pctOfCapital: parseFloat(pctOfCapital.toFixed(2)),
+        stdev: parseFloat(stdev.toFixed(4)),
+        shares: shares,
+        notional: parseFloat(notional.toFixed(2)),
+        maxLoss: parseFloat(maxLossActual.toFixed(2)),
+        kellyShares: kellyShares,
+        kellyFraction: kellyFraction,
+        winRate: winRate !== null ? parseFloat((winRate * 100).toFixed(1)) : null,
         expProfit: a.expProfit
       });
     }
 
     return {
-      capital: capital,
-      maxPctPerTrade: maxPct,
-      maxPerTrade: parseFloat(maxPerTrade.toFixed(2)),
+      maxLossPerTrade: maxLossPerTrade,
+      stopSigma: sigma,
       openPositions: openTrades.length,
       currentExposure: parseFloat(currentExposure.toFixed(2)),
-      availableCapital: parseFloat((capital - currentExposure).toFixed(2)),
       recommendations: recommendations
     };
   } catch(e) {
