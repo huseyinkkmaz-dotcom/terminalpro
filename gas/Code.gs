@@ -137,6 +137,11 @@ function doGet(e) {
     else if (action === 'getTradeAlerts') {
       result = { ok: true, tradeAlerts: getTradeAlerts_() };
     }
+    else if (action === 'getPositionSizing') {
+      var psCapital = parseFloat((e && e.parameter && e.parameter.capital) || 0);
+      var psMaxPct = parseFloat((e && e.parameter && e.parameter.maxPct) || 10);
+      result = { ok: true, sizingData: getPositionSizing_(psCapital, psMaxPct) };
+    }
     else if (action === 'getBacktestResults') {
       var btZThreshold = parseFloat((e && e.parameter && e.parameter.zThreshold) || 2.0);
       var btExitZ = parseFloat((e && e.parameter && e.parameter.exitZ) || 0.5);
