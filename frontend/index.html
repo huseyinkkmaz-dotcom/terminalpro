@@ -430,6 +430,28 @@ td:last-child{border-radius:0 10px 10px 0;border-right:1px solid var(--border)}
 <div class="journal-saved" id="journalSaved">Saved</div>
 </div>
 </div>
+<!-- ═══ POSITION SIZING MODAL ═══ -->
+<div id="posSizeModal" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.7);z-index:2000;justify-content:center;align-items:center">
+<div style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:30px;width:550px;max-width:90vw;max-height:85vh;overflow-y:auto">
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px">
+<div style="font-weight:900;font-size:16px;text-transform:uppercase">Position Sizer</div>
+<button onclick="closeSizer()" style="background:none;border:none;color:var(--subtext);font-size:22px;cursor:pointer">&times;</button>
+</div>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:20px">
+<div><label style="font-size:9px;font-weight:900;color:var(--subtext);text-transform:uppercase;display:block;margin-bottom:6px">Total Capital ($)</label><input id="psCapital" type="number" value="100000" step="1000" style="width:100%;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:12px;border-radius:6px;font-family:JetBrains Mono;font-size:13px;box-sizing:border-box"></div>
+<div><label style="font-size:9px;font-weight:900;color:var(--subtext);text-transform:uppercase;display:block;margin-bottom:6px">Max % Per Trade</label><input id="psMaxPct" type="number" value="10" step="1" min="1" max="50" style="width:100%;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:12px;border-radius:6px;font-family:JetBrains Mono;font-size:13px;box-sizing:border-box"></div>
+</div>
+<button onclick="runSizer()" id="psRunBtn" style="background:var(--accent);color:white;border:none;padding:12px 24px;border-radius:6px;font-size:11px;font-weight:900;cursor:pointer;text-transform:uppercase;letter-spacing:1px;width:100%;margin-bottom:20px">Calculate Sizing</button>
+<div id="psLoading" style="display:none;text-align:center;padding:20px;color:var(--subtext)">Calculating...</div>
+<div id="psSummary" style="display:none;margin-bottom:16px"></div>
+<div id="psTable" style="display:none;overflow-x:auto"><table id="psResultTable"><thead><tr><th>Pair</th><th>Z</th><th>Shares A</th><th>Shares B</th><th>Allocation</th><th>% Capital</th><th>Exp Profit</th></tr></thead><tbody></tbody></table></div>
+</div>
+</div>
+<!-- ═══ REGIME BANNER ═══ -->
+<div id="regimeBanner" style="display:none;background:var(--card);border-bottom:1px solid var(--border);padding:6px 20px;font-size:10px;font-weight:900;text-align:center;letter-spacing:1px;text-transform:uppercase">
+<span id="regimeLabel" style="color:var(--subtext)">REGIME: —</span>
+<span id="regimeDetail" style="color:var(--subtext);margin-left:12px;font-weight:400"></span>
+</div>
 <div class="nav-bar">
 <div class="nav-item active" onclick="tab('alerts',this)">Market Alerts</div>
 <div class="nav-item" onclick="tab('portfolio',this)">Active Portfolio</div>
@@ -440,6 +462,7 @@ td:last-child{border-radius:0 10px 10px 0;border-right:1px solid var(--border)}
 <div class="nav-item" onclick="tabJournal(this)">Journal</div>
 <div class="nav-item" onclick="tabDivCapture(this)">Div Capture</div>
 <div class="nav-item" onclick="tabBacktest(this)">Backtest</div>
+<div class="nav-item" onclick="openSizer()" style="color:var(--yellow)">Sizer</div>
 <div class="live-switch"><span class="switch-label">Live (5m)</span><label><input type="checkbox" class="switch-input" id="autoRefresh" onchange="toggleLive()"><div class="switch-slider"></div></label></div>
 <div class="conn-dot loading" id="connDot" title="API Status"></div>
 </div>
@@ -720,46 +743,71 @@ function sqPopulateCalc(idx){
     document.querySelectorAll('.nav-item').forEach(function(x){if(x.textContent.trim().indexOf('Analytics')!==-1)x.classList.add('active');});
   }
 }
-// ── COMPOSITE SETUP SCORE (0-100) ──
-// Instant frontend computation from existing alert data. No API call.
+// ── COMPOSITE SETUP SCORE (0-100) — V2 ──
+// Refined scoring with spread symmetry, screener tiers, trend momentum,
+// and backtest-informed weights. Frontend-only, no API call.
 function computeSetupScore(r, maxEP) {
   var score = 0;
-  // 1. Z-Score magnitude (0-20): higher |Z| = stronger signal
   var az = Math.abs(parseFloat(r.z) || 0);
-  score += Math.min(20, (az - 1.8) / (3.0 - 1.8) * 15 + 5); // 1.8→5, 3.0→20
-  // 2. Expected Profit (0-20): scaled relative to best in dataset
   var ep = parseFloat(r.expProfit) || 0;
-  if (maxEP > 0) score += (ep / maxEP) * 20;
-  // 3. Liquidity (0-15): higher volume = easier execution
   var liq = parseFloat(r.liq) || 0;
-  if (liq > 100000) score += 15;
-  else if (liq > 50000) score += 12;
-  else if (liq > 20000) score += 8;
-  else score += 3;
-  // 4. Volume Spike bonus (0-5): institutional interest
-  if (r.volSpike) score += 5;
-  // 5. Z-Trend convergence (0-15): is Z moving toward 0?
-  if (r.zTrend && r.zTrend.length >= 2) {
-    var recent = r.zTrend.slice(-3).map(function(v) { return Math.abs(parseFloat(v)); });
-    var converging = 0;
-    for (var i = 1; i < recent.length; i++) { if (recent[i] < recent[i-1]) converging++; }
-    var diverging = 0;
-    for (var i = 1; i < recent.length; i++) { if (recent[i] > recent[i-1]) diverging++; }
-    if (converging > diverging) score += 15;
-    else if (converging === diverging) score += 7;
-    else score += 0; // diverging = bad
-  }
-  // 6. Age sweet spot (0-10): 2-7 days ideal, too fresh or too stale = lower
   var age = parseInt(r.age) || 0;
-  if (age >= 2 && age <= 7) score += 10;
-  else if (age === 1 || (age >= 8 && age <= 14)) score += 6;
-  else if (age === 0) score += 4; // NEW, unproven
-  else score += 2; // stale
-  // 7. Yield (0-10): higher combined yield = more carry
   var yA = parseFloat(r.yA) || 0, yB = parseFloat(r.yB) || 0;
+
+  // 1. Z-Score magnitude (0-20): non-linear — sweet spot 2.0-2.8, diminishing after 3.0
+  if (az >= 2.0 && az <= 2.8) score += 15 + (az - 2.0) / 0.8 * 5; // 15-20 in sweet spot
+  else if (az > 2.8 && az <= 3.5) score += 20; // plateau — strong but not overextended
+  else if (az > 3.5) score += 18; // slight penalty — may be structural break, not mean-reverting
+  else score += Math.max(0, (az - 1.8) / 0.2 * 5); // 1.8-2.0 ramp: 0-5pts
+
+  // 2. Expected Profit (0-18): scaled to dataset max, slight cap to avoid outlier domination
+  if (maxEP > 0) score += Math.min(18, (ep / maxEP) * 18);
+
+  // 3. Liquidity (0-12): tighter bands with smooth scaling
+  if (liq > 200000) score += 12;
+  else if (liq > 100000) score += 10;
+  else if (liq > 50000) score += 8;
+  else if (liq > 20000) score += 5;
+  else if (liq > 5000) score += 2;
+  else score += 0; // illiquid = dangerous
+
+  // 4. Volume Spike (0-5): institutional interest signal
+  if (r.volSpike) score += 5;
+
+  // 5. Z-Trend momentum (0-15): weighted recent convergence with velocity
+  if (r.zTrend && r.zTrend.length >= 2) {
+    var absVals = r.zTrend.map(function(v) { return Math.abs(parseFloat(v) || 0); });
+    var recent = absVals.slice(-4); // up to last 4 data points
+    var totalDelta = 0;
+    for (var i = 1; i < recent.length; i++) {
+      var weight = i / (recent.length - 1); // more recent = heavier weight
+      totalDelta += (recent[i-1] - recent[i]) * weight; // positive = converging
+    }
+    if (totalDelta > 0.3) score += 15; // strong convergence
+    else if (totalDelta > 0.1) score += 10; // moderate convergence
+    else if (totalDelta > -0.1) score += 5; // flat/neutral
+    else score += 0; // diverging = avoid
+  }
+
+  // 6. Age curve (0-10): 3-10 days ideal, smooth falloff
+  if (age >= 3 && age <= 10) score += 10;
+  else if (age >= 1 && age <= 2) score += 6; // too fresh — might keep moving
+  else if (age >= 11 && age <= 21) score += 7; // aging but still viable
+  else if (age === 0) score += 3; // brand new — high uncertainty
+  else score += 1; // stale > 21 days — likely structural
+
+  // 7. Yield carry (0-8): combined yield = income buffer during hold
   var avgY = (yA + yB) / 2;
-  score += Math.min(10, avgY / 8 * 10); // 8% yield → full points
-  // 8. Div proximity penalty (-5): near ex-div = assignment risk
+  score += Math.min(8, avgY / 7 * 8); // 7% yield → full points
+
+  // 8. Spread symmetry bonus (0-5): legs near par ($25) trade better
+  var pA = parseFloat(r.pA) || 0, pB = parseFloat(r.pB) || 0;
+  if (pA > 0 && pB > 0) {
+    var ratio = Math.min(pA, pB) / Math.max(pA, pB); // 1.0 = perfectly symmetric
+    score += Math.round(ratio * 5); // near-par pairs score higher
+  }
+
+  // 9. Div proximity (penalty/bonus): context-dependent
   if (r.exDivA || r.exDivB) {
     var now = new Date();
     var checkDiv = function(dt) {
@@ -767,12 +815,38 @@ function computeSetupScore(r, maxEP) {
       var d = new Date(dt + 'T00:00:00');
       return Math.max(0, (d - now) / 86400000);
     };
-    var minDiv = Math.min(checkDiv(r.exDivA), checkDiv(r.exDivB));
-    if (minDiv <= 7) score -= 5;
+    var divDaysA = checkDiv(r.exDivA), divDaysB = checkDiv(r.exDivB);
+    var minDiv = Math.min(divDaysA, divDaysB);
+    // Penalty if short leg has upcoming div (you owe it)
+    var z = parseFloat(r.z) || 0;
+    var shortLeg = z > 0 ? 'A' : 'B'; // Z>0 → short A, long B
+    var shortDivDays = shortLeg === 'A' ? divDaysA : divDaysB;
+    var longDivDays = shortLeg === 'A' ? divDaysB : divDaysA;
+    if (shortDivDays <= 10) score -= 5; // short leg div = cost
+    if (longDivDays <= 10 && longDivDays < shortDivDays) score += 3; // long leg div = income bonus
   }
-  // 9. Screener bonus (0-5): if pre-screened with good win rate
+
+  // 10. Screener tiered bonus (0-7): granular win rate scaling
   var scr = screenerCache[cleanIdFE(r.id)];
-  if (scr && scr.wr30 !== null && scr.wr30 >= 60) score += 5;
+  if (scr && scr.wr30 !== null) {
+    if (scr.wr30 >= 75) score += 7;
+    else if (scr.wr30 >= 65) score += 5;
+    else if (scr.wr30 >= 55) score += 3;
+    else if (scr.wr30 >= 45) score += 1;
+    // <45% win rate = no bonus (already risky)
+  }
+
+  // 11. Regime awareness (0-3): if macro regime data is loaded
+  if (window._regimeData && window._regimeData.regime) {
+    var reg = window._regimeData.regime;
+    // Mean-reverting regime boosts all pair trades
+    if (reg === 'MEAN_REVERT') score += 3;
+    // Trending regime = pairs are riskier
+    else if (reg === 'TRENDING') score -= 2;
+    // Volatile regime = wider Z thresholds needed, slight penalty for borderline Z
+    else if (reg === 'VOLATILE' && az < 2.2) score -= 1;
+  }
+
   return Math.max(0, Math.min(100, Math.round(score)));
 }
 function cleanIdFE(id) { return String(id).replace(/[^a-zA-Z0-9]/g, '').toUpperCase(); }
@@ -902,7 +976,7 @@ window.addEventListener("DOMContentLoaded",async()=>{
   console.log("[TerminalPro] Page loaded. GAS_URL=",GAS_URL?GAS_URL.substring(0,50)+"...":"(empty)");
   sqLoad();sqRender();
   var safetyTimer=setTimeout(function(){console.error("[TerminalPro] Safety timeout — forcing loader hide after 35s");hideLoader();},35000);
-  try{setConnStatus("loading","Connecting...");const data=await apiGet("getData",{mode:currentMode});console.log("[TerminalPro] Data received, ok=",data&&data.ok,"status=",data&&data.status);if(data&&data.ok){updateUI(data);showDiag(data._diag,data.alertData,data);loadWatchlistIds();loadScreenerCache();if(data.status==="initializing"){setConnStatus("ok","Initializing");setTimeout(()=>refreshData(),30000);}else{setConnStatus("ok","Connected");}}else{var errMsg=data&&data.message?data.message:"Unknown error";console.error("[TerminalPro] API returned ok:false",data);setConnStatus("err","Error: "+errMsg);showApiError(errMsg);}}catch(e){console.error("[TerminalPro] FETCH ERROR:",e.message||e);setConnStatus("err",e.message);showApiError(e.message);}finally{clearTimeout(safetyTimer);hideLoader();}
+  try{setConnStatus("loading","Connecting...");const data=await apiGet("getData",{mode:currentMode});console.log("[TerminalPro] Data received, ok=",data&&data.ok,"status=",data&&data.status);if(data&&data.ok){updateUI(data);showDiag(data._diag,data.alertData,data);loadWatchlistIds();loadScreenerCache();loadRegimeData();if(data.status==="initializing"){setConnStatus("ok","Initializing");setTimeout(()=>refreshData(),30000);}else{setConnStatus("ok","Connected");}}else{var errMsg=data&&data.message?data.message:"Unknown error";console.error("[TerminalPro] API returned ok:false",data);setConnStatus("err","Error: "+errMsg);showApiError(errMsg);}}catch(e){console.error("[TerminalPro] FETCH ERROR:",e.message||e);setConnStatus("err",e.message);showApiError(e.message);}finally{clearTimeout(safetyTimer);hideLoader();}
 });
 async function switchMode(mode,el){if(mode===currentMode)return;currentMode=mode;activeSector='';document.querySelectorAll('.strat-pill').forEach(p=>p.classList.remove('active'));el.classList.add('active');document.getElementById('sInput').value='';document.getElementById('excludeInput').value='';document.getElementById('alerts').setAttribute('data-mode',mode);try{setConnStatus("loading");console.log("[TerminalPro] Switching to mode:",mode);const data=await apiGet("getData",{mode:mode});if(data&&data.ok){updateUI(data);setConnStatus("ok");}else{console.error("[TerminalPro] switchMode error:",data);setConnStatus("err");}}catch(e){console.error("[TerminalPro] switchMode failed:",e.message);setConnStatus("err");}}
 function tab(t,el){document.querySelectorAll('.tab-content').forEach(x=>x.classList.remove('active'));document.querySelectorAll('.nav-item').forEach(x=>x.classList.remove('active'));document.getElementById(t).classList.add('active');el.classList.add('active');}
@@ -1700,6 +1774,90 @@ function toggleMacroCreditDd(){var el=document.getElementById('macroCreditDropdo
 function macroPickSec(sec,label){macroCurrentSec=sec;var el=document.getElementById('macroSecLabel');if(el)el.innerText=label;var dd=document.getElementById('macroSecDropdown');if(dd)dd.classList.remove('open');macroApplyAllFilters();}
 function macroPickCredit(cr,label){macroCurrentCredit=cr;var el=document.getElementById('macroCreditLabel');if(el)el.innerText=label;var dd=document.getElementById('macroCreditDropdown');if(dd)dd.classList.remove('open');macroApplyAllFilters();}
 document.addEventListener('click',function(e){var d1=document.getElementById('macroSecDropdown');if(d1&&!d1.contains(e.target))d1.classList.remove('open');var d2=document.getElementById('macroCreditDropdown');if(d2&&!d2.contains(e.target))d2.classList.remove('open');});
+// ═══════════════════════════════════════════════════════════════════
+// POSITION SIZING CALCULATOR
+// ═══════════════════════════════════════════════════════════════════
+function openSizer(){document.getElementById('posSizeModal').style.display='flex';}
+function closeSizer(){document.getElementById('posSizeModal').style.display='none';}
+async function runSizer(){
+var btn=document.getElementById('psRunBtn');
+btn.disabled=true;btn.innerText='CALCULATING...';
+document.getElementById('psLoading').style.display='block';
+document.getElementById('psSummary').style.display='none';
+document.getElementById('psTable').style.display='none';
+try{
+var data=await apiGet('getPositionSizing',{capital:document.getElementById('psCapital').value,maxPct:document.getElementById('psMaxPct').value});
+if(data&&data.ok&&data.sizingData){renderSizer(data.sizingData);}
+else{document.getElementById('psLoading').innerHTML='<span style="color:var(--high)">Failed: '+(data&&data.message?data.message:'unknown')+'</span>';}
+}catch(e){document.getElementById('psLoading').innerHTML='<span style="color:var(--high)">Error: '+e.message+'</span>';}
+finally{btn.disabled=false;btn.innerText='CALCULATE SIZING';}
+}
+function renderSizer(sd){
+document.getElementById('psLoading').style.display='none';
+if(sd.error){document.getElementById('psSummary').style.display='block';document.getElementById('psSummary').innerHTML='<div style="color:var(--high)">'+sd.error+'</div>';return;}
+// Summary cards
+var avail=sd.availableCapital||0;
+var ac=avail>=0?'var(--low)':'var(--high)';
+document.getElementById('psSummary').style.display='block';
+document.getElementById('psSummary').innerHTML=
+'<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px">'+
+'<div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:10px"><div style="font-size:9px;font-weight:900;color:var(--subtext);text-transform:uppercase;margin-bottom:4px">Max/Trade</div><div style="font-family:JetBrains Mono;font-weight:900;color:var(--accent)">$'+sd.maxPerTrade+'</div></div>'+
+'<div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:10px"><div style="font-size:9px;font-weight:900;color:var(--subtext);text-transform:uppercase;margin-bottom:4px">Current Exposure</div><div style="font-family:JetBrains Mono;font-weight:900;color:var(--yellow)">$'+sd.currentExposure+'</div></div>'+
+'<div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:10px"><div style="font-size:9px;font-weight:900;color:var(--subtext);text-transform:uppercase;margin-bottom:4px">Available</div><div style="font-family:JetBrains Mono;font-weight:900;color:'+ac+'">$'+avail.toFixed(2)+'</div></div>'+
+'</div>';
+// Recommendations table
+var recs=sd.recommendations||[];
+document.getElementById('psTable').style.display='block';
+var tb=document.querySelector('#psResultTable tbody');
+if(recs.length===0){tb.innerHTML='<tr><td colspan="7" style="text-align:center;color:var(--subtext);padding:20px">No alert pairs available for sizing</td></tr>';return;}
+var h='';
+recs.forEach(function(r){
+h+='<tr>';
+h+='<td style="font-weight:900;font-size:12px">'+r.tA+' / '+r.tB+'</td>';
+h+='<td style="font-family:JetBrains Mono;color:'+(Math.abs(r.z)>=2?'var(--high)':'var(--yellow)')+'">'+parseFloat(r.z).toFixed(2)+'&sigma;</td>';
+h+='<td style="font-family:JetBrains Mono;font-weight:900">'+r.sharesA+'</td>';
+h+='<td style="font-family:JetBrains Mono;font-weight:900">'+r.sharesB+'</td>';
+h+='<td style="font-family:JetBrains Mono">$'+r.allocation+'</td>';
+h+='<td style="font-family:JetBrains Mono">'+r.pctOfCapital+'%</td>';
+h+='<td style="font-family:JetBrains Mono;color:var(--low)">$'+r.expProfit+'</td>';
+h+='</tr>';
+});
+tb.innerHTML=h;
+}
+// ═══════════════════════════════════════════════════════════════════
+// REGIME DETECTION — loaded on init, updates banner + score
+// ═══════════════════════════════════════════════════════════════════
+window._regimeData=null;
+async function loadRegimeData(){
+try{
+var data=await apiGet('getRegimeData');
+if(data&&data.ok&&data.regimeData&&data.regimeData.regime){
+window._regimeData=data.regimeData;
+renderRegimeBanner(data.regimeData);
+}
+}catch(e){console.log('[TerminalPro] Regime data unavailable');}
+}
+function renderRegimeBanner(rd){
+var banner=document.getElementById('regimeBanner');
+if(!rd||!rd.regime){banner.style.display='none';return;}
+banner.style.display='block';
+var reg=rd.regime;
+var lbl=document.getElementById('regimeLabel');
+var det=document.getElementById('regimeDetail');
+var clr='var(--subtext)';
+if(reg==='MEAN_REVERT'){clr='var(--low)';lbl.innerText='REGIME: MEAN-REVERTING';}
+else if(reg==='TRENDING'){clr='var(--high)';lbl.innerText='REGIME: TRENDING';}
+else if(reg==='VOLATILE'){clr='var(--yellow)';lbl.innerText='REGIME: HIGH VOLATILITY';}
+else{lbl.innerText='REGIME: NEUTRAL';}
+lbl.style.color=clr;
+// Detail: yield curve + Z dispersion
+var details=[];
+if(rd.yieldSlope!==undefined) details.push('Curve: '+(rd.yieldSlope>0?'+':'')+rd.yieldSlope.toFixed(0)+'bp');
+if(rd.rateChange!==undefined) details.push('30d Rate Δ: '+(rd.rateChange>0?'+':'')+rd.rateChange.toFixed(0)+'bp');
+if(rd.zDispersion!==undefined) details.push('Z Dispersion: '+rd.zDispersion.toFixed(2));
+if(rd.pffChange!==undefined) details.push('PFF: '+(rd.pffChange>=0?'+':'')+rd.pffChange.toFixed(1)+'%');
+det.innerText=details.join(' | ');
+}
 // ═══════════════════════════════════════════════════════════════════
 // JOURNAL ANALYTICS TAB
 // ═══════════════════════════════════════════════════════════════════

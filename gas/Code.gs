@@ -3329,6 +3329,178 @@ function getPositionSizing_(capital, maxPctPerTrade) {
   }
 }
 
+// ═══════════════════════════════════════════════════════════════════
+// REGIME DETECTION — yield curve analysis + pair Z dispersion
+// ═══════════════════════════════════════════════════════════════════
+function getRegimeData_() {
+  try {
+    var ss = SpreadsheetApp.getActive();
+
+    // 1. Read TreasuryHist for yield curve analysis
+    var thSheet = ss.getSheetByName('TreasuryHist');
+    var yieldSlope = null; // 30Y - 2Y spread (yield curve slope)
+    var rateChange = null; // 30-day change in 10Y yield
+    var yieldVol = null;   // 30-day volatility of 10Y yield
+    var curveHistory = [];
+
+    if (thSheet && thSheet.getLastRow() > 2) {
+      var thData = thSheet.getDataRange().getValues();
+      var headers = thData[0];
+      // Find column indices
+      var col2Y = -1, col5Y = -1, col10Y = -1, col30Y = -1;
+      for (var c = 0; c < headers.length; c++) {
+        var h = String(headers[c]).trim().toUpperCase();
+        if (h === 'US2Y') col2Y = c;
+        if (h === 'US5Y') col5Y = c;
+        if (h === 'US10Y') col10Y = c;
+        if (h === 'US30Y') col30Y = c;
+      }
+
+      // Get last 60 rows for analysis
+      var startIdx = Math.max(1, thData.length - 60);
+      var yields10Y = [];
+      for (var i = startIdx; i < thData.length; i++) {
+        var y10 = col10Y >= 0 ? parseFloat(thData[i][col10Y]) : NaN;
+        if (!isNaN(y10) && y10 > 0) yields10Y.push(y10);
+      }
+
+      // Current yield curve slope (30Y - 2Y)
+      var lastRow = thData[thData.length - 1];
+      var cur2Y = col2Y >= 0 ? parseFloat(lastRow[col2Y]) || 0 : 0;
+      var cur30Y = col30Y >= 0 ? parseFloat(lastRow[col30Y]) || 0 : 0;
+      if (cur2Y > 0 && cur30Y > 0) {
+        yieldSlope = (cur30Y - cur2Y) * 100; // in basis points
+      }
+
+      // 30-day rate change
+      if (yields10Y.length >= 30) {
+        var recent10Y = yields10Y[yields10Y.length - 1];
+        var ago10Y = yields10Y[yields10Y.length - 30];
+        rateChange = (recent10Y - ago10Y) * 100; // basis points
+      }
+
+      // 30-day volatility of 10Y
+      if (yields10Y.length >= 20) {
+        var last20 = yields10Y.slice(-20);
+        var changes = [];
+        for (var j = 1; j < last20.length; j++) {
+          changes.push((last20[j] - last20[j-1]) * 100); // daily bp change
+        }
+        var avgChg = changes.reduce(function(a,b){return a+b;},0) / changes.length;
+        var sumSq = changes.reduce(function(a,c){return a + (c-avgChg)*(c-avgChg);},0);
+        yieldVol = Math.sqrt(sumSq / changes.length); // std dev of daily bp changes
+      }
+    }
+
+    // 2. Read MacroData for PFF change (preferred stock ETF sentiment)
+    var pffChange = null;
+    var macroSheet = ss.getSheetByName('MacroData');
+    if (macroSheet) {
+      try {
+        var macroVals = macroSheet.getRange('A2:C4').getValues();
+        for (var m = 0; m < macroVals.length; m++) {
+          if (String(macroVals[m][0]).toUpperCase() === 'PFF') {
+            pffChange = parseFloat(macroVals[m][2]) * 100 || 0; // convert decimal to %
+          }
+        }
+      } catch(e) {}
+    }
+
+    // 3. Z-score dispersion across active alerts
+    var zDispersion = null;
+    var zScores = [];
+    try {
+      var intra = getAlertData('intra');
+      if (intra && intra.length) {
+        for (var a = 0; a < intra.length; a++) {
+          var zv = parseFloat(intra[a].z) || 0;
+          zScores.push(zv);
+        }
+      }
+    } catch(e) {}
+    try {
+      var credit = getAlertData('credit');
+      if (credit && credit.length) {
+        for (var a = 0; a < credit.length; a++) {
+          var zv = parseFloat(credit[a].z) || 0;
+          zScores.push(zv);
+        }
+      }
+    } catch(e) {}
+
+    if (zScores.length >= 3) {
+      var zMean = zScores.reduce(function(a,b){return a+b;},0) / zScores.length;
+      var zSumSq = zScores.reduce(function(a,z){return a + (z-zMean)*(z-zMean);},0);
+      zDispersion = Math.sqrt(zSumSq / zScores.length);
+    }
+
+    // 4. Determine regime
+    // Logic:
+    //   MEAN_REVERT: low rate vol + flat-ish curve + moderate Z dispersion
+    //   TRENDING:    large rate change (>30bp/month) + expanding Z dispersion
+    //   VOLATILE:    high yield vol (>5bp/day) or extreme Z dispersion (>1.5)
+    //   NEUTRAL:     everything else
+    var regime = 'NEUTRAL';
+    var confidence = 0;
+    var signals = [];
+
+    // Yield volatility signal
+    if (yieldVol !== null) {
+      if (yieldVol > 6) { signals.push('HIGH_VOL'); }
+      else if (yieldVol < 3) { signals.push('LOW_VOL'); }
+    }
+
+    // Rate direction signal
+    if (rateChange !== null) {
+      if (Math.abs(rateChange) > 30) { signals.push('RATE_TREND'); }
+      else if (Math.abs(rateChange) < 10) { signals.push('RATE_STABLE'); }
+    }
+
+    // Z dispersion signal
+    if (zDispersion !== null) {
+      if (zDispersion > 1.5) { signals.push('Z_EXTREME'); }
+      else if (zDispersion < 0.8) { signals.push('Z_TIGHT'); }
+    }
+
+    // PFF sentiment
+    if (pffChange !== null) {
+      if (pffChange < -1.0) { signals.push('PFF_WEAK'); }
+      else if (pffChange > 0.5) { signals.push('PFF_STRONG'); }
+    }
+
+    // Classify
+    if (signals.indexOf('HIGH_VOL') !== -1 || signals.indexOf('Z_EXTREME') !== -1) {
+      regime = 'VOLATILE';
+      confidence = 0.7;
+      if (signals.indexOf('HIGH_VOL') !== -1 && signals.indexOf('Z_EXTREME') !== -1) confidence = 0.9;
+    } else if (signals.indexOf('RATE_TREND') !== -1) {
+      regime = 'TRENDING';
+      confidence = 0.6;
+      if (signals.indexOf('PFF_WEAK') !== -1) confidence = 0.8;
+    } else if (signals.indexOf('LOW_VOL') !== -1 || signals.indexOf('RATE_STABLE') !== -1) {
+      regime = 'MEAN_REVERT';
+      confidence = 0.6;
+      if (signals.indexOf('LOW_VOL') !== -1 && signals.indexOf('RATE_STABLE') !== -1) confidence = 0.85;
+      if (signals.indexOf('Z_TIGHT') !== -1) confidence = Math.min(confidence + 0.1, 1.0);
+    }
+
+    return {
+      regime: regime,
+      confidence: parseFloat(confidence.toFixed(2)),
+      signals: signals,
+      yieldSlope: yieldSlope !== null ? parseFloat(yieldSlope.toFixed(1)) : null,
+      rateChange: rateChange !== null ? parseFloat(rateChange.toFixed(1)) : null,
+      yieldVol: yieldVol !== null ? parseFloat(yieldVol.toFixed(2)) : null,
+      zDispersion: zDispersion !== null ? parseFloat(zDispersion.toFixed(2)) : null,
+      pffChange: pffChange !== null ? parseFloat(pffChange.toFixed(2)) : null,
+      alertCount: zScores.length
+    };
+  } catch(e) {
+    console.error('getRegimeData_ error: ' + e);
+    return { regime: 'NEUTRAL', confidence: 0, error: e.toString() };
+  }
+}
+
 // Read pre-computed screener results
 function getScreenerData_() {
   try {
