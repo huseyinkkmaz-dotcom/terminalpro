@@ -2974,11 +2974,14 @@ function getDividendCapture_() {
         var divB = divMap[tB] || null;
         if (!divA && !divB) continue;
 
-        // Only show pairs where at least one div is within 45 days
+        // Only show pairs where at least one div is within 7-20 days
         var daysA = divA ? Math.floor((divA.getTime() - now.getTime()) / 86400000) : 999;
         var daysB = divB ? Math.floor((divB.getTime() - now.getTime()) / 86400000) : 999;
         var nearestDays = Math.min(daysA, daysB);
-        if (nearestDays < -7 || nearestDays > 45) continue; // skip if past or too far
+        if (nearestDays < 7 || nearestDays > 20) continue; // skip if <7 days or >20 days
+
+        // Z-score must be |Z| >= 2.0
+        if (Math.abs(z) < 2.0) continue;
 
         // Determine which leg is the dividend leg and if Z-score favors going long on it
         var divLeg = daysA <= daysB ? 'A' : 'B';
@@ -2990,13 +2993,16 @@ function getDividendCapture_() {
         if (divLeg === 'A' && z < 0) aligned = true;  // Z says long A, A pays div
         if (divLeg === 'B' && z > 0) aligned = true;  // Z says long B, B pays div
         // Also capture where BOTH have divs
-        if (divA && divB && daysA >= 0 && daysB >= 0 && daysA <= 45 && daysB <= 45) {
+        if (divA && divB && daysA >= 7 && daysB >= 7 && daysA <= 20 && daysB <= 20) {
           aligned = true; // both legs pay — always interesting
         }
 
         var divYield = divLeg === 'A' ? couponA : couponB;
         var divPrice = divLeg === 'A' ? priceA : priceB;
         var estDivAmt = divPrice > 0 && divYield > 0 ? (divYield / 4) : 0; // quarterly est
+
+        // Profit expectation must be at least $0.30
+        if (estDivAmt < 0.30) continue;
 
         var info = parseTickerInfo(row[0]);
         allPairs.push({
