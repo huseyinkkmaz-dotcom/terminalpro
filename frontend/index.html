@@ -212,6 +212,10 @@ td:last-child{border-radius:0 10px 10px 0;border-right:1px solid var(--border)}
 .health-loading{font-size:10px;color:var(--subtext);font-weight:900;text-transform:uppercase;letter-spacing:1px;padding:8px 0}
 /* ── PORTFOLIO ANALYTICS TAB ── */
 .pa-mode-switch{display:flex;gap:0;margin-bottom:20px}
+.hist-sub-pill{padding:10px 24px;font-size:9px;font-weight:900;text-transform:uppercase;letter-spacing:1px;cursor:pointer;border:1.5px solid var(--border);color:var(--subtext);transition:.2s;background:transparent}
+.hist-sub-pill:first-child{border-radius:8px 0 0 8px}
+.hist-sub-pill:last-child{border-radius:0 8px 8px 0;border-left:0}
+.hist-sub-pill.active{background:rgba(14,165,233,.1);color:var(--accent);border-color:var(--accent)}
 .pa-mode-pill{padding:10px 28px;font-size:9px;font-weight:900;text-transform:uppercase;letter-spacing:1.5px;cursor:pointer;border:1.5px solid var(--border);color:var(--subtext);transition:.2s;background:transparent}
 .pa-mode-pill:first-child{border-radius:8px 0 0 8px}
 .pa-mode-pill:last-child{border-radius:0 8px 8px 0}
@@ -458,8 +462,7 @@ td:last-child{border-radius:0 10px 10px 0;border-right:1px solid var(--border)}
 <div class="nav-item" onclick="tabWatchlist(this)">Watchlist <span id="watchCount"></span></div>
 <div class="nav-item" onclick="tabMacro(this)">Macro Value</div>
 <div class="nav-item" onclick="tabAnalytics(this)">Analytics</div>
-<div class="nav-item" onclick="tab('history',this)">History</div>
-<div class="nav-item" onclick="tabJournal(this)">Journal</div>
+<div class="nav-item" onclick="tabHistory(this)">History</div>
 <div class="nav-item" onclick="tabDivCapture(this)">Div Capture</div>
 <div class="nav-item" onclick="tabBacktest(this)">Backtest</div>
 <div class="nav-item" onclick="openSizer()" style="color:var(--yellow)">Sizer</div>
@@ -589,18 +592,20 @@ td:last-child{border-radius:0 10px 10px 0;border-right:1px solid var(--border)}
 </div>
 </div>
 <div id="history" class="tab-content">
-<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:25px">
-<h2 style="font-size:14px;font-weight:900;color:var(--subtext);text-transform:uppercase;margin:0">Closed Positions</h2>
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px">
+<div style="display:flex;gap:0">
+<div class="hist-sub-pill active" id="histSubClosed" onclick="switchHistSub('closed')">Closed Positions</div>
+<div class="hist-sub-pill" id="histSubJournal" onclick="switchHistSub('journal')">Journal Analytics</div>
+</div>
 <button onclick="doClearHistory()" style="background:rgba(239,68,68,.05);border:1.5px solid var(--high);color:var(--high);padding:10px 20px;border-radius:8px;font-size:10px;font-weight:900;cursor:pointer;text-transform:uppercase">Clear History</button>
 </div>
+<div id="histClosedSection">
 <div id="historySummary" style="display:flex;gap:15px;margin-bottom:20px"></div>
 <div style="overflow-x:auto">
 <table id="historyTable"><thead><tr><th>Instrument</th><th>Type</th><th>Entry</th><th>Exit</th><th>Size</th><th>Open</th><th>Close</th><th>Hold</th><th class="mono-data">Cap Gains</th><th class="mono-data">Net Div</th><th class="mono-data">Net PnL</th><th>Return</th><th>Journal</th></tr></thead><tbody></tbody></table>
 </div>
 </div>
-<!-- ═══ JOURNAL ANALYTICS TAB ═══ -->
-<div id="journalTab" class="tab-content">
-<h2 style="font-size:14px;font-weight:900;color:var(--subtext);text-transform:uppercase;margin:0 0 25px 0">Trade Journal Analytics</h2>
+<div id="histJournalSection" style="display:none">
 <div id="journalLoading" style="text-align:center;padding:40px;color:var(--subtext)">Loading analytics...</div>
 <div id="journalContent" style="display:none">
 <div id="journalCards" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px;margin-bottom:30px"></div>
@@ -614,6 +619,7 @@ td:last-child{border-radius:0 10px 10px 0;border-right:1px solid var(--border)}
 <div id="journalStrategy"></div>
 <h3 style="font-size:11px;font-weight:900;color:var(--subtext);text-transform:uppercase;margin:15px 0">Equity Curve</h3>
 <div id="journalEquity" style="height:120px;background:var(--card);border:1px solid var(--border);border-radius:10px;padding:10px;position:relative"></div>
+</div>
 </div>
 </div>
 </div>
@@ -658,6 +664,9 @@ td:last-child{border-radius:0 10px 10px 0;border-right:1px solid var(--border)}
 <div style="overflow-x:auto"><table id="btPairsTable"><thead><tr><th>Pair</th><th>Trades</th><th>Win Rate</th><th class="mono-data">Total PnL</th></tr></thead><tbody></tbody></table></div>
 </div>
 </div>
+<!-- Actionable Signals -->
+<h3 style="font-size:11px;font-weight:900;color:var(--accent);text-transform:uppercase;margin:25px 0 15px 0;display:flex;align-items:center;gap:8px"><span style="font-size:14px">&#9889;</span> Actionable Signals — Entry Recommendations</h3>
+<div id="btSignals" style="margin-bottom:25px"></div>
 <h3 style="font-size:11px;font-weight:900;color:var(--subtext);text-transform:uppercase;margin:25px 0 15px 0">Sample Trades</h3>
 <div style="overflow-x:auto"><table id="btTradesTable"><thead><tr><th>Pair</th><th>Mode</th><th>Entry Z</th><th>Exit Z</th><th>Hold</th><th>Exit Reason</th><th class="mono-data">PnL</th></tr></thead><tbody></tbody></table></div>
 </div>
@@ -1855,23 +1864,29 @@ else if(reg==='TRENDING'){clr='var(--high)';lbl.innerText='REGIME: TRENDING';}
 else if(reg==='VOLATILE'){clr='var(--yellow)';lbl.innerText='REGIME: HIGH VOLATILITY';}
 else{lbl.innerText='REGIME: NEUTRAL';}
 lbl.style.color=clr;
-// Detail: yield curve + Z dispersion
+// Detail: yield curve + Z dispersion with tooltips
 var details=[];
-if(rd.yieldSlope!==undefined) details.push('Curve: '+(rd.yieldSlope>0?'+':'')+rd.yieldSlope.toFixed(0)+'bp');
-if(rd.rateChange!==undefined) details.push('30d Rate Δ: '+(rd.rateChange>0?'+':'')+rd.rateChange.toFixed(0)+'bp');
-if(rd.zDispersion!==undefined) details.push('Z Dispersion: '+rd.zDispersion.toFixed(2));
-if(rd.pffChange!==undefined) details.push('PFF: '+(rd.pffChange>=0?'+':'')+rd.pffChange.toFixed(1)+'%');
-det.innerText=details.join(' | ');
+if(rd.yieldSlope!==undefined) details.push('<span title="Yield curve slope: US30Y minus US2Y in basis points. Positive = normal curve, negative = inverted. Steep curve = higher duration risk but wider pair spreads." style="cursor:help;border-bottom:1px dotted var(--subtext)">Curve: '+(rd.yieldSlope>0?'+':'')+rd.yieldSlope.toFixed(0)+'bp</span>');
+if(rd.rateChange!==undefined) details.push('<span title="30-day change in US 10Y Treasury yield (bps). Rising rates pressure preferred prices down. |Δ|>30bp = RATE_TREND regime, <10bp = RATE_STABLE." style="cursor:help;border-bottom:1px dotted var(--subtext)">30d Rate Δ: '+(rd.rateChange>0?'+':'')+rd.rateChange.toFixed(0)+'bp</span>');
+if(rd.zDispersion!==undefined) details.push('<span title="Std deviation of Z-scores across all alert pairs. Higher = more chaotic dislocations. >1.5 = Z_EXTREME → VOLATILE regime." style="cursor:help;border-bottom:1px dotted var(--subtext)">Z Dispersion: '+rd.zDispersion.toFixed(2)+'</span>');
+if(rd.pffChange!==undefined) details.push('<span title="iShares Preferred & Income Securities ETF price change. Tracks overall preferred stock market momentum." style="cursor:help;border-bottom:1px dotted var(--subtext)">PFF: '+(rd.pffChange>=0?'+':'')+rd.pffChange.toFixed(1)+'%</span>');
+det.innerHTML=details.join(' <span style="color:var(--border)">|</span> ');
 }
 // ═══════════════════════════════════════════════════════════════════
 // JOURNAL ANALYTICS TAB
 // ═══════════════════════════════════════════════════════════════════
-async function tabJournal(el){
+function tabHistory(el){
 document.querySelectorAll('.tab-content').forEach(x=>x.classList.remove('active'));
 document.querySelectorAll('.nav-item').forEach(x=>x.classList.remove('active'));
-document.getElementById('journalTab').classList.add('active');
+document.getElementById('history').classList.add('active');
 el.classList.add('active');
-await loadJournalAnalytics();
+}
+function switchHistSub(mode){
+document.getElementById('histSubClosed').classList.toggle('active',mode==='closed');
+document.getElementById('histSubJournal').classList.toggle('active',mode==='journal');
+document.getElementById('histClosedSection').style.display=mode==='closed'?'block':'none';
+document.getElementById('histJournalSection').style.display=mode==='journal'?'block':'none';
+if(mode==='journal') loadJournalAnalytics();
 }
 async function loadJournalAnalytics(){
 document.getElementById('journalLoading').style.display='block';
@@ -1920,14 +1935,21 @@ drawJournalEquity(ja);
 function drawJournalEquity(ja){
 var el=document.getElementById('journalEquity');
 if(!ja.monthly||ja.monthly.length<2){el.innerHTML='<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--subtext);font-size:11px">Need 2+ months of data</div>';return;}
-var cumPnls=[];var cum=0;
-ja.monthly.forEach(function(m){cum+=m.pnl;cumPnls.push(cum);});
-var w=el.clientWidth-20,h=el.clientHeight-20;
+var cumPnls=[];var cum=0;var months=[];
+ja.monthly.forEach(function(m){cum+=m.pnl;cumPnls.push(cum);months.push(m.month);});
+var padL=45,padR=10,padT=10,padB=20;
+var w=el.clientWidth-padL-padR,h=el.clientHeight-padT-padB;
 var mn=Math.min.apply(null,cumPnls),mx=Math.max.apply(null,cumPnls);
 if(mn===mx){mn-=1;mx+=1;}
-var pts=cumPnls.map(function(v,i){var x=10+i/(cumPnls.length-1)*w;var y=10+(1-(v-mn)/(mx-mn))*h;return x+','+y;}).join(' ');
+var zeroY=padT+(1-(0-mn)/(mx-mn))*h;
+var pts=cumPnls.map(function(v,i){var x=padL+i/(cumPnls.length-1)*w;var y=padT+(1-(v-mn)/(mx-mn))*h;return x+','+y;}).join(' ');
 var clr=cum>=0?'var(--low)':'var(--high)';
-el.innerHTML='<svg width="100%" height="100%" viewBox="0 0 '+(w+20)+' '+(h+20)+'"><polyline points="'+pts+'" fill="none" stroke="'+clr+'" stroke-width="2"/></svg>';
+var svgW=padL+w+padR,svgH=padT+h+padB;
+var yLabels='<text x="'+(padL-4)+'" y="'+(padT+4)+'" text-anchor="end" fill="var(--subtext)" font-size="8" font-family="JetBrains Mono">$'+mx.toFixed(0)+'</text>';
+yLabels+='<text x="'+(padL-4)+'" y="'+(padT+h)+'" text-anchor="end" fill="var(--subtext)" font-size="8" font-family="JetBrains Mono">$'+mn.toFixed(0)+'</text>';
+var xLabels='<text x="'+padL+'" y="'+(svgH-2)+'" text-anchor="start" fill="var(--subtext)" font-size="8" font-family="JetBrains Mono">'+(months[0]||'')+'</text>';
+xLabels+='<text x="'+(padL+w)+'" y="'+(svgH-2)+'" text-anchor="end" fill="var(--subtext)" font-size="8" font-family="JetBrains Mono">'+(months[months.length-1]||'')+'</text>';
+el.innerHTML='<svg width="100%" height="100%" viewBox="0 0 '+svgW+' '+svgH+'">'+yLabels+xLabels+'<line x1="'+padL+'" y1="'+zeroY+'" x2="'+(padL+w)+'" y2="'+zeroY+'" stroke="var(--border)" stroke-dasharray="4"/><polyline points="'+pts+'" fill="none" stroke="'+clr+'" stroke-width="2"/></svg>';
 }
 // ═══════════════════════════════════════════════════════════════════
 // DIVIDEND CAPTURE TAB
@@ -2045,18 +2067,30 @@ var cards=[
 ];
 var ch='';cards.forEach(function(c){ch+='<div style="background:var(--card);border:1px solid var(--border);border-radius:10px;padding:14px 16px"><div style="font-size:9px;font-weight:900;color:var(--subtext);text-transform:uppercase;margin-bottom:8px">'+c.label+'</div><div style="font-family:JetBrains Mono;font-size:18px;font-weight:900;color:'+c.clr+'">'+c.val+'</div></div>';});
 document.getElementById('btCards').innerHTML=ch;
-// Equity curve
+// Equity curve with axis labels + tooltip
 var ec=bt.equityCurve||[];
 var eqEl=document.getElementById('btEquity');
 if(ec.length>=2){
-var w=eqEl.clientWidth-20,h=eqEl.clientHeight-20;
+var padL=50,padR=10,padT=10,padB=24;
+var w=eqEl.clientWidth-padL-padR,h=eqEl.clientHeight-padT-padB;
 var mn=Math.min.apply(null,ec),mx=Math.max.apply(null,ec);
 if(mn===mx){mn-=1;mx+=1;}
-// Zero line
-var zeroY=10+(1-(0-mn)/(mx-mn))*h;
-var pts=ec.map(function(v,i){var x=10+i/(ec.length-1)*w;var y=10+(1-(v-mn)/(mx-mn))*h;return x+','+y;}).join(' ');
+var zeroY=padT+(1-(0-mn)/(mx-mn))*h;
+var pts=ec.map(function(v,i){var x=padL+i/(ec.length-1)*w;var y=padT+(1-(v-mn)/(mx-mn))*h;return x+','+y;}).join(' ');
 var clr=ec[ec.length-1]>=0?'var(--low)':'var(--high)';
-eqEl.innerHTML='<svg width="100%" height="100%" viewBox="0 0 '+(w+20)+' '+(h+20)+'"><line x1="10" y1="'+zeroY+'" x2="'+(w+10)+'" y2="'+zeroY+'" stroke="var(--border)" stroke-dasharray="4"/><polyline points="'+pts+'" fill="none" stroke="'+clr+'" stroke-width="2"/></svg>';
+var svgW=padL+w+padR,svgH=padT+h+padB;
+// Y-axis labels: max, zero, min
+var yLabels='<text x="'+(padL-4)+'" y="'+(padT+4)+'" text-anchor="end" fill="var(--subtext)" font-size="9" font-family="JetBrains Mono">$'+mx.toFixed(0)+'</text>';
+yLabels+='<text x="'+(padL-4)+'" y="'+(zeroY+3)+'" text-anchor="end" fill="var(--subtext)" font-size="9" font-family="JetBrains Mono">$0</text>';
+yLabels+='<text x="'+(padL-4)+'" y="'+(padT+h)+'" text-anchor="end" fill="var(--subtext)" font-size="9" font-family="JetBrains Mono">$'+mn.toFixed(0)+'</text>';
+// X-axis labels: trade #1 and #N
+var xLabels='<text x="'+padL+'" y="'+(svgH-2)+'" text-anchor="start" fill="var(--subtext)" font-size="9" font-family="JetBrains Mono">#1</text>';
+xLabels+='<text x="'+(padL+w)+'" y="'+(svgH-2)+'" text-anchor="end" fill="var(--subtext)" font-size="9" font-family="JetBrains Mono">#'+ec.length+'</text>';
+if(ec.length>10){var mid=Math.floor(ec.length/2);xLabels+='<text x="'+(padL+mid/(ec.length-1)*w)+'" y="'+(svgH-2)+'" text-anchor="middle" fill="var(--subtext)" font-size="9" font-family="JetBrains Mono">#'+mid+'</text>';}
+eqEl.innerHTML='<svg width="100%" height="100%" viewBox="0 0 '+svgW+' '+svgH+'">'+yLabels+xLabels+'<line x1="'+padL+'" y1="'+zeroY+'" x2="'+(padL+w)+'" y2="'+zeroY+'" stroke="var(--border)" stroke-dasharray="4"/><polyline points="'+pts+'" fill="none" stroke="'+clr+'" stroke-width="2"/></svg><div id="btEqTooltip" style="display:none;position:absolute;background:var(--card);border:1px solid var(--border);padding:6px 10px;border-radius:6px;font-size:10px;font-family:JetBrains Mono;pointer-events:none;z-index:10;color:var(--text)"></div>';
+// Tooltip on hover
+eqEl.onmousemove=function(evt){var rect=eqEl.querySelector('svg').getBoundingClientRect();var rx=evt.clientX-rect.left;var idx=Math.round((rx-padL)/w*(ec.length-1));if(idx<0)idx=0;if(idx>=ec.length)idx=ec.length-1;var tip=document.getElementById('btEqTooltip');tip.style.display='block';tip.style.left=(evt.clientX-eqEl.getBoundingClientRect().left+12)+'px';tip.style.top=(evt.clientY-eqEl.getBoundingClientRect().top-28)+'px';var vc=ec[idx]>=0?'var(--low)':'var(--high)';tip.innerHTML='Trade #'+(idx+1)+': <span style="color:'+vc+';font-weight:900">'+(ec[idx]>=0?'+':'')+ec[idx].toFixed(2)+'$</span>';};
+eqEl.onmouseleave=function(){var tip=document.getElementById('btEqTooltip');if(tip)tip.style.display='none';};
 }else{eqEl.innerHTML='<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--subtext)">Not enough data</div>';}
 // Top pairs table
 var ptb=document.querySelector('#btPairsTable tbody');
@@ -2068,6 +2102,148 @@ var stb=document.querySelector('#btTradesTable tbody');
 var th='';
 (bt.sampleTrades||[]).forEach(function(t){var pc=t.pnl>=0?'var(--low)':'var(--high)';var mc=t.mode==='credit'?'var(--purple)':'var(--accent)';th+='<tr><td style="font-weight:900">'+t.tA+' / '+t.tB+'</td><td style="color:'+mc+';font-weight:900;font-size:10px;text-transform:uppercase">'+t.mode+'</td><td style="font-family:JetBrains Mono">'+t.entryZ+'&sigma;</td><td style="font-family:JetBrains Mono">'+t.exitZ+'&sigma;</td><td>'+t.holdDays+'d</td><td style="font-size:10px;font-weight:900">'+(t.exitReason==='Z_REVERT'?'<span style="color:var(--low)">Z REVERT</span>':'<span style="color:var(--yellow)">MAX HOLD</span>')+'</td><td class="mono-data" style="color:'+pc+'">'+(t.pnl>=0?'+':'')+t.pnl+'$</td></tr>';});
 stb.innerHTML=th||'<tr><td colspan="7" style="color:var(--subtext);text-align:center">No sample trades</td></tr>';
+// ── ACTIONABLE SIGNALS ──
+window._lastBacktest=bt;
+renderActionableSignals(bt);
+}
+// Store last backtest for portfolio exit tracking
+window._lastBacktest=null;
+function renderActionableSignals(bt){
+var el=document.getElementById('btSignals');
+if(!el)return;
+var topPairs=bt.topPairs||[];
+if(topPairs.length===0){el.innerHTML='<div style="color:var(--subtext);text-align:center;padding:20px;font-size:11px">Run backtest to see actionable signals.</div>';return;}
+// Load current alerts from the page's last data fetch
+var curAlerts={};
+document.querySelectorAll('#alertBody tr.alert-row').forEach(function(row){
+var s=row.getAttribute('data-s')||'';
+var z=parseFloat(row.getAttribute('data-z'))||0;
+var tickers=row.getAttribute('data-tickers')||'';
+// Build lookup by cleaned pair id
+var parts=tickers.split(' ');
+if(parts.length>=2){var key=(parts[0]+'|'+parts[1]).toUpperCase();curAlerts[key]={z:z,tickers:tickers};}
+});
+// Also build from portfolio
+var portAlerts={};
+document.querySelectorAll('#portfolioGrid .trade-card').forEach(function(card){
+var idEl=card.querySelector('div[style*="font-size:22px"]');
+if(idEl){var pid=idEl.innerText.trim().toUpperCase();portAlerts[pid]=true;}
+});
+var exitZ=parseFloat(bt.params.exitZ)||0.5;
+var h='';
+// Sort topPairs by total PnL descending
+var sorted=topPairs.slice().sort(function(a,b){return b.pnl-a.pnl;});
+var activeCount=0,watchCount=0;
+sorted.forEach(function(p){
+// Try to match pair with current alerts
+var cid=p.id.toUpperCase().replace(/[^A-Z0-9|]/g,'');
+var altKey=cid;
+var matchedAlert=curAlerts[altKey];
+// Try alternate format
+if(!matchedAlert){
+var parts=p.id.split('|');
+if(parts.length===2){
+var rk=parts[0].toUpperCase().trim()+'|'+parts[1].toUpperCase().trim();
+matchedAlert=curAlerts[rk];
+if(!matchedAlert){Object.keys(curAlerts).forEach(function(k){if(k.replace(/-/g,'')===rk.replace(/-/g,''))matchedAlert=curAlerts[k];});}
+}
+}
+var isActive=!!matchedAlert;
+var isInPort=portAlerts[p.id.toUpperCase()]||false;
+var signal=isActive?'ACTIVE NOW':isInPort?'IN PORTFOLIO':'WATCH';
+var sigClr=isActive?'var(--low)':isInPort?'var(--accent)':'var(--subtext)';
+var sigBg=isActive?'rgba(16,185,129,.12)':isInPort?'rgba(14,165,233,.1)':'rgba(255,255,255,.03)';
+var sigBdr=isActive?'rgba(16,185,129,.4)':isInPort?'rgba(14,165,233,.3)':'var(--border)';
+if(isActive)activeCount++;else watchCount++;
+var curZ=matchedAlert?matchedAlert.z:null;
+var wrClr=p.winRate>=70?'var(--low)':p.winRate>=50?'var(--yellow)':'var(--high)';
+// Direction: positive Z → short spread (short A, long B), negative Z → long spread
+var longLeg='',shortLeg='',entryDir='';
+if(curZ!==null){
+if(curZ>0){longLeg=(p.tB||p.id.split('|')[1]||'B');shortLeg=(p.tA||p.id.split('|')[0]||'A');entryDir='SHORT SPREAD';}
+else{longLeg=(p.tA||p.id.split('|')[0]||'A');shortLeg=(p.tB||p.id.split('|')[1]||'B');entryDir='LONG SPREAD';}
+}
+// Compute target exit spread from backtest avg
+var avgEntrySpr=p.avgEntrySpr||0;
+var avgExitSpr=p.avgExitSpr||0;
+h+='<div style="background:'+sigBg+';border:1px solid '+sigBdr+';border-radius:10px;padding:16px;margin-bottom:10px">';
+h+='<div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:10px">';
+h+='<div style="flex:1;min-width:200px">';
+h+='<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px"><span style="font-weight:900;font-size:15px;color:var(--accent)">'+p.id+'</span><span style="font-size:9px;font-weight:900;padding:3px 8px;border-radius:4px;background:'+sigBg+';color:'+sigClr+';border:1px solid '+sigBdr+';text-transform:uppercase">'+signal+'</span></div>';
+// Stats row
+h+='<div style="display:flex;gap:16px;font-size:10px;color:var(--subtext);flex-wrap:wrap">';
+h+='<span><span style="font-weight:900">'+p.trades+'</span> trades</span>';
+h+='<span style="color:'+wrClr+';font-weight:900">'+p.winRate+'% WR</span>';
+h+='<span>Avg PnL: <span style="color:'+(p.avgPnl>=0?'var(--low)':'var(--high)')+';font-weight:900">'+(p.avgPnl>=0?'+':'')+p.avgPnl+'$</span></span>';
+h+='<span>Avg Hold: <span style="font-weight:900">'+p.avgHold+'d</span></span>';
+h+='<span>Total: <span style="color:'+(p.pnl>=0?'var(--low)':'var(--high)')+';font-weight:900">'+(p.pnl>=0?'+':'')+p.pnl+'$</span></span>';
+h+='</div>';
+h+='</div>';
+// Entry/exit recommendation
+if(isActive&&curZ!==null){
+h+='<div style="background:var(--card);border:1px solid var(--border);border-radius:8px;padding:12px 16px;min-width:280px">';
+h+='<div style="font-size:9px;font-weight:900;color:var(--accent);text-transform:uppercase;margin-bottom:8px;letter-spacing:1px">&#9889; TRADE SIGNAL</div>';
+h+='<div style="font-size:12px;font-weight:900;color:white;margin-bottom:6px">'+entryDir+' @ '+Math.abs(curZ).toFixed(2)+'σ</div>';
+h+='<div style="font-size:11px;color:var(--text);margin-bottom:4px"><span style="color:var(--low);font-weight:900">LONG</span> '+longLeg+' · <span style="color:var(--high);font-weight:900">SHORT</span> '+shortLeg+'</div>';
+h+='<div style="font-size:10px;color:var(--subtext);margin-top:6px;border-top:1px solid var(--border);padding-top:6px">';
+h+='Exit target: <span style="color:var(--low);font-weight:900">'+exitZ.toFixed(1)+'σ</span>';
+if(avgExitSpr!==0) h+=' · Avg exit spread: <span style="font-weight:900;font-family:JetBrains Mono">$'+avgExitSpr.toFixed(2)+'</span>';
+h+=' · Avg hold: <span style="font-weight:900">'+p.avgHold+'d</span>';
+h+='</div>';
+h+='</div>';
+}else if(isInPort){
+h+='<div style="background:var(--card);border:1px solid rgba(14,165,233,.3);border-radius:8px;padding:12px 16px;min-width:260px">';
+h+='<div style="font-size:9px;font-weight:900;color:var(--accent);text-transform:uppercase;margin-bottom:6px;letter-spacing:1px">IN PORTFOLIO — TRACKING</div>';
+h+='<div style="font-size:10px;color:var(--subtext)">Exit target: <span style="color:var(--low);font-weight:900">'+exitZ.toFixed(1)+'σ</span>';
+if(avgExitSpr!==0) h+=' · Target spread: <span style="font-weight:900;font-family:JetBrains Mono">$'+avgExitSpr.toFixed(2)+'</span>';
+h+='</div></div>';
+}
+h+='</div></div>';
+});
+// Summary header
+var summary='<div style="display:flex;gap:12px;margin-bottom:15px"><div style="background:rgba(16,185,129,.08);border:1px solid rgba(16,185,129,.3);border-radius:8px;padding:10px 16px"><span style="font-size:10px;color:var(--subtext);font-weight:900;text-transform:uppercase">ACTIVE NOW</span><span style="font-family:JetBrains Mono;font-size:16px;font-weight:900;color:var(--low);margin-left:8px">'+activeCount+'</span></div><div style="background:rgba(255,255,255,.03);border:1px solid var(--border);border-radius:8px;padding:10px 16px"><span style="font-size:10px;color:var(--subtext);font-weight:900;text-transform:uppercase">WATCH</span><span style="font-family:JetBrains Mono;font-size:16px;font-weight:900;color:var(--subtext);margin-left:8px">'+watchCount+'</span></div></div>';
+el.innerHTML=summary+h;
+}
+// ── PORTFOLIO EXIT TRACKING ──
+// Inject exit recommendations into portfolio trade cards when backtest data is available
+function injectExitSignals(){
+var bt=window._lastBacktest;
+if(!bt||!bt.topPairs)return;
+var exitZ=parseFloat(bt.params.exitZ)||0.5;
+var lookup={};
+bt.topPairs.forEach(function(p){lookup[p.id.toUpperCase().replace(/[^A-Z0-9|]/g,'')]=p;});
+document.querySelectorAll('#portfolioGrid .trade-card').forEach(function(card){
+if(card.querySelector('.exit-signal'))return; // already injected
+var idEl=card.querySelector('div[style*="font-size:22px"]');
+if(!idEl)return;
+var pid=idEl.innerText.trim().toUpperCase();
+var pData=lookup[pid.replace(/[^A-Z0-9|]/g,'')];
+if(!pData)return;
+// Find current spread from card
+var sprEl=card.querySelector('.entry-indicator');
+// Build exit signal div
+var sig=document.createElement('div');
+sig.className='exit-signal';
+sig.style.cssText='margin-top:12px;padding:12px;background:rgba(16,185,129,.06);border:1px solid rgba(16,185,129,.25);border-radius:8px';
+var exitHtml='<div style="font-size:9px;font-weight:900;color:var(--low);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px">&#9889; EXIT SIGNAL (from backtest)</div>';
+exitHtml+='<div style="font-size:11px;color:var(--text)">Close trade at <span style="color:var(--low);font-weight:900">'+exitZ.toFixed(1)+'σ</span>';
+if(pData.avgExitSpr) exitHtml+=' · Target spread: <span style="font-family:JetBrains Mono;font-weight:900">$'+pData.avgExitSpr.toFixed(2)+'</span>';
+exitHtml+='</div>';
+exitHtml+='<div style="font-size:10px;color:var(--subtext);margin-top:4px">Backtest: '+pData.winRate+'% WR · '+pData.avgPnl+'$ avg PnL · '+pData.avgHold+'d avg hold</div>';
+sig.innerHTML=exitHtml;
+// Insert before the progress bar
+var progBar=card.querySelector('.progress-container');
+if(progBar)card.insertBefore(sig,progBar);
+else card.appendChild(sig);
+});
+}
+// Auto-inject exit signals when portfolio renders
+var _origRender=window.renderHealthBar;
+if(typeof _origRender==='function'){
+window.renderHealthBar=function(pd){
+_origRender(pd);
+setTimeout(injectExitSignals,100);
+};
 }
 </script>
 </body>

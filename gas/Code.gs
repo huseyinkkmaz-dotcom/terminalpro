@@ -2847,7 +2847,9 @@ function getJournalAnalytics_() {
     var avgHold = holdDays.length > 0 ? holdDays.reduce(function(a,b){return a+b;},0) / holdDays.length : 0;
     var avgWin = wins > 0 ? pnls.filter(function(p){return p>0;}).reduce(function(a,b){return a+b;},0) / wins : 0;
     var avgLoss = losses > 0 ? pnls.filter(function(p){return p<=0;}).reduce(function(a,b){return a+b;},0) / losses : 0;
-    var profitFactor = Math.abs(avgLoss) > 0 ? avgWin / Math.abs(avgLoss) : 0;
+    var grossProfits = pnls.filter(function(p){return p>0;}).reduce(function(a,b){return a+b;},0);
+    var grossLosses = Math.abs(pnls.filter(function(p){return p<=0;}).reduce(function(a,b){return a+b;},0));
+    var profitFactor = grossLosses > 0 ? parseFloat((grossProfits / grossLosses).toFixed(2)) : 0;
 
     // Expectancy = (WinRate × AvgWin) - (LossRate × |AvgLoss|)
     var expectancy = (winRate/100 * avgWin) - ((1 - winRate/100) * Math.abs(avgLoss));
@@ -3161,17 +3163,23 @@ function runBacktest_(zThreshold, exitZ, maxHold, mode) {
 
     var zRevertExits = allTrades.filter(function(t){return t.exitReason==='Z_REVERT';}).length;
 
-    // By-pair breakdown (top 10 by trade count)
+    // By-pair breakdown (top 15 by trade count)
     var pairStats = {};
     for (var bt = 0; bt < allTrades.length; bt++) {
       var pid = allTrades[bt].id;
-      if (!pairStats[pid]) pairStats[pid] = { trades: 0, pnl: 0, wins: 0 };
+      if (!pairStats[pid]) pairStats[pid] = { trades: 0, pnl: 0, wins: 0, holdSum: 0, entryZSum: 0, exitZSum: 0, entrySprSum: 0, exitSprSum: 0, tA: allTrades[bt].tA, tB: allTrades[bt].tB, mode: allTrades[bt].mode };
       pairStats[pid].trades++;
       pairStats[pid].pnl += allTrades[bt].pnl;
+      pairStats[pid].holdSum += allTrades[bt].holdDays;
+      pairStats[pid].entryZSum += Math.abs(allTrades[bt].entryZ);
+      pairStats[pid].exitZSum += Math.abs(allTrades[bt].exitZ);
+      pairStats[pid].entrySprSum += allTrades[bt].entrySpread;
+      pairStats[pid].exitSprSum += allTrades[bt].exitSpread;
       if (allTrades[bt].pnl > 0) pairStats[pid].wins++;
     }
     var topPairs = Object.keys(pairStats).map(function(k) {
-      return { id: k, trades: pairStats[k].trades, pnl: parseFloat(pairStats[k].pnl.toFixed(2)), winRate: parseFloat((pairStats[k].wins/pairStats[k].trades*100).toFixed(1)) };
+      var ps = pairStats[k];
+      return { id: k, tA: ps.tA, tB: ps.tB, mode: ps.mode, trades: ps.trades, pnl: parseFloat(ps.pnl.toFixed(2)), winRate: parseFloat((ps.wins/ps.trades*100).toFixed(1)), avgPnl: parseFloat((ps.pnl/ps.trades).toFixed(2)), avgHold: parseFloat((ps.holdSum/ps.trades).toFixed(1)), avgEntryZ: parseFloat((ps.entryZSum/ps.trades).toFixed(2)), avgExitZ: parseFloat((ps.exitZSum/ps.trades).toFixed(2)), avgEntrySpr: parseFloat((ps.entrySprSum/ps.trades).toFixed(4)), avgExitSpr: parseFloat((ps.exitSprSum/ps.trades).toFixed(4)) };
     }).sort(function(a,b){return b.trades - a.trades;}).slice(0, 15);
 
     return {
@@ -3184,7 +3192,7 @@ function runBacktest_(zThreshold, exitZ, maxHold, mode) {
       avgWin: parseFloat(avgWin.toFixed(2)),
       avgLoss: parseFloat(avgLoss.toFixed(2)),
       avgHold: parseFloat(avgHold.toFixed(1)),
-      profitFactor: Math.abs(avgLoss) > 0 ? parseFloat((avgWin / Math.abs(avgLoss)).toFixed(2)) : 0,
+      profitFactor: (function(){ var gp=winTrades.reduce(function(s,t){return s+t.pnl;},0); var gl=Math.abs(lossTrades.reduce(function(s,t){return s+t.pnl;},0)); return gl>0?parseFloat((gp/gl).toFixed(2)):0; })(),
       maxDrawdown: parseFloat(maxDrawdown.toFixed(2)),
       zRevertPct: parseFloat((zRevertExits / totalTrades * 100).toFixed(1)),
       equityCurve: equityCurve,
