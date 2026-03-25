@@ -434,23 +434,6 @@ td:last-child{border-radius:0 10px 10px 0;border-right:1px solid var(--border)}
 <div class="journal-saved" id="journalSaved">Saved</div>
 </div>
 </div>
-<!-- ═══ POSITION SIZING MODAL ═══ -->
-<div id="posSizeModal" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.7);z-index:2000;justify-content:center;align-items:center">
-<div style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:30px;width:620px;max-width:90vw;max-height:85vh;overflow-y:auto">
-<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px">
-<div style="font-weight:900;font-size:16px;text-transform:uppercase">Position Sizer</div>
-<button onclick="closeSizer()" style="background:none;border:none;color:var(--subtext);font-size:22px;cursor:pointer">&times;</button>
-</div>
-<div style="font-size:10px;color:var(--subtext);margin-bottom:16px;line-height:1.5">Size by max dollar loss per trade. Shares = MaxLoss / (2&sigma; &times; StDev). Half-Kelly shown when screener data exists.</div>
-<div style="margin-bottom:20px">
-<label style="font-size:9px;font-weight:900;color:var(--subtext);text-transform:uppercase;display:block;margin-bottom:6px">Max Loss Per Trade ($)</label><input id="psMaxLoss" type="number" value="500" step="50" min="50" style="width:100%;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:12px;border-radius:6px;font-family:JetBrains Mono;font-size:13px;box-sizing:border-box">
-</div>
-<button onclick="runSizer()" id="psRunBtn" style="background:var(--accent);color:white;border:none;padding:12px 24px;border-radius:6px;font-size:11px;font-weight:900;cursor:pointer;text-transform:uppercase;letter-spacing:1px;width:100%;margin-bottom:20px">Calculate Sizing</button>
-<div id="psLoading" style="display:none;text-align:center;padding:20px;color:var(--subtext)">Calculating...</div>
-<div id="psSummary" style="display:none;margin-bottom:16px"></div>
-<div id="psTable" style="display:none;overflow-x:auto"><table id="psResultTable"><thead><tr><th>Pair</th><th>Z</th><th>StDev</th><th>Shares</th><th>Notional</th><th>Max Loss</th><th>Kelly</th><th>Exp Profit</th></tr></thead><tbody></tbody></table></div>
-</div>
-</div>
 <!-- ═══ REGIME BANNER ═══ -->
 <div id="regimeBanner" style="display:none;background:var(--card);border-bottom:1px solid var(--border);padding:6px 20px;font-size:10px;font-weight:900;text-align:center;letter-spacing:1px;text-transform:uppercase">
 <span id="regimeLabel" style="color:var(--subtext)">REGIME: —</span>
@@ -465,7 +448,6 @@ td:last-child{border-radius:0 10px 10px 0;border-right:1px solid var(--border)}
 <div class="nav-item" onclick="tabHistory(this)">History</div>
 <div class="nav-item" onclick="tabDivCapture(this)">Div Capture</div>
 <div class="nav-item" onclick="tabBacktest(this)">Backtest</div>
-<div class="nav-item" onclick="openSizer()" style="color:var(--yellow)">Sizer</div>
 <div class="live-switch"><span class="switch-label">Live (5m)</span><label><input type="checkbox" class="switch-input" id="autoRefresh" onchange="toggleLive()"><div class="switch-slider"></div></label></div>
 <div class="conn-dot loading" id="connDot" title="API Status"></div>
 </div>
@@ -666,6 +648,23 @@ td:last-child{border-radius:0 10px 10px 0;border-right:1px solid var(--border)}
 </div>
 <!-- Actionable Signals -->
 <h3 style="font-size:11px;font-weight:900;color:var(--accent);text-transform:uppercase;margin:25px 0 15px 0;display:flex;align-items:center;gap:8px"><span style="font-size:14px">&#9889;</span> Actionable Signals — Entry Recommendations</h3>
+<!-- Position Sizer (collapsible panel) -->
+<div id="psSizerPanel" style="margin-bottom:15px">
+<div id="psSizerToggle" onclick="toggleSizerPanel()" style="display:flex;align-items:center;gap:8px;cursor:pointer;background:rgba(245,158,11,.06);border:1px solid rgba(245,158,11,.25);border-radius:8px;padding:10px 16px;transition:.2s;user-select:none">
+<span id="psSizerArrow" style="font-size:10px;color:var(--yellow);transition:transform .2s;display:inline-block">&#9654;</span>
+<span style="font-size:10px;font-weight:900;color:var(--yellow);text-transform:uppercase;letter-spacing:1px">Position Sizer</span>
+<span style="font-size:10px;color:var(--subtext);font-weight:400;margin-left:4px">— Size by max dollar loss per trade</span>
+</div>
+<div id="psSizerBody" style="display:none;border-left:2px solid var(--yellow);margin-top:0;padding:16px 20px;background:rgba(245,158,11,.03);border-radius:0 0 8px 8px;border:1px solid rgba(245,158,11,.15);border-top:none">
+<div style="display:flex;gap:12px;align-items:flex-end;margin-bottom:16px;flex-wrap:wrap">
+<div><label style="font-size:9px;font-weight:900;color:var(--subtext);text-transform:uppercase;display:block;margin-bottom:6px">Max Loss Per Trade ($)</label><input id="psMaxLoss" type="number" value="500" step="50" min="50" style="background:var(--bg);border:1px solid var(--border);color:var(--text);padding:10px 14px;border-radius:6px;font-family:JetBrains Mono;font-size:13px;width:140px"></div>
+<button onclick="runSizer()" id="psRunBtn" style="background:var(--yellow);color:#000;border:none;padding:10px 24px;border-radius:6px;font-size:11px;font-weight:900;cursor:pointer;text-transform:uppercase;letter-spacing:1px;transition:opacity .15s" onmouseenter="this.style.opacity='0.85'" onmouseleave="this.style.opacity='1'">Calculate Sizing</button>
+</div>
+<div id="psLoading" style="display:none;text-align:center;padding:12px;color:var(--subtext);font-size:11px">Calculating...</div>
+<div id="psSummary" style="display:none;margin-bottom:12px"></div>
+<div id="psTable" style="display:none;overflow-x:auto;max-height:300px;overflow-y:auto"><table id="psResultTable" style="font-size:12px"><thead><tr><th>Pair</th><th>Z</th><th>StDev</th><th>Shares</th><th>Notional</th><th>Max Loss</th><th>Kelly</th><th>Exp Profit</th></tr></thead><tbody></tbody></table></div>
+</div>
+</div>
 <div id="btSignals" style="margin-bottom:25px"></div>
 <h3 style="font-size:11px;font-weight:900;color:var(--subtext);text-transform:uppercase;margin:25px 0 15px 0">Sample Trades</h3>
 <div style="overflow-x:auto"><table id="btTradesTable"><thead><tr><th>Pair</th><th>Mode</th><th>Entry Z</th><th>Exit Z</th><th>Hold</th><th>Exit Reason</th><th class="mono-data">PnL</th></tr></thead><tbody></tbody></table></div>
@@ -1786,8 +1785,22 @@ document.addEventListener('click',function(e){var d1=document.getElementById('ma
 // ═══════════════════════════════════════════════════════════════════
 // POSITION SIZING CALCULATOR
 // ═══════════════════════════════════════════════════════════════════
-function openSizer(){document.getElementById('posSizeModal').style.display='flex';}
-function closeSizer(){document.getElementById('posSizeModal').style.display='none';}
+window._sizerRecs={};
+function toggleSizerPanel(){
+var body=document.getElementById('psSizerBody');
+var arrow=document.getElementById('psSizerArrow');
+var toggle=document.getElementById('psSizerToggle');
+if(!body)return;
+if(body.style.display==='none'){
+body.style.display='block';
+arrow.innerHTML='&#9660;';
+toggle.style.borderRadius='8px 8px 0 0';
+}else{
+body.style.display='none';
+arrow.innerHTML='&#9654;';
+toggle.style.borderRadius='8px';
+}
+}
 async function runSizer(){
 var btn=document.getElementById('psRunBtn');
 btn.disabled=true;btn.innerText='CALCULATING...';
@@ -1837,6 +1850,32 @@ h+='<td style="font-family:JetBrains Mono;color:var(--low)">$'+(r.expProfit||'�
 h+='</tr>';
 });
 tb.innerHTML=h;
+// Store recs for signal card badges
+window._sizerRecs={};
+recs.forEach(function(r){
+var key=(r.tA+'|'+r.tB).toUpperCase();
+window._sizerRecs[key]={shares:r.shares,notional:r.notional,kellyShares:r.kellyShares};
+// Also store reversed key
+var rkey=(r.tB+'|'+r.tA).toUpperCase();
+window._sizerRecs[rkey]={shares:r.shares,notional:r.notional,kellyShares:r.kellyShares};
+});
+injectSizerBadges();
+}
+function injectSizerBadges(){
+if(!window._sizerRecs||Object.keys(window._sizerRecs).length===0)return;
+document.querySelectorAll('#btSignals [data-sizer-pair]').forEach(function(badge){badge.remove();});
+document.querySelectorAll('#btSignals button[onclick*="openModal"]').forEach(function(btn){
+var m=btn.getAttribute('onclick').match(/openModal\('([^']+)'/);
+if(!m)return;
+var pid=m[1].toUpperCase();
+var rec=window._sizerRecs[pid];
+if(!rec)return;
+var badge=document.createElement('div');
+badge.setAttribute('data-sizer-pair',pid);
+badge.style.cssText='display:flex;align-items:center;gap:6px;font-size:10px;font-weight:900;color:var(--yellow);background:rgba(245,158,11,.08);border:1px solid rgba(245,158,11,.25);border-radius:5px;padding:4px 10px;margin-bottom:4px';
+badge.innerHTML='&#9670; '+rec.shares+' sh'+(rec.kellyShares?' <span style="color:var(--subtext);font-weight:400">(Kelly: '+rec.kellyShares+')</span>':'')+ ' · $'+rec.notional.toLocaleString();
+btn.parentNode.insertBefore(badge,btn);
+});
 }
 // ═══════════════════════════════════════════════════════════════════
 // REGIME DETECTION — loaded on init, updates banner + score
@@ -2253,6 +2292,8 @@ h+='</div>';
 // Summary header
 var summary='<div style="display:flex;gap:12px;margin-bottom:15px"><div style="background:rgba(16,185,129,.08);border:1px solid rgba(16,185,129,.3);border-radius:8px;padding:10px 16px"><span style="font-size:10px;color:var(--subtext);font-weight:900;text-transform:uppercase">ACTIVE NOW</span><span style="font-family:JetBrains Mono;font-size:16px;font-weight:900;color:var(--low);margin-left:8px">'+activeCount+'</span></div><div style="background:rgba(255,255,255,.03);border:1px solid var(--border);border-radius:8px;padding:10px 16px"><span style="font-size:10px;color:var(--subtext);font-weight:900;text-transform:uppercase">WATCH</span><span style="font-family:JetBrains Mono;font-size:16px;font-weight:900;color:var(--subtext);margin-left:8px">'+watchCount+'</span></div></div>';
 el.innerHTML=summary+h;
+// Re-inject sizer badges if sizer was already run
+if(typeof injectSizerBadges==='function')injectSizerBadges();
 }
 // Toggle trade log visibility on signal cards
 function toggleSignalTradeLog(cardUid){
