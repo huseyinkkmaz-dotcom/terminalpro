@@ -655,7 +655,7 @@ td:last-child{border-radius:0 10px 10px 0;border-right:1px solid var(--border)}
 <span style="font-size:10px;font-weight:900;color:var(--yellow);text-transform:uppercase;letter-spacing:1px">Position Sizer</span>
 <span style="font-size:10px;color:var(--subtext);font-weight:400;margin-left:4px">— Size by max dollar loss per trade</span>
 </div>
-<div id="psSizerBody" style="display:none;border-left:2px solid var(--yellow);margin-top:0;padding:16px 20px;background:rgba(245,158,11,.03);border-radius:0 0 8px 8px;border:1px solid rgba(245,158,11,.15);border-top:none">
+<div id="psSizerBody" style="display:none;margin-top:0;padding:16px 20px;background:rgba(245,158,11,.03);border-radius:0 0 8px 8px;border:1px solid rgba(245,158,11,.15);border-top:none;border-left:2px solid var(--yellow)">
 <div style="display:flex;gap:12px;align-items:flex-end;margin-bottom:16px;flex-wrap:wrap">
 <div><label style="font-size:9px;font-weight:900;color:var(--subtext);text-transform:uppercase;display:block;margin-bottom:6px">Max Loss Per Trade ($)</label><input id="psMaxLoss" type="number" value="500" step="50" min="50" style="background:var(--bg);border:1px solid var(--border);color:var(--text);padding:10px 14px;border-radius:6px;font-family:JetBrains Mono;font-size:13px;width:140px"></div>
 <button onclick="runSizer()" id="psRunBtn" style="background:var(--yellow);color:#000;border:none;padding:10px 24px;border-radius:6px;font-size:11px;font-weight:900;cursor:pointer;text-transform:uppercase;letter-spacing:1px;transition:opacity .15s" onmouseenter="this.style.opacity='0.85'" onmouseleave="this.style.opacity='1'">Calculate Sizing</button>
@@ -1829,6 +1829,7 @@ document.getElementById('psSummary').innerHTML=
 var recs=sd.recommendations||[];
 document.getElementById('psTable').style.display='block';
 var tb=document.querySelector('#psResultTable tbody');
+if(!tb)return;
 if(recs.length===0){tb.innerHTML='<tr><td colspan="8" style="text-align:center;color:var(--subtext);padding:20px">No alert pairs available for sizing</td></tr>';return;}
 var h='';
 recs.forEach(function(r){
@@ -1873,8 +1874,8 @@ if(!rec)return;
 var badge=document.createElement('div');
 badge.setAttribute('data-sizer-pair',pid);
 badge.style.cssText='display:flex;align-items:center;gap:6px;font-size:10px;font-weight:900;color:var(--yellow);background:rgba(245,158,11,.08);border:1px solid rgba(245,158,11,.25);border-radius:5px;padding:4px 10px;margin-bottom:4px';
-badge.innerHTML='&#9670; '+rec.shares+' sh'+(rec.kellyShares?' <span style="color:var(--subtext);font-weight:400">(Kelly: '+rec.kellyShares+')</span>':'')+ ' · $'+rec.notional.toLocaleString();
-btn.parentNode.insertBefore(badge,btn);
+badge.innerHTML='&#9670; '+rec.shares+' sh'+(rec.kellyShares?' <span style="color:var(--subtext);font-weight:400">(Kelly: '+rec.kellyShares+')</span>':'')+ ' · $'+(rec.notional||0).toLocaleString();
+if(btn.parentNode)btn.parentNode.insertBefore(badge,btn);
 });
 }
 // ═══════════════════════════════════════════════════════════════════
