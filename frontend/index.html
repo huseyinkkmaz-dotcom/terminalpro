@@ -2104,7 +2104,7 @@ var th='';
 stb.innerHTML=th||'<tr><td colspan="7" style="color:var(--subtext);text-align:center">No sample trades</td></tr>';
 // ── ACTIONABLE SIGNALS ──
 window._lastBacktest=bt;
-renderActionableSignals(bt);
+try{renderActionableSignals(bt);}catch(sigErr){console.error('renderActionableSignals error:',sigErr);var sigEl=document.getElementById('btSignals');if(sigEl)sigEl.innerHTML='<div style="color:var(--high);text-align:center;padding:20px">Failed to render signals: '+sigErr.message+'</div>';}
 }
 // Store last backtest for portfolio exit tracking
 window._lastBacktest=null;
@@ -2159,8 +2159,9 @@ var curZ=matchedAlert?matchedAlert.z:null;
 var wrClr=p.winRate>=70?'var(--low)':p.winRate>=50?'var(--yellow)':'var(--high)';
 // Direction: positive Z → short spread (short A, long B), negative Z → long spread
 var longLeg='',shortLeg='',entryDir='';
-if(curZ!==null){
-if(curZ>0){longLeg=(p.tB||p.id.split('|')[1]||'B');shortLeg=(p.tA||p.id.split('|')[0]||'A');entryDir='SHORT SPREAD';}
+var dirZ=curZ!==null?curZ:(p.avgEntryZ?p.avgEntryZ:0);
+if(dirZ!==0){
+if(dirZ>0){longLeg=(p.tB||p.id.split('|')[1]||'B');shortLeg=(p.tA||p.id.split('|')[0]||'A');entryDir='SHORT SPREAD';}
 else{longLeg=(p.tA||p.id.split('|')[0]||'A');shortLeg=(p.tB||p.id.split('|')[1]||'B');entryDir='LONG SPREAD';}
 }
 // Compute target exit spread from backtest avg
@@ -2186,11 +2187,20 @@ h+='<div style="margin-top:6px"><a href="javascript:void(0)" onclick="toggleSign
 }
 h+='</div>';
 // Entry/exit recommendation
-if(isActive&&curZ!==null){
+if(isInPort){
+h+='<div style="background:var(--card);border:1px solid rgba(14,165,233,.3);border-radius:8px;padding:12px 16px;min-width:260px">';
+h+='<div style="font-size:9px;font-weight:900;color:var(--accent);text-transform:uppercase;margin-bottom:6px;letter-spacing:1px">IN PORTFOLIO — TRACKING</div>';
+h+='<div style="font-size:10px;color:var(--subtext)">Exit target: <span style="color:var(--low);font-weight:900">'+exitZ.toFixed(1)+'σ</span>';
+if(avgExitSpr!==0) h+=' · Target spread: <span style="font-weight:900;font-family:JetBrains Mono">$'+avgExitSpr.toFixed(2)+'</span>';
+h+='</div></div>';
+}else if(dirZ!==0){
+var cardLabel=isActive?'&#9889; TRADE SIGNAL':'&#128301; SETUP PREVIEW';
+var cardLabelClr=isActive?'var(--accent)':'var(--subtext)';
+var displayZ=curZ!==null?Math.abs(curZ).toFixed(2):p.avgEntryZ.toFixed(2);
 h+='<div style="display:flex;flex-direction:column;gap:8px;min-width:280px">';
 h+='<div style="background:var(--card);border:1px solid var(--border);border-radius:8px;padding:12px 16px">';
-h+='<div style="font-size:9px;font-weight:900;color:var(--accent);text-transform:uppercase;margin-bottom:8px;letter-spacing:1px">&#9889; TRADE SIGNAL</div>';
-h+='<div style="font-size:12px;font-weight:900;color:white;margin-bottom:6px">'+entryDir+' @ '+Math.abs(curZ).toFixed(2)+'σ</div>';
+h+='<div style="font-size:9px;font-weight:900;color:'+cardLabelClr+';text-transform:uppercase;margin-bottom:8px;letter-spacing:1px">'+cardLabel+'</div>';
+h+='<div style="font-size:12px;font-weight:900;color:white;margin-bottom:6px">'+entryDir+' @ '+displayZ+'σ'+(curZ===null?' <span style="font-size:9px;color:var(--subtext)">(avg)</span>':'')+'</div>';
 h+='<div style="font-size:11px;color:var(--text);margin-bottom:4px"><span style="color:var(--low);font-weight:900">LONG</span> '+longLeg+' · <span style="color:var(--high);font-weight:900">SHORT</span> '+shortLeg+'</div>';
 h+='<div style="font-size:10px;color:var(--subtext);margin-top:6px;border-top:1px solid var(--border);padding-top:6px">';
 h+='Exit target: <span style="color:var(--low);font-weight:900">'+exitZ.toFixed(1)+'σ</span>';
@@ -2198,17 +2208,12 @@ if(avgExitSpr!==0) h+=' · Avg exit spread: <span style="font-weight:900;font-fa
 h+=' · Avg hold: <span style="font-weight:900">'+p.avgHold+'d</span>';
 h+='</div>';
 h+='</div>';
-// Enter Trade button for ACTIVE NOW pairs
+if(isActive){
 var eTa=p.tA||p.id.split('|')[0]||'';
 var eTb=p.tB||p.id.split('|')[1]||'';
 h+='<button onclick="openModal(\''+p.id.replace(/'/g,"\\'")+'\',\''+eTa.replace(/'/g,"\\'")+'\',\''+eTb.replace(/'/g,"\\'")+'\')" style="background:var(--accent);color:#000;border:none;border-radius:6px;padding:9px 16px;font-size:11px;font-weight:900;cursor:pointer;text-transform:uppercase;letter-spacing:1px;width:100%;transition:opacity .15s" onmouseenter="this.style.opacity=\'0.85\'" onmouseleave="this.style.opacity=\'1\'">&#9889; ENTER TRADE</button>';
+}
 h+='</div>';
-}else if(isInPort){
-h+='<div style="background:var(--card);border:1px solid rgba(14,165,233,.3);border-radius:8px;padding:12px 16px;min-width:260px">';
-h+='<div style="font-size:9px;font-weight:900;color:var(--accent);text-transform:uppercase;margin-bottom:6px;letter-spacing:1px">IN PORTFOLIO — TRACKING</div>';
-h+='<div style="font-size:10px;color:var(--subtext)">Exit target: <span style="color:var(--low);font-weight:900">'+exitZ.toFixed(1)+'σ</span>';
-if(avgExitSpr!==0) h+=' · Target spread: <span style="font-weight:900;font-family:JetBrains Mono">$'+avgExitSpr.toFixed(2)+'</span>';
-h+='</div></div>';
 }
 h+='</div>';
 // Collapsible trade log section (hidden by default)

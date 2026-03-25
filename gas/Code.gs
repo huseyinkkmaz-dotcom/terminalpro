@@ -51,10 +51,8 @@ function doGet(e) {
           macroData: getMacroData(),
           _diag: { totalRows: 0, noId: 0, noPrice: 0, lowHist: 0, noCoupon: 0, lowZ: 0, passed: 0 }
         };
-        var safeJson2 = JSON.stringify(result, function(key, val) {
-          if (typeof val === 'number' && !isFinite(val)) return null;
-          return val;
-        });
+        sanitizeObject_(result);
+        var safeJson2 = JSON.stringify(result);
         return ContentService.createTextOutput(safeJson2).setMimeType(ContentService.MimeType.JSON);
       }
       var alerts = getAlertData(mode);
@@ -175,11 +173,9 @@ function doGet(e) {
   } catch (err) {
     result = { ok: false, message: err.toString() };
   }
-  // Sanitize: replace NaN/Infinity with null so JSON.stringify doesn't silently fail
-  var safeJson = JSON.stringify(result, function(key, val) {
-    if (typeof val === 'number' && !isFinite(val)) return null;
-    return val;
-  });
+  // Sanitize: replace NaN/Infinity with null iteratively (avoid replacer recursion on large results)
+  sanitizeObject_(result);
+  var safeJson = JSON.stringify(result);
   return ContentService
     .createTextOutput(safeJson)
     .setMimeType(ContentService.MimeType.JSON);
@@ -236,6 +232,35 @@ function parseMoney(val) {
 }
 function cleanId(id) {
   return id ? String(id).toUpperCase().replace(/[^A-Z0-9]/g,'') : "";
+}
+// Downsample an array to maxLen by evenly picking elements (always keeps first and last)
+function downsampleArray_(arr, maxLen) {
+  if (!arr || arr.length <= maxLen) return arr;
+  var result = [arr[0]];
+  var step = (arr.length - 1) / (maxLen - 1);
+  for (var i = 1; i < maxLen - 1; i++) { result.push(arr[Math.round(i * step)]); }
+  result.push(arr[arr.length - 1]);
+  return result;
+}
+// Iteratively sanitize NaN/Infinity values in an object (avoids JSON.stringify replacer stack overflow)
+function sanitizeObject_(obj) {
+  var stack = [obj];
+  while (stack.length > 0) {
+    var current = stack.pop();
+    if (Array.isArray(current)) {
+      for (var i = 0; i < current.length; i++) {
+        if (typeof current[i] === 'number' && !isFinite(current[i])) { current[i] = null; }
+        else if (current[i] && typeof current[i] === 'object') { stack.push(current[i]); }
+      }
+    } else if (current && typeof current === 'object') {
+      var keys = Object.keys(current);
+      for (var k = 0; k < keys.length; k++) {
+        var v = current[keys[k]];
+        if (typeof v === 'number' && !isFinite(v)) { current[keys[k]] = null; }
+        else if (v && typeof v === 'object') { stack.push(v); }
+      }
+    }
+  }
 }
 // ============================================================
 // TICKER EXCLUSION LISTS
@@ -3197,7 +3222,7 @@ function runBacktest_(zThreshold, exitZ, maxHold, mode) {
       profitFactor: (function(){ var gp=winTrades.reduce(function(s,t){return s+t.pnl;},0); var gl=Math.abs(lossTrades.reduce(function(s,t){return s+t.pnl;},0)); return gl>0?parseFloat((gp/gl).toFixed(2)):0; })(),
       maxDrawdown: parseFloat(maxDrawdown.toFixed(2)),
       zRevertPct: parseFloat((zRevertExits / totalTrades * 100).toFixed(1)),
-      equityCurve: equityCurve,
+      equityCurve: downsampleArray_(equityCurve, 500),
       topPairs: topPairs,
       sampleTrades: allTrades.slice(0, 50),
       params: { zThreshold: zThreshold, exitZ: exitZ, maxHold: maxHold, mode: mode }
