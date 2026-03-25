@@ -3207,7 +3207,7 @@ function runBacktest_(zThreshold, exitZ, maxHold, mode) {
       var ps = pairStats[k];
       var recent = ps.allPairTrades.slice(-5).map(function(t){ return { entryZ: t.entryZ, exitZ: t.exitZ, holdDays: t.holdDays, pnl: t.pnl, exitReason: t.exitReason, entrySpread: t.entrySpread, exitSpread: t.exitSpread }; });
       return { id: k, tA: ps.tA, tB: ps.tB, mode: ps.mode, trades: ps.trades, pnl: parseFloat(ps.pnl.toFixed(2)), winRate: parseFloat((ps.wins/ps.trades*100).toFixed(1)), avgPnl: parseFloat((ps.pnl/ps.trades).toFixed(2)), avgHold: parseFloat((ps.holdSum/ps.trades).toFixed(1)), avgEntryZ: parseFloat((ps.entryZSum/ps.trades).toFixed(2)), avgExitZ: parseFloat((ps.exitZSum/ps.trades).toFixed(2)), avgEntrySpr: parseFloat((ps.entrySprSum/ps.trades).toFixed(4)), avgExitSpr: parseFloat((ps.exitSprSum/ps.trades).toFixed(4)), recentTrades: recent };
-    }).sort(function(a,b){return b.trades - a.trades;}).slice(0, 15);
+    }).sort(function(a,b){return b.pnl - a.pnl;}).slice(0, 15);
 
     return {
       trades: totalTrades,
