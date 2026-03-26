@@ -2961,48 +2961,43 @@ function getDividendCapture_() {
         var priceA = parseFloat(row[3]) || 0;
         var priceB = parseFloat(row[4]) || 0;
         if (priceA <= 0 || priceB <= 0) continue;
+        var mean = parseFloat(row[10]) || 0;
         var stdev = parseFloat(row[11]) || 0;
         if (stdev <= 0.001) continue;
         var z = parseFloat(row[12]) || 0;
-        var couponA = parseFloat(row[8]) || 0;
-        var couponB = parseFloat(row[9]) || 0;
         var yieldA = parseFloat(row[6]) || 0;
         var yieldB = parseFloat(row[7]) || 0;
 
-        // Need at least one leg with upcoming div
+        // Z-score must be |Z| >= 1.8
+        if (Math.abs(z) < 1.8) continue;
+
+        // Spread capture = distance from current spread to mean
+        var spread = priceA - priceB;
+        var spreadCapture = Math.abs(spread - mean);
+
+        // Must have at least $0.30 spread capture potential
+        if (spreadCapture < 0.30) continue;
+
+        // Determine long/short legs from Z-score direction
+        // Z > 0 → spread above mean → short A / long B
+        // Z < 0 → spread below mean → long A / short B
+        var longLeg = z < 0 ? 'A' : 'B';
+        var shortLeg = z < 0 ? 'B' : 'A';
+
+        // Get div dates for both legs
         var divA = divMap[tA] || null;
         var divB = divMap[tB] || null;
-        if (!divA && !divB) continue;
-
-        // Only show pairs where at least one div is within 7-20 days
         var daysA = divA ? Math.floor((divA.getTime() - now.getTime()) / 86400000) : 999;
         var daysB = divB ? Math.floor((divB.getTime() - now.getTime()) / 86400000) : 999;
-        var nearestDays = Math.min(daysA, daysB);
-        if (nearestDays < 7 || nearestDays > 20) continue; // skip if <7 days or >20 days
 
-        // Z-score must be |Z| >= 2.0
-        if (Math.abs(z) < 2.0) continue;
+        var longDays = longLeg === 'A' ? daysA : daysB;
+        var shortDays = shortLeg === 'A' ? daysA : daysB;
 
-        // Determine which leg is the dividend leg and if Z-score favors going long on it
-        var divLeg = daysA <= daysB ? 'A' : 'B';
-        var divDays = divLeg === 'A' ? daysA : daysB;
-        // Z > 0 means spread above mean → short A / long B
-        // Z < 0 means spread below mean → long A / short B
-        // "Aligned" = Z suggests going LONG on the div-paying leg (capture the dividend)
-        var aligned = false;
-        if (divLeg === 'A' && z < 0) aligned = true;  // Z says long A, A pays div
-        if (divLeg === 'B' && z > 0) aligned = true;  // Z says long B, B pays div
-        // Also capture where BOTH have divs
-        if (divA && divB && daysA >= 7 && daysB >= 7 && daysA <= 20 && daysB <= 20) {
-          aligned = true; // both legs pay — always interesting
-        }
+        // Long side must have div coming up in 3-20 days
+        if (longDays < 3 || longDays > 20) continue;
 
-        var divYield = divLeg === 'A' ? couponA : couponB;
-        var divPrice = divLeg === 'A' ? priceA : priceB;
-        var estDivAmt = divPrice > 0 && divYield > 0 ? (divYield / 4) : 0; // quarterly est
-
-        // Profit expectation must be at least $0.30
-        if (estDivAmt < 0.30) continue;
+        // Short side div must be further away than long side (or no div at all)
+        if (shortDays <= longDays) continue;
 
         var info = parseTickerInfo(row[0]);
         allPairs.push({
@@ -3013,35 +3008,32 @@ function getDividendCapture_() {
           pB: parseFloat(priceB.toFixed(2)),
           yA: yieldA > 1 ? parseFloat(yieldA.toFixed(2)) : parseFloat((yieldA*100).toFixed(2)),
           yB: yieldB > 1 ? parseFloat(yieldB.toFixed(2)) : parseFloat((yieldB*100).toFixed(2)),
-          divLeg: divLeg,
-          divDays: divDays,
+          longLeg: longLeg,
+          longDivDays: longDays,
+          shortDivDays: shortDays,
+          spreadCapture: parseFloat(spreadCapture.toFixed(2)),
           divDateA: divA ? divA.toISOString().split('T')[0] : null,
           divDateB: divB ? divB.toISOString().split('T')[0] : null,
-          aligned: aligned,
-          estDivAmt: parseFloat(estDivAmt.toFixed(2)),
           sec: row[15] || ''
         });
       }
     }
 
-    // Sort: aligned first, then by days to div ascending
+    // Sort by spread capture descending (best opportunities first)
     allPairs.sort(function(a, b) {
-      if (a.aligned !== b.aligned) return a.aligned ? -1 : 1;
-      return a.divDays - b.divDays;
+      return b.spreadCapture - a.spreadCapture;
     });
 
     // Summary stats
-    var alignedCount = allPairs.filter(function(p){return p.aligned;}).length;
-    var avgDays = allPairs.length > 0 ? allPairs.reduce(function(s,p){return s+p.divDays;},0) / allPairs.length : 0;
-    var totalEstDiv = allPairs.filter(function(p){return p.aligned;}).reduce(function(s,p){return s+p.estDivAmt;},0);
+    var avgDays = allPairs.length > 0 ? allPairs.reduce(function(s,p){return s+p.longDivDays;},0) / allPairs.length : 0;
+    var avgCapture = allPairs.length > 0 ? allPairs.reduce(function(s,p){return s+p.spreadCapture;},0) / allPairs.length : 0;
 
     return {
       pairs: allPairs,
       summary: {
         total: allPairs.length,
-        aligned: alignedCount,
         avgDaysToDiv: parseFloat(avgDays.toFixed(1)),
-        totalEstDivPer100Shares: parseFloat(totalEstDiv.toFixed(2))
+        avgSpreadCapture: parseFloat(avgCapture.toFixed(2))
       }
     };
   } catch(e) {

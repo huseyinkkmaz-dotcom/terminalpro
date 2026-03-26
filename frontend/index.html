@@ -615,11 +615,11 @@ td:last-child{border-radius:0 10px 10px 0;border-right:1px solid var(--border)}
 <div style="margin-bottom:15px">
 <label style="font-size:9px;font-weight:900;color:var(--subtext);text-transform:uppercase;margin-right:8px">FILTER:</label>
 <button class="filter-pill active" onclick="divCapFilter('all',this)">All</button>
-<button class="filter-pill" onclick="divCapFilter('aligned',this)">Aligned Only</button>
 <button class="filter-pill" onclick="divCapFilter('week',this)">&le; 7 Days</button>
+<button class="filter-pill" onclick="divCapFilter('bigcapture',this)">&ge; $1.00 Capture</button>
 </div>
 <div style="overflow-x:auto">
-<table id="divCapTable"><thead><tr><th>Pair</th><th>Mode</th><th>Z-Score</th><th>Div Leg</th><th>Days</th><th>Ex-Div A</th><th>Ex-Div B</th><th>Est Div/Qtr</th><th>Yield A</th><th>Yield B</th><th>Aligned</th></tr></thead><tbody></tbody></table>
+<table id="divCapTable"><thead><tr><th>Pair</th><th>Mode</th><th>Z-Score</th><th>Long Leg</th><th>Long Div</th><th>Short Div</th><th>Spread Capture</th><th>Ex-Div A</th><th>Ex-Div B</th><th>Yield A</th><th>Yield B</th></tr></thead><tbody></tbody></table>
 </div>
 </div>
 </div>
@@ -2018,9 +2018,8 @@ var s=dc.summary||{};
 var sh='';
 var sumCards=[
 {label:'Total Opportunities',val:s.total||0,clr:'var(--accent)'},
-{label:'Z+Div Aligned',val:s.aligned||0,clr:'var(--low)'},
 {label:'Avg Days to Div',val:(s.avgDaysToDiv||0).toFixed(1),clr:'var(--yellow)'},
-{label:'Est. Div/100sh (Aligned)',val:'$'+(s.totalEstDivPer100Shares||0).toFixed(2),clr:'var(--low)'}
+{label:'Avg Spread Capture',val:'$'+(s.avgSpreadCapture||0).toFixed(2),clr:'var(--low)'}
 ];
 sumCards.forEach(function(c){sh+='<div style="background:var(--card);border:1px solid var(--border);border-radius:10px;padding:14px 18px;flex:1"><div style="font-size:9px;font-weight:900;color:var(--subtext);text-transform:uppercase;margin-bottom:8px">'+c.label+'</div><div style="font-family:JetBrains Mono;font-size:18px;font-weight:900;color:'+c.clr+'">'+c.val+'</div></div>';});
 document.getElementById('divCapSummary').innerHTML=sh;
@@ -2032,21 +2031,22 @@ if(!pairs||pairs.length===0){tb.innerHTML='<tr><td colspan="11" style="text-alig
 var h='';
 pairs.forEach(function(p){
 var zClr=Math.abs(p.z)>=2?'var(--high)':(Math.abs(p.z)>=1.5?'var(--yellow)':'var(--low)');
-var dayClr=p.divDays<=7?'var(--high)':(p.divDays<=14?'var(--yellow)':'var(--subtext)');
-var alignTag=p.aligned?'<span style="color:var(--low);font-weight:900">&#10003; YES</span>':'<span style="color:var(--subtext)">NO</span>';
+var longDayClr=p.longDivDays<=7?'var(--high)':(p.longDivDays<=14?'var(--yellow)':'var(--subtext)');
+var shortDayClr=p.shortDivDays>=999?'var(--low)':'var(--subtext)';
+var captureClr=p.spreadCapture>=1.0?'var(--low)':(p.spreadCapture>=0.5?'var(--yellow)':'var(--subtext)');
 var modeClr=p.mode==='credit'?'var(--purple)':'var(--accent)';
-h+='<tr class="divCap-row" data-aligned="'+p.aligned+'" data-days="'+p.divDays+'">';
+h+='<tr class="divCap-row" data-days="'+p.longDivDays+'" data-capture="'+p.spreadCapture+'">';
 h+='<td><span style="font-weight:900;color:'+modeClr+'">'+p.tA+'</span> <span style="color:var(--subtext)">/</span> <span style="font-weight:900;color:'+modeClr+'">'+p.tB+'</span></td>';
 h+='<td><span style="font-size:10px;font-weight:900;text-transform:uppercase;color:'+modeClr+'">'+p.mode+'</span></td>';
 h+='<td style="font-family:JetBrains Mono;font-weight:900;color:'+zClr+'">'+p.z.toFixed(2)+'&sigma;</td>';
-h+='<td style="font-weight:900">Leg '+p.divLeg+'</td>';
-h+='<td style="font-family:JetBrains Mono;font-weight:900;color:'+dayClr+'">'+p.divDays+'d</td>';
+h+='<td style="font-weight:900">Leg '+p.longLeg+'</td>';
+h+='<td style="font-family:JetBrains Mono;font-weight:900;color:'+longDayClr+'">'+p.longDivDays+'d</td>';
+h+='<td style="font-family:JetBrains Mono;color:'+shortDayClr+'">'+(p.shortDivDays>=999?'None':p.shortDivDays+'d')+'</td>';
+h+='<td style="font-family:JetBrains Mono;font-weight:900;color:'+captureClr+'">$'+p.spreadCapture.toFixed(2)+'</td>';
 h+='<td style="font-size:11px">'+(p.divDateA||'—')+'</td>';
 h+='<td style="font-size:11px">'+(p.divDateB||'—')+'</td>';
-h+='<td style="font-family:JetBrains Mono;font-weight:900;color:var(--low)">$'+p.estDivAmt.toFixed(2)+'</td>';
 h+='<td style="font-size:11px">'+p.yA+'%</td>';
 h+='<td style="font-size:11px">'+p.yB+'%</td>';
-h+='<td>'+alignTag+'</td>';
 h+='</tr>';
 });
 tb.innerHTML=h;
@@ -2055,10 +2055,10 @@ function divCapFilter(type,btn){
 document.querySelectorAll('#divCaptureTab .filter-pill').forEach(function(p){p.classList.remove('active');});
 btn.classList.add('active');
 document.querySelectorAll('.divCap-row').forEach(function(r){
-var aligned=r.getAttribute('data-aligned')==='true';
 var days=parseInt(r.getAttribute('data-days'))||0;
-if(type==='aligned'&&!aligned)r.style.display='none';
-else if(type==='week'&&days>7)r.style.display='none';
+var capture=parseFloat(r.getAttribute('data-capture'))||0;
+if(type==='week'&&days>7)r.style.display='none';
+else if(type==='bigcapture'&&capture<1.0)r.style.display='none';
 else r.style.display='';
 });
 }
