@@ -1851,7 +1851,7 @@ var maxLossActual=shares*spreadRisk;
 var kellyShares=null,kellyFraction=null,winRate=null;
 var scrKey=cleanIdFE(p.id);
 var scr=screenerCache[scrKey];
-var kWinRate=null,kAvgWin=0,kAvgLoss=spreadRisk;
+var kWinRate=null,kAvgWin=0,kAvgLoss=(scr&&parseFloat(scr.avgMae)>0)?parseFloat(scr.avgMae):spreadRisk;
 if(scr&&scr.wr30!==undefined&&scr.ep30!==undefined){
 kWinRate=parseFloat(scr.wr30)/100;
 kAvgWin=parseFloat(scr.ep30)||0;
@@ -1860,10 +1860,10 @@ kWinRate=p.winRate/100;
 kAvgWin=p.avgWin;
 kAvgLoss=p.avgLoss;
 }
-if(kWinRate!==null&&kAvgWin>0&&kAvgLoss>0&&kWinRate>0&&kWinRate<1){
+if(kWinRate!==null&&kAvgWin>0&&kAvgLoss>0&&kWinRate>0&&kWinRate<=1){
 winRate=kWinRate;
 var b=kAvgWin/kAvgLoss;
-var kelly=(winRate*b-(1-winRate))/b;
+var kelly=Math.min((winRate*b-(1-winRate))/b,1.0);
 if(kelly>0){kellyFraction=parseFloat((kelly*100).toFixed(1));kellyShares=Math.floor(shares*Math.min(kelly*0.5,1.0));}
 }
 recs.push({tA:alert.tA,tB:alert.tB,z:parseFloat(alert.z),stdev:parseFloat(stdev.toFixed(4)),shares:shares,notional:parseFloat(notional.toFixed(2)),maxLoss:parseFloat(maxLossActual.toFixed(2)),kellyShares:kellyShares,kellyFraction:kellyFraction,winRate:winRate!==null?parseFloat((winRate*100).toFixed(1)):null,expProfit:alert.expProfit});
@@ -1961,9 +1961,10 @@ var scr=screenerCache[scrKey];
 if(scr&&scr.wr30!==undefined&&scr.ep30!==undefined){
 winRate=parseFloat(scr.wr30)/100;
 var avgW=parseFloat(scr.ep30)||0;
-if(avgW>0&&spreadRisk>0&&winRate>0&&winRate<1){
-var b2=avgW/spreadRisk;
-var k2=(winRate*b2-(1-winRate))/b2;
+var avgL=(scr&&parseFloat(scr.avgMae)>0)?parseFloat(scr.avgMae):spreadRisk;
+if(avgW>0&&avgL>0&&winRate>0&&winRate<=1){
+var b2=avgW/avgL;
+var k2=Math.min((winRate*b2-(1-winRate))/b2,1.0);
 if(k2>0){kellyFrac=parseFloat((k2*100).toFixed(1));kellyShares=Math.floor(shares*Math.min(k2*0.5,1.0));}
 }
 }
@@ -2005,7 +2006,8 @@ var kellyShares=null,kellyFrac=null,winRate=null;
 var scr=screenerCache[scrKey];
 if(scr&&scr.wr30!==undefined&&scr.ep30!==undefined){
 winRate=parseFloat(scr.wr30)/100;var avgW=parseFloat(scr.ep30)||0;
-if(avgW>0&&spreadRisk>0&&winRate>0&&winRate<1){var b2=avgW/spreadRisk;var k2=(winRate*b2-(1-winRate))/b2;if(k2>0){kellyFrac=parseFloat((k2*100).toFixed(1));kellyShares=Math.floor(shares*Math.min(k2*0.5,1.0));}}
+var avgL=(scr&&parseFloat(scr.avgMae)>0)?parseFloat(scr.avgMae):spreadRisk;
+if(avgW>0&&avgL>0&&winRate>0&&winRate<=1){var b2=avgW/avgL;var k2=Math.min((winRate*b2-(1-winRate))/b2,1.0);if(k2>0){kellyFrac=parseFloat((k2*100).toFixed(1));kellyShares=Math.floor(shares*Math.min(k2*0.5,1.0));}}
 }
 var grid=document.getElementById('iszGrid-'+rowId);
 if(grid){var z=0;try{var row=grid.closest('tr').previousElementSibling;z=parseFloat(row.getAttribute('data-z'))||0;}catch(e){}grid.innerHTML=buildInlineSizerCards(shares,notional,maxLoss,z,stdev,kellyShares,kellyFrac,winRate);}
