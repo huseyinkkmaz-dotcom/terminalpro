@@ -687,6 +687,7 @@ let liveTimer = null;
 let watchlistIds = new Set(); // tracks pair IDs currently on watchlist
 let screenerCache = {}; // {cleanId: {wr30, wr60, wr90, avgMae, ...}}
 let activeScoreFilter = 0; // 0 = show all, N = show top N
+window._alertDataMap = {}; // {CLEANID: {z, stdev, pA, pB, expProfit, tA, tB, ...}} — live alert data for sizer
 // ── STAGING QUEUE (cross-tab state for sandbox) ──
 let sandboxQueue = []; // [{id, tA, tB, longTicker, shortTicker, pA, pB, z, mode}]
 function sqSave(){try{localStorage.setItem('tpSandboxQueue',JSON.stringify(sandboxQueue));}catch(e){}}
@@ -1026,7 +1027,10 @@ async function removeFromWatchlistUI(id,cardEl){if(cardEl)cardEl.style.opacity='
 async function tabWatchlist(el){document.querySelectorAll('.tab-content').forEach(x=>x.classList.remove('active'));document.querySelectorAll('.nav-item').forEach(x=>x.classList.remove('active'));document.getElementById('watchlist').classList.add('active');el.classList.add('active');await loadWatchlist();}
 async function loadWatchlist(){try{setConnStatus("loading");const data=await apiGet("getWatchlist");if(data&&data.ok){renderWatchlist(data.watchlistData||[]);setConnStatus("ok");}else setConnStatus("err");}catch(e){setConnStatus("err");}}
 function renderWatchlist(wd){var grid=document.getElementById('watchlistGrid');var ct=document.getElementById('watchCount');ct.innerText=wd.length>0?'('+wd.length+')':'';if(!wd||wd.length===0){grid.innerHTML='<div class="watch-empty"><div style="font-size:28px;margin-bottom:12px">&#9734;</div><div style="font-weight:900;margin-bottom:8px">No pairs on your Watchlist</div><div>Click the star icon on any alert to start watching it.</div></div>';return;}
-var h='';wd.forEach(function(w,i){var z=parseFloat(w.z)||0;var zClr='var(--accent)';var addZ=parseFloat(w.addedZ)||0;var zChg=parseFloat(w.zChange)||0;var chgClr=Math.abs(z)<Math.abs(addZ)?'var(--low)':'var(--high)';var chgArr=Math.abs(z)<Math.abs(addZ)?'&#8600;':'&#8599;';var al=parseFloat(w.liq)||0;var lc=al>50000?'dot-green':(al>20000?'dot-yellow':'dot-red');var lt=al>1000?(al/1000).toFixed(0)+'k':al.toFixed(0);
+var h='';wd.forEach(function(w,i){var z=parseFloat(w.z)||0;
+// Cross-reference with live alert data for freshest Z
+var liveKey=(w.tA+'|'+w.tB).toUpperCase().replace(/[^A-Z0-9|]/g,'');var liveAlert=window._alertDataMap[liveKey];var liveZ=liveAlert?parseFloat(liveAlert.z):null;if(liveZ!==null)z=liveZ;
+var zClr=Math.abs(z)>=2?'var(--high)':(Math.abs(z)>=1.5?'var(--yellow)':'var(--low)');var addZ=parseFloat(w.addedZ)||0;var zChg=z-addZ;var chgClr=Math.abs(z)<Math.abs(addZ)?'var(--low)':'var(--high)';var chgArr=Math.abs(z)<Math.abs(addZ)?'&#8600;':'&#8599;';var al=parseFloat(w.liq)||0;var lc=al>50000?'dot-green':(al>20000?'dot-yellow':'dot-red');var lt=al>1000?(al/1000).toFixed(0)+'k':al.toFixed(0);
 var trendH='';if(w.zHistory&&w.zHistory.length>0){for(var t=0;t<w.zHistory.length;t++){var tv=parseFloat(w.zHistory[t].z);var tc=Math.abs(tv)>=2?'var(--high)':(Math.abs(tv)>=1.5?'var(--yellow)':'var(--low)');trendH+='<div class="watch-trend-day" style="color:'+tc+'"><span class="watch-trend-date">'+w.zHistory[t].date+'</span>'+tv.toFixed(1)+'&sigma;</div>';}}else{trendH='<span style="color:var(--subtext);font-size:10px">No history yet</span>';}
 var divH='';if(w.exDivA||w.exDivB){var fD=function(dt,tk){if(!dt)return tk+': —';var dd=new Date(dt+'T00:00:00');var mn=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][dd.getMonth()];return tk+': '+mn+' '+dd.getDate();};divH='<div class="watch-metric"><div class="watch-metric-label">Ex-Div Dates</div><div class="watch-metric-val" style="font-size:10px;line-height:1.6">'+fD(w.exDivA,w.tA)+'<br>'+fD(w.exDivB,w.tB)+'</div></div>';}
 var si=String(w.id).replace(/'/g,"\\'"),sa=String(w.tA).replace(/'/g,"\\'"),sb=String(w.tB).replace(/'/g,"\\'");
@@ -1041,7 +1045,7 @@ h+='<div class="watch-metric"><div class="watch-metric-label">Exp. Profit Change
 h+='<div class="watch-metric"><div class="watch-metric-label">Spread When Added</div><div class="watch-metric-val">$'+aSpr.toFixed(2)+'</div></div>';
 h+='<div class="watch-metric"><div class="watch-metric-label">Current Spread</div><div class="watch-metric-val">$'+w.spr+'</div></div>';
 h+='<div class="watch-metric"><div class="watch-metric-label">Spread Change</div><div class="watch-metric-val" style="color:'+sprClr+'">'+(sprDelta>=0?'+':'')+sprDelta.toFixed(2)+'</div></div>';
-h+='<div class="watch-metric"><div class="watch-metric-label">Current Z-Score</div><div class="watch-metric-val" style="color:'+zClr+'">'+z.toFixed(2)+'&sigma;</div></div>';
+h+='<div class="watch-metric"><div class="watch-metric-label">Current Z-Score'+(liveZ!==null?' <span style="color:var(--low);font-size:8px;font-weight:900">LIVE</span>':'')+'</div><div class="watch-metric-val" style="color:'+zClr+'">'+z.toFixed(2)+'&sigma;</div></div>';
 h+='<div class="watch-metric"><div class="watch-metric-label">Z Change</div><div class="watch-metric-val" style="color:'+chgClr+'">'+chgArr+' '+(zChg>=0?'+':'')+zChg.toFixed(2)+'&sigma;</div></div>';
 h+='<div class="watch-metric"><div class="watch-metric-label">Yields</div><div class="watch-metric-val">'+w.yA+'% / '+w.yB+'%</div></div>';
 h+='<div class="watch-metric"><div class="watch-metric-label">Liquidity</div><div class="watch-metric-val"><span class="dot '+lc+'"></span>'+lt+'</div></div>';
@@ -1056,6 +1060,8 @@ grid.innerHTML=h;}
 function buildTrend(trend){if(!trend||!trend.length)return'<span style="color:var(--subtext);font-size:10px">No data</span>';var h='';var pills=trend.map(function(raw){return parseFloat(raw);}).filter(function(v){return!isNaN(v);});for(var i=0;i<pills.length;i++){var v=pills[i];var c='var(--subtext)';if(i>0){var p=pills[i-1];if(Math.abs(v)<Math.abs(p))c='var(--low)';else if(Math.abs(v)>Math.abs(p))c='var(--high)';var ar=Math.abs(v)<Math.abs(p)?'↘':'↗';var ac2=Math.abs(v)<Math.abs(p)?'var(--low)':'var(--high)';h+='<span class="trend-arrow" style="color:'+ac2+'">'+ar+'</span>';}h+='<div class="trend-pill" style="color:'+c+'">'+v+'σ</div>';}return h;}
 function renderMacro(m){if(!m||!m.us10y)return;document.getElementById('m_us10y').innerText=m.us10y.val;var c1=m.us10y.chg,e1=document.getElementById('c_us10y');e1.innerText='('+(c1>=0?'+':'')+(c1*100).toFixed(2)+'%)';e1.className='macro-chg '+(c1>=0?'chg-pos':'chg-neg');document.getElementById('m_tlt').innerText=m.tlt.val;var c2=m.tlt.chg,e2=document.getElementById('c_tlt');e2.innerText='('+(c2>=0?'+':'')+(c2*100).toFixed(2)+'%)';e2.className='macro-chg '+(c2>=0?'chg-pos':'chg-neg');document.getElementById('m_pff').innerText=m.pff.val;var c3=m.pff.chg,e3=document.getElementById('c_pff');e3.innerText='('+(c3>=0?'+':'')+(c3*100).toFixed(2)+'%)';e3.className='macro-chg '+(c3>=0?'chg-pos':'chg-neg');}
 function renderAlerts(ad){if(!ad)return;document.getElementById('alerts').setAttribute('data-mode',currentMode);var maxEP=0,maxId="N/A",maxUrl="#";var fmt=function(t){return t?"'"+t.trim().replace(/-/g,'/P')+"'":"UNKNOWN";};var isCr=currentMode==='credit';var ac=isCr?'var(--purple)':'var(--accent)';
+// Store alert data globally for sizer + watch live Z lookup
+ad.forEach(function(r){var key=(r.tA+'|'+r.tB).toUpperCase().replace(/[^A-Z0-9|]/g,'');window._alertDataMap[key]=r;var rkey=(r.tB+'|'+r.tA).toUpperCase().replace(/[^A-Z0-9|]/g,'');window._alertDataMap[rkey]=r;});
 ad.forEach(function(r){var ep=parseFloat(r.expProfit)||0;if(ep>maxEP){maxEP=ep;maxId=r.id;maxUrl="https://www.tradingview.com/chart/?symbol="+fmt(r.tA)+"-"+fmt(r.tB);}});
 // Compute scores for all alerts
 ad.forEach(function(r){ r._score = computeSetupScore(r, maxEP); });
@@ -1801,16 +1807,52 @@ arrow.innerHTML='&#9654;';
 toggle.style.borderRadius='8px';
 }
 }
-async function runSizer(){
+function runSizer(){
 var btn=document.getElementById('psRunBtn');
 btn.disabled=true;btn.innerText='CALCULATING...';
 document.getElementById('psLoading').style.display='block';
 document.getElementById('psSummary').style.display='none';
 document.getElementById('psTable').style.display='none';
 try{
-var data=await apiGet('getPositionSizing',{maxLoss:document.getElementById('psMaxLoss').value});
-if(data&&data.ok&&data.sizingData){renderSizer(data.sizingData);}
-else{document.getElementById('psLoading').innerHTML='<span style="color:var(--high)">Failed: '+(data&&data.message?data.message:'unknown')+'</span>';}
+var maxLoss=parseFloat(document.getElementById('psMaxLoss').value)||500;
+var bt=window._lastBacktest;
+if(!bt||!bt.topPairs||bt.topPairs.length===0){document.getElementById('psLoading').innerHTML='<span style="color:var(--high)">Run backtest first to generate signal pairs.</span>';return;}
+var sigma=2;
+var recs=[];
+bt.topPairs.forEach(function(p){
+// Look up live alert data for this pair
+var key=(p.tA+'|'+p.tB).toUpperCase().replace(/[^A-Z0-9|]/g,'');
+var alert=window._alertDataMap[key];
+if(!alert)return;
+var stdev=parseFloat(alert.stdev)||0;
+var pA=parseFloat(alert.pA)||0;
+var pB=parseFloat(alert.pB)||0;
+if(stdev<=0||pA<=0||pB<=0)return;
+var spreadRisk=sigma*stdev;
+var shares=Math.floor(maxLoss/spreadRisk);
+if(shares<=0)return;
+var notional=shares*(pA+pB);
+var maxLossActual=shares*spreadRisk;
+// Kelly from screener cache
+var kellyShares=null,kellyFraction=null,winRate=null;
+var scrKey=cleanIdFE(p.id);
+var scr=screenerCache[scrKey];
+if(scr&&scr.wr30!==undefined&&scr.ep30!==undefined){
+winRate=parseFloat(scr.wr30)/100;
+var avgWin=parseFloat(scr.ep30)||0;
+var avgLoss2=spreadRisk;
+if(avgWin>0&&avgLoss2>0&&winRate>0&&winRate<1){
+var b=avgWin/avgLoss2;
+var kelly=(winRate*b-(1-winRate))/b;
+if(kelly>0){kellyFraction=parseFloat((kelly*100).toFixed(1));kellyShares=Math.floor(shares*Math.min(kelly*0.5,1.0));}
+}
+}
+recs.push({tA:alert.tA,tB:alert.tB,z:parseFloat(alert.z),stdev:parseFloat(stdev.toFixed(4)),shares:shares,notional:parseFloat(notional.toFixed(2)),maxLoss:parseFloat(maxLossActual.toFixed(2)),kellyShares:kellyShares,kellyFraction:kellyFraction,winRate:winRate!==null?parseFloat((winRate*100).toFixed(1)):null,expProfit:alert.expProfit});
+});
+// Count open trades from portfolio
+var openCount=document.querySelectorAll('#portfolioGrid .trade-card').length;
+var exposure=0;document.querySelectorAll('#portfolioGrid .trade-card').forEach(function(c){var vals=c.querySelectorAll('.mono-data');/* approximate */});
+renderSizer({maxLossPerTrade:maxLoss,openPositions:openCount,currentExposure:0,recommendations:recs});
 }catch(e){document.getElementById('psLoading').innerHTML='<span style="color:var(--high)">Error: '+e.message+'</span>';}
 finally{btn.disabled=false;btn.innerText='CALCULATE SIZING';}
 }
@@ -2248,10 +2290,12 @@ if(avgExitSpr!==0) h+=' · Avg exit spread: <span style="font-weight:900;font-fa
 h+=' · Avg hold: <span style="font-weight:900">'+p.avgHold+'d</span>';
 h+='</div>';
 h+='</div>';
-if(isActive){
 var eTa=p.tA||p.id.split('|')[0]||'';
 var eTb=p.tB||p.id.split('|')[1]||'';
+if(isActive){
 h+='<button onclick="openModal(\''+p.id.replace(/'/g,"\\'")+'\',\''+eTa.replace(/'/g,"\\'")+'\',\''+eTb.replace(/'/g,"\\'")+'\')" style="background:var(--accent);color:#000;border:none;border-radius:6px;padding:9px 16px;font-size:11px;font-weight:900;cursor:pointer;text-transform:uppercase;letter-spacing:1px;width:100%;transition:opacity .15s" onmouseenter="this.style.opacity=\'0.85\'" onmouseleave="this.style.opacity=\'1\'">&#9889; ENTER TRADE</button>';
+}else if(!isInPort){
+h+='<button onclick="openModal(\''+p.id.replace(/'/g,"\\'")+'\',\''+eTa.replace(/'/g,"\\'")+'\',\''+eTb.replace(/'/g,"\\'")+'\')" style="background:rgba(255,255,255,.08);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:9px 16px;font-size:11px;font-weight:900;cursor:pointer;text-transform:uppercase;letter-spacing:1px;width:100%;transition:opacity .15s" onmouseenter="this.style.opacity=\'0.85\'" onmouseleave="this.style.opacity=\'1\'">ENTER TRADE</button>';
 }
 h+='</div>';
 }

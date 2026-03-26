@@ -490,6 +490,7 @@ function getAlertData(mode) {
         tB: row[2] || info.tB,
         pA: priceA,
         pB: priceB,
+        stdev: parseFloat(stdev.toFixed(4)),
         rng: lower.toFixed(2) + " / " + upper.toFixed(2),
         sec: row[15] || "",
         spr: spread.toFixed(2),
