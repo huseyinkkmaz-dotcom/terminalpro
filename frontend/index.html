@@ -285,6 +285,17 @@ td:last-child{border-radius:0 10px 10px 0;border-right:1px solid var(--border)}
 .analyze-btn:hover{border-color:var(--accent);color:var(--accent);background:rgba(14,165,233,.05)}
 .analyze-btn.loading{opacity:.5;cursor:wait}
 .analyze-btn.done{border-color:var(--low);color:var(--low)}
+.sizer-inline-btn.done{border-color:var(--yellow);color:var(--yellow)}
+.isz-wrap{padding:4px 0}
+.isz-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
+.isz-input{width:80px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;padding:4px 8px;text-align:right}
+.isz-input:focus{outline:none;border-color:var(--yellow)}
+.isz-grid{display:grid;grid-template-columns:repeat(6,1fr);gap:8px}
+.isz-card{background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:10px 12px;text-align:center}
+.isz-label{font-size:9px;font-weight:900;color:var(--subtext);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px}
+.isz-val{font-family:'JetBrains Mono',monospace;font-weight:900;font-size:15px;color:var(--text)}
+.isz-kelly{border-color:rgba(16,185,129,.3);background:rgba(16,185,129,.04)}
+@media(max-width:900px){.isz-grid{grid-template-columns:repeat(3,1fr)}}
 .analyze-row{background:rgba(14,165,233,.02);border-bottom:1px solid var(--border)}
 .analyze-row td{padding:16px 20px !important}
 .ar-wrap{display:flex;gap:20px;flex-wrap:wrap;align-items:flex-start}
@@ -1084,9 +1095,12 @@ var screenBadge='';if(scrData&&scrData.wr30!==null&&scrData.wr30!==''&&!isNaN(pa
 var aRid='arow'+rowIdx;
 var pAVal=r.pA||0,pBVal=r.pB||0;
 var analyzeBtn='<button class="analyze-btn" onclick="analyzeAlert(this,\''+sa+'\',\''+sb+'\','+pAVal+','+pBVal+','+z+',\''+aRid+'\')" title="Run probability analysis">&#9881;</button>';
+var sizerRid='sz'+rowIdx;
+var stdevVal=parseFloat(r.stdev)||0;
+var sizerBtn='<button class="analyze-btn sizer-inline-btn" onclick="inlineSizer(this,\''+sa+'\',\''+sb+'\','+pAVal+','+pBVal+','+z+','+stdevVal+',\''+sizerRid+'\',\''+si+'\')" title="Position Sizer">&#9638;</button>';
 var sqBtnId=cleanIdFE(r.id);var sqInQ=sandboxQueue.some(function(q){return cleanIdFE(q.id)===sqBtnId;});var sqIcon=sqInQ?'&#10003;':'&#9646;';var sqCls=sqInQ?'sandbox-btn added':'sandbox-btn';
 var sandboxAddBtn='<button class="'+sqCls+'" id="sqbtn-'+sqBtnId+'" data-pair-id="'+sqBtnId+'" onclick="addToSandboxQueue(\''+si+'\',\''+sa+'\',\''+sb+'\','+pAVal+','+pBVal+','+z+',\''+currentMode+'\')" title="Add to Sandbox Queue">'+sqIcon+'</button>';
-h+='<tr class="alert-row" data-s="'+r.id.toLowerCase()+' '+(r.sec||'').toLowerCase()+' '+act.l.toLowerCase()+'" data-sec="'+(r.sec||'')+'" data-tickers="'+r.tA.toUpperCase()+' '+r.tB.toUpperCase()+'" data-z="'+r.z+'" data-age="'+ag+'" data-liq="'+al+'" data-profit="'+ep+'" data-score="'+sc+'">'+scoreTd+'<td><div style="display:flex;align-items:center;gap:4px">'+analyzeBtn+sandboxAddBtn+'<button class="'+starCls+'" id="star-'+si.replace(/[^a-zA-Z0-9]/g,'')+'" onclick="addToWatchlist(\''+si+'\',this)" title="Add to Watchlist">'+starIcon+'</button><button class="plus-btn" onclick="openModal(\''+si+'\',\''+sa+'\',\''+sb+'\')">+</button><div><a href="'+url+'" target="_blank" class="'+lk+'">'+r.id+'</a>'+screenBadge+'<div class="range-tag">'+r.rng+'</div><div style="font-size:10px;color:var(--subtext);font-weight:900;text-transform:uppercase;margin-top:2px">'+r.sec+'</div></div></div></td>'+'<td><div class="mono-data">$'+r.spr+'</div></td>'+divTd+'<td><div class="mono-data" style="color:var(--low)">$'+ep+'</div></td>'+'<td><div style="color:var(--accent)" class="mono-data">'+z.toFixed(2)+'σ</div></td>'+'<td><div class="mono-data">'+r.yA+'% / '+r.yB+'%</div></td>'+'<td><div style="display:flex;flex-direction:column;gap:2px"><div style="display:flex;align-items:center"><span class="dot '+lc+'"></span>'+lt+'</div>'+sp+'</div></td>'+'<td><div>'+at+'</div></td>'+'<td><div class="trend-tape">'+tr+'</div></td>'+'<td><div class="action-tag" style="color:'+act.c+';border-color:'+act.c+'">'+act.l+'</div></td></tr>';rowIdx++;});
+h+='<tr class="alert-row" data-s="'+r.id.toLowerCase()+' '+(r.sec||'').toLowerCase()+' '+act.l.toLowerCase()+'" data-sec="'+(r.sec||'')+'" data-tickers="'+r.tA.toUpperCase()+' '+r.tB.toUpperCase()+'" data-z="'+r.z+'" data-age="'+ag+'" data-liq="'+al+'" data-profit="'+ep+'" data-score="'+sc+'">'+scoreTd+'<td><div style="display:flex;align-items:center;gap:4px">'+analyzeBtn+sizerBtn+sandboxAddBtn+'<button class="'+starCls+'" id="star-'+si.replace(/[^a-zA-Z0-9]/g,'')+'" onclick="addToWatchlist(\''+si+'\',this)" title="Add to Watchlist">'+starIcon+'</button><button class="plus-btn" onclick="openModal(\''+si+'\',\''+sa+'\',\''+sb+'\')">+</button><div><a href="'+url+'" target="_blank" class="'+lk+'">'+r.id+'</a>'+screenBadge+'<div class="range-tag">'+r.rng+'</div><div style="font-size:10px;color:var(--subtext);font-weight:900;text-transform:uppercase;margin-top:2px">'+r.sec+'</div></div></div></td>'+'<td><div class="mono-data">$'+r.spr+'</div></td>'+divTd+'<td><div class="mono-data" style="color:var(--low)">$'+ep+'</div></td>'+'<td><div style="color:var(--accent)" class="mono-data">'+z.toFixed(2)+'σ</div></td>'+'<td><div class="mono-data">'+r.yA+'% / '+r.yB+'%</div></td>'+'<td><div style="display:flex;flex-direction:column;gap:2px"><div style="display:flex;align-items:center"><span class="dot '+lc+'"></span>'+lt+'</div>'+sp+'</div></td>'+'<td><div>'+at+'</div></td>'+'<td><div class="trend-tape">'+tr+'</div></td>'+'<td><div class="action-tag" style="color:'+act.c+';border-color:'+act.c+'">'+act.l+'</div></td></tr>';rowIdx++;});
 document.getElementById('alertBody').innerHTML=h;applyFilters();if(activeScoreFilter>0)filterByScore(activeScoreFilter);}
 function updateUI(data){if(!data)return;renderAlerts(data.alertData);renderMacro(data.macroData);
 var lng=0,sht=0;if(data.portfolioData)data.portfolioData.forEach(function(p){var pA=parseFloat(p.pA)||0,pB=parseFloat(p.pB)||0,sA=parseFloat(p.sA)||0,sB=parseFloat(p.sB)||0;if(sA>0)lng+=pA*sA;else sht+=Math.abs(pA*sA);if(sB>0)lng+=pB*sB;else sht+=Math.abs(pB*sB);});
@@ -1833,19 +1847,24 @@ var shares=Math.floor(maxLoss/spreadRisk);
 if(shares<=0)return;
 var notional=shares*(pA+pB);
 var maxLossActual=shares*spreadRisk;
-// Kelly from screener cache
+// Kelly from screener cache, with backtest fallback
 var kellyShares=null,kellyFraction=null,winRate=null;
 var scrKey=cleanIdFE(p.id);
 var scr=screenerCache[scrKey];
+var kWinRate=null,kAvgWin=0,kAvgLoss=spreadRisk;
 if(scr&&scr.wr30!==undefined&&scr.ep30!==undefined){
-winRate=parseFloat(scr.wr30)/100;
-var avgWin=parseFloat(scr.ep30)||0;
-var avgLoss2=spreadRisk;
-if(avgWin>0&&avgLoss2>0&&winRate>0&&winRate<1){
-var b=avgWin/avgLoss2;
+kWinRate=parseFloat(scr.wr30)/100;
+kAvgWin=parseFloat(scr.ep30)||0;
+} else if(p.winRate>0&&p.avgWin>0&&p.avgLoss>0){
+kWinRate=p.winRate/100;
+kAvgWin=p.avgWin;
+kAvgLoss=p.avgLoss;
+}
+if(kWinRate!==null&&kAvgWin>0&&kAvgLoss>0&&kWinRate>0&&kWinRate<1){
+winRate=kWinRate;
+var b=kAvgWin/kAvgLoss;
 var kelly=(winRate*b-(1-winRate))/b;
 if(kelly>0){kellyFraction=parseFloat((kelly*100).toFixed(1));kellyShares=Math.floor(shares*Math.min(kelly*0.5,1.0));}
-}
 }
 recs.push({tA:alert.tA,tB:alert.tB,z:parseFloat(alert.z),stdev:parseFloat(stdev.toFixed(4)),shares:shares,notional:parseFloat(notional.toFixed(2)),maxLoss:parseFloat(maxLossActual.toFixed(2)),kellyShares:kellyShares,kellyFraction:kellyFraction,winRate:winRate!==null?parseFloat((winRate*100).toFixed(1)):null,expProfit:alert.expProfit});
 });
@@ -1919,6 +1938,77 @@ badge.style.cssText='display:flex;align-items:center;gap:6px;font-size:10px;font
 badge.innerHTML='&#9670; '+rec.shares+' sh'+(rec.kellyShares?' <span style="color:var(--subtext);font-weight:400">(Kelly: '+rec.kellyShares+')</span>':'')+ ' · $'+(rec.notional||0).toLocaleString();
 if(btn.parentNode)btn.parentNode.insertBefore(badge,btn);
 });
+}
+// ═══════════════════════════════════════════════════════════════════
+// INLINE POSITION SIZER — per-alert row expander in Market Alerts
+// ═══════════════════════════════════════════════════════════════════
+var _inlineSizerMaxLoss=500;
+function inlineSizer(btn, tA, tB, pA, pB, z, stdev, rowId, pairId){
+// Toggle off if already open
+var existing=document.getElementById('isz-'+rowId);
+if(existing){existing.remove();btn.classList.remove('done');return;}
+btn.classList.add('done');
+var sigma=2;
+var spreadRisk=sigma*stdev;
+var maxLoss=_inlineSizerMaxLoss;
+var shares=spreadRisk>0?Math.floor(maxLoss/spreadRisk):0;
+var notional=shares*(pA+pB);
+var maxLossActual=shares*spreadRisk;
+// Kelly from screener cache or alert data
+var kellyShares=null,kellyFrac=null,winRate=null;
+var scrKey=cleanIdFE(pairId);
+var scr=screenerCache[scrKey];
+if(scr&&scr.wr30!==undefined&&scr.ep30!==undefined){
+winRate=parseFloat(scr.wr30)/100;
+var avgW=parseFloat(scr.ep30)||0;
+if(avgW>0&&spreadRisk>0&&winRate>0&&winRate<1){
+var b2=avgW/spreadRisk;
+var k2=(winRate*b2-(1-winRate))/b2;
+if(k2>0){kellyFrac=parseFloat((k2*100).toFixed(1));kellyShares=Math.floor(shares*Math.min(k2*0.5,1.0));}
+}
+}
+var h='<tr class="analyze-row" id="isz-'+rowId+'"><td colspan="11"><div class="isz-wrap">';
+h+='<div class="isz-header"><span style="font-weight:900;color:var(--yellow);font-size:11px;text-transform:uppercase;letter-spacing:.5px">&#9638; Position Sizer</span>';
+h+='<div style="display:flex;align-items:center;gap:6px"><label style="font-size:10px;color:var(--subtext);font-weight:700">Max Loss $</label>';
+h+='<input type="number" class="isz-input" id="iszML-'+rowId+'" value="'+maxLoss+'" step="50" min="50" onchange="recalcInlineSizer(this,\''+rowId+'\','+pA+','+pB+','+stdev+',\''+scrKey+'\')">';
+h+='</div></div>';
+h+='<div class="isz-grid" id="iszGrid-'+rowId+'">';
+h+=buildInlineSizerCards(shares,notional,maxLossActual,z,stdev,kellyShares,kellyFrac,winRate);
+h+='</div>';
+// Pre-fill trade button
+h+='<div style="margin-top:8px;text-align:right"><button class="scale-btn" style="font-size:10px;padding:4px 14px" onclick="openModal(\''+pairId.replace(/'/g,"\\'")+'\',\''+tA.replace(/'/g,"\\'")+'\',\''+tB.replace(/'/g,"\\'")+'\')">Open Trade</button></div>';
+h+='</div></td></tr>';
+var aRow=btn.closest('tr');
+if(aRow)aRow.insertAdjacentHTML('afterend',h);
+}
+function buildInlineSizerCards(shares,notional,maxLoss,z,stdev,kellyShares,kellyFrac,winRate){
+var h='';
+h+='<div class="isz-card"><div class="isz-label">Shares</div><div class="isz-val" style="color:var(--accent)">'+shares+'</div></div>';
+h+='<div class="isz-card"><div class="isz-label">Notional</div><div class="isz-val">$'+notional.toFixed(0)+'</div></div>';
+h+='<div class="isz-card"><div class="isz-label">Max Loss</div><div class="isz-val" style="color:var(--high)">$'+maxLoss.toFixed(0)+'</div></div>';
+h+='<div class="isz-card"><div class="isz-label">Z-Score</div><div class="isz-val" style="color:var(--accent)">'+parseFloat(z).toFixed(2)+'&sigma;</div></div>';
+h+='<div class="isz-card"><div class="isz-label">StDev</div><div class="isz-val" style="color:var(--subtext)">'+stdev.toFixed(4)+'</div></div>';
+if(kellyShares!==null){
+h+='<div class="isz-card isz-kelly"><div class="isz-label">Kelly</div><div class="isz-val" style="color:var(--low)">'+kellyShares+' sh</div><div style="font-size:9px;color:var(--subtext);margin-top:2px">'+kellyFrac+'% K · '+(winRate*100).toFixed(0)+'% WR</div></div>';
+}else{
+h+='<div class="isz-card"><div class="isz-label">Kelly</div><div class="isz-val" style="color:var(--subtext)">—</div><div style="font-size:9px;color:var(--subtext);margin-top:2px">No screener data</div></div>';
+}
+return h;
+}
+function recalcInlineSizer(input,rowId,pA,pB,stdev,scrKey){
+var ml=parseFloat(input.value)||500;
+_inlineSizerMaxLoss=ml;
+var sigma=2;var spreadRisk=sigma*stdev;
+var shares=spreadRisk>0?Math.floor(ml/spreadRisk):0;
+var notional=shares*(pA+pB);var maxLoss=shares*spreadRisk;
+var kellyShares=null,kellyFrac=null,winRate=null;
+var scr=screenerCache[scrKey];
+if(scr&&scr.wr30!==undefined&&scr.ep30!==undefined){
+winRate=parseFloat(scr.wr30)/100;var avgW=parseFloat(scr.ep30)||0;
+if(avgW>0&&spreadRisk>0&&winRate>0&&winRate<1){var b2=avgW/spreadRisk;var k2=(winRate*b2-(1-winRate))/b2;if(k2>0){kellyFrac=parseFloat((k2*100).toFixed(1));kellyShares=Math.floor(shares*Math.min(k2*0.5,1.0));}}
+}
+var grid=document.getElementById('iszGrid-'+rowId);
+if(grid){var z=0;try{var row=grid.closest('tr').previousElementSibling;z=parseFloat(row.getAttribute('data-z'))||0;}catch(e){}grid.innerHTML=buildInlineSizerCards(shares,notional,maxLoss,z,stdev,kellyShares,kellyFrac,winRate);}
 }
 // ═══════════════════════════════════════════════════════════════════
 // REGIME DETECTION — loaded on init, updates banner + score
