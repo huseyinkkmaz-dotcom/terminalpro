@@ -640,7 +640,7 @@ td:last-child{border-radius:0 10px 10px 0;border-right:1px solid var(--border)}
 <div style="display:flex;gap:15px;align-items:flex-end;margin-bottom:25px;flex-wrap:wrap">
 <div><label style="font-size:9px;font-weight:900;color:var(--subtext);text-transform:uppercase;display:block;margin-bottom:6px">Z Entry Threshold</label><input id="btZEntry" type="number" value="2.0" step="0.1" min="1.0" max="4.0" style="background:var(--card);border:1px solid var(--border);color:var(--text);padding:10px 14px;border-radius:6px;font-family:'JetBrains Mono';font-size:13px;width:90px"></div>
 <div><label style="font-size:9px;font-weight:900;color:var(--subtext);text-transform:uppercase;display:block;margin-bottom:6px">Z Exit Target</label><input id="btZExit" type="number" value="0.5" step="0.1" min="0" max="2.0" style="background:var(--card);border:1px solid var(--border);color:var(--text);padding:10px 14px;border-radius:6px;font-family:'JetBrains Mono';font-size:13px;width:90px"></div>
-<div><label style="font-size:9px;font-weight:900;color:var(--subtext);text-transform:uppercase;display:block;margin-bottom:6px">Max Hold (days)</label><input id="btMaxHold" type="number" value="60" step="5" min="10" max="180" style="background:var(--card);border:1px solid var(--border);color:var(--text);padding:10px 14px;border-radius:6px;font-family:'JetBrains Mono';font-size:13px;width:90px"></div>
+<div><label style="font-size:9px;font-weight:900;color:var(--subtext);text-transform:uppercase;display:block;margin-bottom:6px">Max Hold (days)</label><input id="btMaxHold" type="number" value="60" step="5" min="3" max="180" style="background:var(--card);border:1px solid var(--border);color:var(--text);padding:10px 14px;border-radius:6px;font-family:'JetBrains Mono';font-size:13px;width:90px"></div>
 <div><label style="font-size:9px;font-weight:900;color:var(--subtext);text-transform:uppercase;display:block;margin-bottom:6px">Mode</label><select id="btMode" style="background:var(--card);border:1px solid var(--border);color:var(--text);padding:10px 14px;border-radius:6px;font-size:12px;width:110px"><option value="all">All Pairs</option><option value="intra">Intra Only</option><option value="credit">Credit Only</option></select></div>
 <button id="btRunBtn" onclick="runBacktest()" style="background:var(--accent);color:white;border:none;padding:12px 28px;border-radius:6px;font-size:11px;font-weight:900;cursor:pointer;text-transform:uppercase;letter-spacing:1px">Run Backtest</button>
 </div>
@@ -884,7 +884,13 @@ async function analyzeAlert(btn, tA, tB, pA, pB, z, rowId) {
   if (existingRow) { existingRow.remove(); btn.classList.remove('done'); return; }
   btn.classList.add('loading'); btn.innerHTML = '&#8987;';
   try {
-    var data = await apiGet('analyzePair', { tA: tA, tB: tB, pA: pA, pB: pB, z: z }, 60000);
+    // Build custom windows from backtest maxHold if available, otherwise use defaults
+    var btMaxHold = parseInt(document.getElementById('btMaxHold').value) || 60;
+    var customWindows = btMaxHold <= 30 ? [btMaxHold, 30, 60] : [30, 60, btMaxHold];
+    // Deduplicate
+    customWindows = customWindows.filter(function(v,i,a){ return a.indexOf(v) === i; });
+    var params = { tA: tA, tB: tB, pA: pA, pB: pB, z: z, windows: customWindows.join(',') };
+    var data = await apiGet('analyzePair', params, 60000);
     console.log('[TerminalPro] analyzePair response:', JSON.stringify(data).substring(0, 2000));
     btn.classList.remove('loading'); btn.classList.add('done'); btn.innerHTML = '&#10003;';
     if (!data || !data.ok || !data.analysisData || data.analysisData.error) {
@@ -917,18 +923,21 @@ async function analyzeAlert(btn, tA, tB, pA, pB, z, rowId) {
     h += '<div style="font-size:9px;color:var(--subtext)">Triggers: ' + (prob.triggers || 0) + '</div>';
     if (prob.toleranceWidened) h += '<div style="font-size:8px;color:var(--yellow);margin-top:4px;font-style:italic">*Tolerance widened to 10%*</div>';
     h += '</div>';
-    // Win Rate cards (30/60/90)
-    var windows = [{k:'30d',l:'30D'},{k:'60d',l:'60D'},{k:'90d',l:'90D'}];
+    // Win Rate cards — dynamic windows from response (or fallback to 30/60/90)
+    var respWindows = ad.windows || [30, 60, 90];
+    var windows = respWindows.map(function(n){ return {k: n+'d', l: n+'D', days: n}; });
     for (var i = 0; i < windows.length; i++) {
       var wk = windows[i].k;
       var wr = (prob.winRates && prob.winRates[wk]) ? prob.winRates[wk] : null;
       var rw = rz[wk] || {};
-      h += '<div class="ar-card"><div class="ar-card-title">' + windows[i].l + ' Window';
+      var isCustom = respWindows[0] !== 30 && i === 0;
+      h += '<div class="ar-card"' + (isCustom ? ' style="border-color:var(--accent)"' : '') + '><div class="ar-card-title">' + windows[i].l + ' Window';
+      if (isCustom) h += ' <span style="font-size:8px;color:var(--accent);font-weight:900">HOLD PERIOD</span>';
       if (rw.dataPoints) h += ' <span style="font-size:8px;color:var(--subtext);font-weight:400">(' + rw.dataPoints + 'd)</span>';
       h += '</div>';
       if (rw.insufficient) {
         h += '<div class="ar-winrate-hero" style="color:var(--subtext);font-size:14px">Insufficient History</div>';
-        h += '<div class="ar-winrate-sub">Need ' + (parseInt(wk)*0.9).toFixed(0) + '+ days, have ' + (rw.dataPoints||0) + '</div>';
+        h += '<div class="ar-winrate-sub">Need ' + Math.floor(windows[i].days*0.9) + '+ days, have ' + (rw.dataPoints||0) + '</div>';
       } else if (wr && wr.eligible >= 2) {
         var wrClr = wr.rate >= 60 ? 'var(--low)' : wr.rate >= 40 ? 'var(--yellow)' : 'var(--high)';
         h += '<div class="ar-winrate-hero" style="color:' + wrClr + '">' + wr.rate + '%</div>';
@@ -2241,7 +2250,7 @@ if(!bt||bt.trades===0){document.getElementById('btResults').innerHTML='<div styl
 var p=bt.params||{};
 var cards=[
 {label:'Total Trades',val:bt.trades,clr:'var(--accent)'},
-{label:'Win Rate',val:bt.winRate+'%',clr:bt.winRate>=50?'var(--low)':'var(--high)'},
+{label:'Win Rate ('+(bt.params&&bt.params.maxHold?bt.params.maxHold+'d':'')+')',val:bt.winRate+'%',clr:bt.winRate>=50?'var(--low)':'var(--high)'},
 {label:'Total PnL (100sh)',val:(bt.totalPnl>=0?'+':'')+bt.totalPnl+'$',clr:bt.totalPnl>=0?'var(--low)':'var(--high)'},
 {label:'Avg PnL/Trade',val:(bt.avgPnl>=0?'+':'')+bt.avgPnl+'$',clr:bt.avgPnl>=0?'var(--low)':'var(--high)'},
 {label:'Avg Win',val:'+'+bt.avgWin+'$',clr:'var(--low)'},

@@ -130,7 +130,13 @@ function doGet(e) {
       var pairPa = parseFloat((e && e.parameter && e.parameter.pA) || 0);
       var pairPb = parseFloat((e && e.parameter && e.parameter.pB) || 0);
       var pairZ = parseFloat((e && e.parameter && e.parameter.z) || 0);
-      result = { ok: true, analysisData: analyzeSinglePair_(pairTa, pairTb, pairPa, pairPb, pairZ) };
+      // Optional custom windows param: comma-separated day counts (e.g. "5,10,20")
+      var pairWindows = null;
+      if (e && e.parameter && e.parameter.windows) {
+        pairWindows = String(e.parameter.windows).split(',').map(function(v){ return parseInt(v); }).filter(function(v){ return v > 0 && !isNaN(v); });
+        if (pairWindows.length === 0) pairWindows = null;
+      }
+      result = { ok: true, analysisData: analyzeSinglePair_(pairTa, pairTb, pairPa, pairPb, pairZ, pairWindows) };
     }
     else if (action === 'getTradeAlerts') {
       result = { ok: true, tradeAlerts: getTradeAlerts_() };
@@ -868,7 +874,7 @@ function readTickerHistMap_(ss) {
  * @param {Object} histMap - {TICKER: [price0..priceN]} oldest-first
  * @returns {Object} {rollingZ, netSpread, grossLong, grossShort, grossExposure, dailyValues, validLegs, historyDays}
  */
-function computeBasketMetrics_(legs, histMap) {
+function computeBasketMetrics_(legs, histMap, customWindows) {
   if (!legs || legs.length === 0) return { error: 'No legs provided', dailyValues: [] };
 
   // Find the minimum history length across all legs
@@ -954,7 +960,7 @@ function computeBasketMetrics_(legs, histMap) {
   // ── Historical Probability Engine ──
   // Scan dailyValues for trigger points where spread ≈ currentValue (±5%),
   // then compute forward-looking max adverse excursion and mean reversion rates.
-  var probResult = computeHistoricalProbabilities_(dailyValues, currentValue, rollingZ, totalWeight);
+  var probResult = computeHistoricalProbabilities_(dailyValues, currentValue, rollingZ, totalWeight, customWindows);
 
   // ── MAE + Recovery Days (basket-level) ──
   var maeRecovery = computeBasketMAE_(dailyValues, rollingZ, totalWeight);
@@ -1228,7 +1234,7 @@ function computePairCorrelation_(openData, histMap) {
  * @param {number} totalWeight - Position size multiplier for dollar conversion
  * @return {Object} probabilities result
  */
-function computeHistoricalProbabilities_(dailyValues, refValue, rollingZ, totalWeight) {
+function computeHistoricalProbabilities_(dailyValues, refValue, rollingZ, totalWeight, customWindows) {
   var emptySpreadAnalysis = { triggers: 0, refValue: 0, meanTarget: 0, invertedCount: 0, details: [] };
   var result = { triggers: 0, badScenario: null, winRates: {}, spreadAnalysis: emptySpreadAnalysis, toleranceWidened: false };
   var len = dailyValues.length;
@@ -1327,11 +1333,19 @@ function computeHistoricalProbabilities_(dailyValues, refValue, rollingZ, totalW
   };
 
   // ── FEATURE 2: Mean Reversion Win Rates per Window ──
-  var windows = [30, 60, 90];
+  var windows = (customWindows && customWindows.length > 0) ? customWindows : [30, 60, 90];
   for (var w = 0; w < windows.length; w++) {
     var n = windows[w];
     var wKey = n + 'd';
-    var wMean = (rollingZ[wKey] && !rollingZ[wKey].insufficient) ? rollingZ[wKey].mean : mean90;
+    // For custom windows that don't have a matching rollingZ entry, fall back to 90d or 30d mean
+    var wMean;
+    if (rollingZ[wKey] && !rollingZ[wKey].insufficient) {
+      wMean = rollingZ[wKey].mean;
+    } else if (rollingZ['30d'] && !rollingZ['30d'].insufficient) {
+      wMean = rollingZ['30d'].mean;
+    } else {
+      wMean = mean90;
+    }
     // Mean reversion tolerance: spread counts as "touched mean" if it gets within 10% of distance to mean
     var distToMean = Math.abs(refValue - wMean);
     var meanTolerance = distToMean * 0.10;
@@ -1455,7 +1469,7 @@ function computeHistoricalProbabilities_(dailyValues, refValue, rollingZ, totalW
  * This is necessary because alert pairs are at extreme Z-scores by definition,
  * so the standard 5% tolerance often can't find enough historical occurrences.
  */
-function computeHistoricalProbabilitiesWide_(dailyValues, refValue, rollingZ, totalWeight) {
+function computeHistoricalProbabilitiesWide_(dailyValues, refValue, rollingZ, totalWeight, customWindows) {
   var emptySpreadAnalysis = { triggers: 0, refValue: 0, meanTarget: 0, invertedCount: 0, details: [] };
   var result = { triggers: 0, badScenario: null, winRates: {}, spreadAnalysis: emptySpreadAnalysis, toleranceWidened: false };
   var len = dailyValues.length;
@@ -1524,11 +1538,18 @@ function computeHistoricalProbabilitiesWide_(dailyValues, refValue, rollingZ, to
     sampleSize: triggers.length
   };
 
-  var windows = [30, 60, 90];
+  var windows = (customWindows && customWindows.length > 0) ? customWindows : [30, 60, 90];
   for (var w = 0; w < windows.length; w++) {
     var n = windows[w];
     var wKey = n + 'd';
-    var wMean = (rollingZ[wKey] && !rollingZ[wKey].insufficient) ? rollingZ[wKey].mean : mean90;
+    var wMean;
+    if (rollingZ[wKey] && !rollingZ[wKey].insufficient) {
+      wMean = rollingZ[wKey].mean;
+    } else if (rollingZ['30d'] && !rollingZ['30d'].insufficient) {
+      wMean = rollingZ['30d'].mean;
+    } else {
+      wMean = mean90;
+    }
     var distToMean = Math.abs(refValue - wMean);
     var meanTolerance = distToMean * 0.10;
     if (meanTolerance < 0.01) meanTolerance = 0.01;
@@ -2641,7 +2662,7 @@ function getMacroValuationData() {
 // ═══════════════════════════════════════════════════════════════════
 // SINGLE-PAIR ANALYSIS — lightweight endpoint for inline alert analysis
 // ═══════════════════════════════════════════════════════════════════
-function analyzeSinglePair_(tA, tB, priceA, priceB, currentZ) {
+function analyzeSinglePair_(tA, tB, priceA, priceB, currentZ, customWindows) {
   try {
     var ss = SpreadsheetApp.getActive();
     var histMap = readTickerHistMap_(ss);
@@ -2676,7 +2697,7 @@ function analyzeSinglePair_(tA, tB, priceA, priceB, currentZ) {
       { ticker: tkA, size: 100, direction: dirA },
       { ticker: tkB, size: 100, direction: dirB }
     ];
-    var metrics = computeBasketMetrics_(legs, histMap);
+    var metrics = computeBasketMetrics_(legs, histMap, customWindows);
     if (metrics.error) {
       _debug.metricsError = metrics.error;
       return { error: metrics.error, _debug: _debug };
@@ -2695,7 +2716,7 @@ function analyzeSinglePair_(tA, tB, priceA, priceB, currentZ) {
       var currentValue = dailyVals[dailyVals.length - 1];
       _debug.currentValue = parseFloat(currentValue.toFixed(4));
 
-      var wideProb = computeHistoricalProbabilitiesWide_(dailyVals, currentValue, metrics.rollingZ, metrics.totalWeight || 100);
+      var wideProb = computeHistoricalProbabilitiesWide_(dailyVals, currentValue, metrics.rollingZ, metrics.totalWeight || 100, customWindows);
       _debug.wideTriggersFound = wideProb.triggers;
 
       // Use whichever found more triggers
@@ -2709,6 +2730,7 @@ function analyzeSinglePair_(tA, tB, priceA, priceB, currentZ) {
     return {
       tA: tA, tB: tB, dirA: dirA, dirB: dirB,
       metrics: metrics,
+      windows: customWindows || [30, 60, 90],
       _debug: _debug
     };
   } catch (e) {
