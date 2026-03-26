@@ -2226,19 +2226,27 @@ document.querySelectorAll('.nav-item').forEach(x=>x.classList.remove('active'));
 document.getElementById('backtestTab').classList.add('active');
 el.classList.add('active');
 }
+window._btAlertCache={};
 async function runBacktest(){
 var btn=document.getElementById('btRunBtn');
 btn.disabled=true;btn.innerText='RUNNING...';
 document.getElementById('btLoading').style.display='block';
 document.getElementById('btResults').style.display='none';
+var btMode=document.getElementById('btMode').value;
 try{
+// Pre-fetch alerts for the backtest mode so actionable signals can match across strategies
+if(btMode==='all'||btMode!==currentMode){
+var modes=btMode==='all'?['intra','credit']:[btMode];
+var fetches=modes.filter(function(m){return !window._btAlertCache[m];}).map(function(m){return apiGet('getData',{mode:m},30000).then(function(d){if(d&&d.ok&&d.alertData){window._btAlertCache[m]={};d.alertData.forEach(function(a){var k=(a.tA+'|'+a.tB).toUpperCase();window._btAlertCache[m][k]={z:parseFloat(a.z)||0,tickers:a.tA+' '+a.tB};});}});});
+if(fetches.length>0)await Promise.all(fetches);
+}
 var data=await apiGet('getBacktestResults',{
 zThreshold:document.getElementById('btZEntry').value,
 exitZ:document.getElementById('btZExit').value,
 maxHold:document.getElementById('btMaxHold').value,
-mode:document.getElementById('btMode').value
+mode:btMode
 },300000);
-if(data&&data.ok&&data.backtestData){renderBacktest(data.backtestData);}
+if(data&&data.ok&&data.backtestData){data.backtestData._btMode=btMode;renderBacktest(data.backtestData);}
 else{document.getElementById('btLoading').innerHTML='<div style="color:var(--high)">Backtest failed: '+(data&&data.message?data.message:'unknown error')+'</div>';}
 }catch(e){document.getElementById('btLoading').innerHTML='<div style="color:var(--high)">Error: '+e.message+'</div>';}
 finally{btn.disabled=false;btn.innerText='RUN BACKTEST';}
@@ -2312,16 +2320,16 @@ var el=document.getElementById('btSignals');
 if(!el)return;
 var topPairs=bt.topPairs||[];
 if(topPairs.length===0){el.innerHTML='<div style="color:var(--subtext);text-align:center;padding:20px;font-size:11px">Run backtest to see actionable signals.</div>';return;}
-// Load current alerts from the page's last data fetch
+// Load current alerts from DOM (current strategy tab)
 var curAlerts={};
 document.querySelectorAll('#alertBody tr.alert-row').forEach(function(row){
-var s=row.getAttribute('data-s')||'';
 var z=parseFloat(row.getAttribute('data-z'))||0;
 var tickers=row.getAttribute('data-tickers')||'';
-// Build lookup by cleaned pair id
 var parts=tickers.split(' ');
 if(parts.length>=2){var key=(parts[0]+'|'+parts[1]).toUpperCase();curAlerts[key]={z:z,tickers:tickers};}
 });
+// Merge in cached alerts from other modes (for "all" mode backtest)
+if(window._btAlertCache){Object.keys(window._btAlertCache).forEach(function(m){var cache=window._btAlertCache[m];Object.keys(cache).forEach(function(k){if(!curAlerts[k])curAlerts[k]=cache[k];});});}
 // Also build from portfolio
 var portAlerts={};
 document.querySelectorAll('#portfolioGrid .trade-card').forEach(function(card){
