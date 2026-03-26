@@ -3110,27 +3110,31 @@ function runBacktest_(zThreshold, exitZ, maxHold, mode) {
 
     var allTrades = [];
     var startTime = new Date().getTime();
-    var MAX_MS = 240000; // 4 min safety
+    var MAX_MS = 150000; // 2.5 min safety — must finish well before GAS 6-min hard limit
+    var pairsProcessed = 0;
+    var pairsSkippedTime = 0;
+    var pairsSkippedHist = 0;
 
     for (var pi = 0; pi < pairDefs.length; pi++) {
-      if (new Date().getTime() - startTime > MAX_MS) break;
+      if (new Date().getTime() - startTime > MAX_MS) { pairsSkippedTime += (pairDefs.length - pi); break; }
       var pair = pairDefs[pi];
       var tA = pair.tA.toUpperCase().trim();
       var tB = pair.tB.toUpperCase().trim();
       var histA = histMap[tA];
       var histB = histMap[tB];
-      if (!histA || !histB) continue;
+      if (!histA || !histB) { pairsSkippedHist++; continue; }
 
       // Align from end (most recent prices align)
       var len = Math.min(histA.length, histB.length);
-      if (len < 30) continue; // need minimum history
+      if (len < 30) { pairsSkippedHist++; continue; } // need minimum history
       var pricesA = histA.slice(histA.length - len);
       var pricesB = histB.slice(histB.length - len);
 
       // Compute rolling 30-day mean and stdev for Z-scores
       var WINDOW = 30;
-      if (len < WINDOW + 5) continue;
+      if (len < WINDOW + 5) { pairsSkippedHist++; continue; }
 
+      pairsProcessed++;
       var openTrade = null;
       for (var day = WINDOW; day < len; day++) {
         // Rolling window stats
@@ -3187,8 +3191,10 @@ function runBacktest_(zThreshold, exitZ, maxHold, mode) {
     }
 
     // Aggregate stats
+    var elapsedMs = new Date().getTime() - startTime;
     var totalTrades = allTrades.length;
-    if (totalTrades === 0) return { trades: 0, params: { zThreshold: zThreshold, exitZ: exitZ, maxHold: maxHold, mode: mode } };
+    var _meta = { pairsDefined: pairDefs.length, pairsProcessed: pairsProcessed, pairsSkippedTime: pairsSkippedTime, pairsSkippedHist: pairsSkippedHist, elapsedMs: elapsedMs };
+    if (totalTrades === 0) return { trades: 0, params: { zThreshold: zThreshold, exitZ: exitZ, maxHold: maxHold, mode: mode }, _meta: _meta };
 
     var winTrades = allTrades.filter(function(t){return t.pnl > 0;});
     var lossTrades = allTrades.filter(function(t){return t.pnl <= 0;});
@@ -3247,7 +3253,8 @@ function runBacktest_(zThreshold, exitZ, maxHold, mode) {
       equityCurve: downsampleArray_(equityCurve, 500),
       topPairs: topPairs,
       sampleTrades: allTrades.slice(0, 50),
-      params: { zThreshold: zThreshold, exitZ: exitZ, maxHold: maxHold, mode: mode }
+      params: { zThreshold: zThreshold, exitZ: exitZ, maxHold: maxHold, mode: mode },
+      _meta: _meta
     };
   } catch(e) {
     console.error('runBacktest_ error: ' + e);

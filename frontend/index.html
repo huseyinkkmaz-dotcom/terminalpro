@@ -2246,8 +2246,12 @@ finally{btn.disabled=false;btn.innerText='RUN BACKTEST';}
 function renderBacktest(bt){
 document.getElementById('btLoading').style.display='none';
 document.getElementById('btResults').style.display='block';
-if(!bt||bt.trades===0){document.getElementById('btResults').innerHTML='<div style="text-align:center;padding:40px;color:var(--subtext)"><div style="font-size:28px;margin-bottom:12px">&#128202;</div><div style="font-weight:900">No trades triggered</div><div style="margin-top:8px">Try lowering the Z entry threshold or changing the mode.</div></div>';return;}
+if(!bt||bt.trades===0){var noMsg='<div style="text-align:center;padding:40px;color:var(--subtext)"><div style="font-size:28px;margin-bottom:12px">&#128202;</div><div style="font-weight:900">No trades triggered</div><div style="margin-top:8px">Try lowering the Z entry threshold or changing the mode.</div>';if(bt&&bt._meta){noMsg+='<div style="margin-top:12px;font-size:10px;color:var(--subtext)">Pairs defined: '+bt._meta.pairsDefined+' | Processed: '+bt._meta.pairsProcessed+' | No history: '+bt._meta.pairsSkippedHist+(bt._meta.pairsSkippedTime>0?' | <span style="color:var(--yellow)">Skipped (timeout): '+bt._meta.pairsSkippedTime+'</span>':'')+'</div>';}noMsg+='</div>';document.getElementById('btResults').innerHTML=noMsg;return;}
 var p=bt.params||{};
+// Show coverage warning if pairs were skipped due to timeout
+var metaWarning='';
+if(bt._meta&&bt._meta.pairsSkippedTime>0){metaWarning='<div style="background:rgba(234,179,8,.08);border:1px solid rgba(234,179,8,.3);border-radius:8px;padding:10px 14px;margin-bottom:16px;font-size:10px;color:var(--yellow)"><span style="font-weight:900">&#9888; Partial results</span> — processed '+bt._meta.pairsProcessed+'/'+bt._meta.pairsDefined+' pairs before timeout ('+bt._meta.pairsSkippedTime+' skipped). Try "Intra Only" or "Credit Only" for complete results.</div>';}
+if(bt._meta&&bt._meta.pairsSkippedHist>0&&!bt._meta.pairsSkippedTime){metaWarning='<div style="background:rgba(100,100,100,.08);border:1px solid var(--border);border-radius:8px;padding:10px 14px;margin-bottom:16px;font-size:10px;color:var(--subtext)">Processed '+bt._meta.pairsProcessed+'/'+bt._meta.pairsDefined+' pairs ('+bt._meta.pairsSkippedHist+' had insufficient history data)</div>';}
 var cards=[
 {label:'Total Trades',val:bt.trades,clr:'var(--accent)'},
 {label:'Win Rate ('+(bt.params&&bt.params.maxHold?bt.params.maxHold+'d':'')+')',val:bt.winRate+'%',clr:bt.winRate>=50?'var(--low)':'var(--high)'},
@@ -2261,7 +2265,7 @@ var cards=[
 {label:'Z-Revert Exits',val:bt.zRevertPct+'%',clr:'var(--low)'}
 ];
 var ch='';cards.forEach(function(c){ch+='<div style="background:var(--card);border:1px solid var(--border);border-radius:10px;padding:14px 16px"><div style="font-size:9px;font-weight:900;color:var(--subtext);text-transform:uppercase;margin-bottom:8px">'+c.label+'</div><div style="font-family:JetBrains Mono;font-size:18px;font-weight:900;color:'+c.clr+'">'+c.val+'</div></div>';});
-document.getElementById('btCards').innerHTML=ch;
+document.getElementById('btCards').innerHTML=metaWarning+ch;
 // Equity curve with axis labels + tooltip
 var ec=bt.equityCurve||[];
 var eqEl=document.getElementById('btEquity');
