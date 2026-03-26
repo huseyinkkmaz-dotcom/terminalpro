@@ -2750,8 +2750,8 @@ function runNightlyScreener() {
             id: a.id, tA: a.tA, tB: a.tB, mode: a._mode,
             z: parseFloat(a.z), expProfit: parseFloat(a.expProfit),
             wr30: wr30, wr60: wr60, wr90: wr90,
-            avgMae: bs.avgMae || null, p75Mae: bs.p75Mae || null,
-            wideningProb: bs.wideningProb || null, triggers: prob.triggers || 0,
+            avgMae: (bs.avgMae != null) ? bs.avgMae : null, p75Mae: (bs.p75Mae != null) ? bs.p75Mae : null,
+            wideningProb: (bs.wideningProb != null) ? bs.wideningProb : null, triggers: prob.triggers || 0,
             ep30: (analysis.metrics.rollingZ && analysis.metrics.rollingZ['30d']) ? analysis.metrics.rollingZ['30d'].expectedProfit : null,
             ep60: (analysis.metrics.rollingZ && analysis.metrics.rollingZ['60d']) ? analysis.metrics.rollingZ['60d'].expectedProfit : null,
             ep90: (analysis.metrics.rollingZ && analysis.metrics.rollingZ['90d']) ? analysis.metrics.rollingZ['90d'].expectedProfit : null,
@@ -3355,11 +3355,11 @@ function getPositionSizing_(maxLossPerTrade) {
       if (scr && scr.wr30 !== undefined && scr.ep30 !== undefined) {
         winRate = parseFloat(scr.wr30) / 100;
         var avgWin = parseFloat(scr.ep30) || 0;
-        var avgLoss = spreadRisk; // use stop as avg loss
-        if (avgWin > 0 && avgLoss > 0 && winRate > 0 && winRate < 1) {
+        var avgLoss = (scr.avgMae != null && parseFloat(scr.avgMae) > 0) ? parseFloat(scr.avgMae) : spreadRisk;
+        if (avgWin > 0 && avgLoss > 0 && winRate > 0 && winRate <= 1) {
           // Kelly fraction: f* = (p * b - q) / b where b = avgWin/avgLoss, p = winRate, q = 1-p
           var b = avgWin / avgLoss;
-          var kelly = (winRate * b - (1 - winRate)) / b;
+          var kelly = Math.min((winRate * b - (1 - winRate)) / b, 1.0);
           if (kelly > 0) {
             kellyFraction = parseFloat((kelly * 100).toFixed(1)); // as percentage
             // Half-Kelly shares (conservative): kelly/2 * maxLoss-based shares
