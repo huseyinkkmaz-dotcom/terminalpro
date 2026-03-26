@@ -1030,7 +1030,7 @@ function sortBy(attr,abs){const tb=document.querySelector("#alertBody");const ro
 function toggleLive(){if(document.getElementById('autoRefresh').checked){refreshData();liveTimer=setInterval(()=>{if(document.getElementById('entryModal').style.display!=='block')refreshData();},300000);}else clearInterval(liveTimer);}
 async function refreshData(){try{setConnStatus("loading");const data=await apiGet("getData",{mode:currentMode});if(data&&data.ok){updateUI(data);setConnStatus("ok");}else setConnStatus("err");}catch(e){setConnStatus("err");}}
 // ── SCREENER CACHE ──
-async function loadScreenerCache(){try{var data=await apiGet('getScreenerData');if(data&&data.ok&&data.screenerData){screenerCache={};data.screenerData.forEach(function(s){screenerCache[cleanIdFE(s.id)]=s;});var ageEl=document.getElementById('screenerAge');if(ageEl&&data.screenerData.length>0){var ts=data.screenerData[0].ts;if(ts){var d=new Date(ts);var hrs=Math.round((Date.now()-d.getTime())/3600000);ageEl.innerText='Screener: '+data.screenerData.length+' pairs pre-analyzed'+(hrs>0?' ('+hrs+'h ago)':'');}}console.log('[TerminalPro] Screener cache loaded:',data.screenerData.length,'pairs');}}catch(e){console.log('[TerminalPro] Screener cache unavailable');}}
+async function loadScreenerCache(){try{var data=await apiGet('getScreenerData');if(data&&data.ok&&data.screenerData){screenerCache={};data.screenerData.forEach(function(s){screenerCache[cleanIdFE(s.id)]=s;});var ageEl=document.getElementById('screenerAge');if(ageEl&&data.screenerData.length>0){var ts=data.screenerData[0].ts;if(ts){var d=new Date(ts);var hrs=Math.round((Date.now()-d.getTime())/3600000);ageEl.innerText='Screener: '+data.screenerData.length+' pairs pre-analyzed'+(hrs>0?' ('+hrs+'h ago)':'');}}console.log('[TerminalPro] Screener cache loaded:',data.screenerData.length,'pairs');console.log('[Kelly Debug] Screener avgMae sample:',data.screenerData.slice(0,5).map(function(s){return s.id+': avgMae='+s.avgMae+' ep30='+s.ep30+' wr30='+s.wr30;}));}}catch(e){console.log('[TerminalPro] Screener cache unavailable');}}
 // ── WATCHLIST ──
 async function loadWatchlistIds(){try{const data=await apiGet("getWatchlist");if(data&&data.ok&&data.watchlistData){watchlistIds=new Set(data.watchlistData.map(function(w){return w.id.replace(/[^a-zA-Z0-9]/g,'').toUpperCase();}));document.querySelectorAll('.star-btn').forEach(function(btn){var btnKey=btn.id.replace('star-','').toUpperCase();if(watchlistIds.has(btnKey)){btn.innerHTML='&#9733;';btn.classList.add('saved');}});var ct=document.getElementById('watchCount');if(ct)ct.innerText=data.watchlistData.length>0?'('+data.watchlistData.length+')':'';}}catch(e){}}
 async function addToWatchlist(id,btn){try{btn.innerHTML='&#9733;';btn.classList.add('saved');watchlistIds.add(id.replace(/[^a-zA-Z0-9]/g,'').toUpperCase());await apiGet("saveWatchlist",{id:id,mode:currentMode});var ct=document.getElementById('watchCount');var sz=watchlistIds.size;if(ct)ct.innerText=sz>0?'('+sz+')':'';}catch(e){btn.innerHTML='&#9734;';btn.classList.remove('saved');}}
@@ -1852,18 +1852,24 @@ var kellyShares=null,kellyFraction=null,winRate=null;
 var scrKey=cleanIdFE(p.id);
 var scr=screenerCache[scrKey];
 var kWinRate=null,kAvgWin=0,kAvgLoss=(scr&&parseFloat(scr.avgMae)>0)?parseFloat(scr.avgMae):spreadRisk;
+console.log('[Kelly Debug] Sizer pair='+p.id+' scrKey='+scrKey+' scrFound='+(!!scr)+' avgMae='+(scr?scr.avgMae:'N/A')+' spreadRisk='+spreadRisk.toFixed(4)+' kAvgLoss='+kAvgLoss.toFixed(4));
 if(scr&&scr.wr30!==undefined&&scr.ep30!==undefined){
 kWinRate=parseFloat(scr.wr30)/100;
 kAvgWin=parseFloat(scr.ep30)||0;
+console.log('[Kelly Debug]   → screener path: wr30='+scr.wr30+' ep30='+scr.ep30+' avgMae='+scr.avgMae);
 } else if(p.winRate>0&&p.avgWin>0&&p.avgLoss>0){
 kWinRate=p.winRate/100;
 kAvgWin=p.avgWin;
 kAvgLoss=p.avgLoss;
+console.log('[Kelly Debug]   → backtest path: winRate='+p.winRate+' avgWin='+p.avgWin+' avgLoss='+p.avgLoss);
+} else {
+console.log('[Kelly Debug]   → NO DATA: scr=',scr,' p.winRate='+p.winRate+' p.avgWin='+p.avgWin);
 }
 if(kWinRate!==null&&kAvgWin>0&&kAvgLoss>0&&kWinRate>0&&kWinRate<=1){
 winRate=kWinRate;
 var b=kAvgWin/kAvgLoss;
 var kelly=Math.min((winRate*b-(1-winRate))/b,1.0);
+console.log('[Kelly Debug]   → RESULT: b='+b.toFixed(4)+' kelly='+kelly.toFixed(4)+' shares='+shares+' kellyShares='+Math.floor(shares*Math.min(kelly*0.5,1.0)));
 if(kelly>0){kellyFraction=parseFloat((kelly*100).toFixed(1));kellyShares=Math.floor(shares*Math.min(kelly*0.5,1.0));}
 }
 recs.push({tA:alert.tA,tB:alert.tB,z:parseFloat(alert.z),stdev:parseFloat(stdev.toFixed(4)),shares:shares,notional:parseFloat(notional.toFixed(2)),maxLoss:parseFloat(maxLossActual.toFixed(2)),kellyShares:kellyShares,kellyFraction:kellyFraction,winRate:winRate!==null?parseFloat((winRate*100).toFixed(1)):null,expProfit:alert.expProfit});
@@ -1958,10 +1964,12 @@ var maxLossActual=shares*spreadRisk;
 var kellyShares=null,kellyFrac=null,winRate=null;
 var scrKey=cleanIdFE(pairId);
 var scr=screenerCache[scrKey];
+console.log('[Kelly Debug] Inline pair='+pairId+' scrKey='+scrKey+' scrFound='+(!!scr)+' avgMae='+(scr?scr.avgMae:'N/A')+' spreadRisk='+spreadRisk.toFixed(4));
 if(scr&&scr.wr30!==undefined&&scr.ep30!==undefined){
 winRate=parseFloat(scr.wr30)/100;
 var avgW=parseFloat(scr.ep30)||0;
 var avgL=(scr&&parseFloat(scr.avgMae)>0)?parseFloat(scr.avgMae):spreadRisk;
+console.log('[Kelly Debug]   → inline: avgMae='+scr.avgMae+' avgL='+avgL.toFixed(4)+' avgW='+avgW.toFixed(4)+' wr='+scr.wr30);
 if(avgW>0&&avgL>0&&winRate>0&&winRate<=1){
 var b2=avgW/avgL;
 var k2=Math.min((winRate*b2-(1-winRate))/b2,1.0);
