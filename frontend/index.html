@@ -1872,7 +1872,7 @@ var kelly=Math.min((winRate*b-(1-winRate))/b,1.0);
 console.log('[Kelly Debug]   → RESULT: b='+b.toFixed(4)+' kelly='+kelly.toFixed(4)+' shares='+shares+' kellyShares='+Math.floor(shares*Math.min(kelly*0.5,1.0)));
 if(kelly>0){kellyFraction=parseFloat((kelly*100).toFixed(1));kellyShares=Math.floor(shares*Math.min(kelly*0.5,1.0));}
 }
-recs.push({tA:alert.tA,tB:alert.tB,z:parseFloat(alert.z),stdev:parseFloat(stdev.toFixed(4)),shares:shares,notional:parseFloat(notional.toFixed(2)),maxLoss:parseFloat(maxLossActual.toFixed(2)),kellyShares:kellyShares,kellyFraction:kellyFraction,winRate:winRate!==null?parseFloat((winRate*100).toFixed(1)):null,expProfit:alert.expProfit});
+recs.push({tA:alert.tA,tB:alert.tB,z:parseFloat(alert.z),stdev:parseFloat(stdev.toFixed(4)),shares:shares,notional:parseFloat(notional.toFixed(2)),maxLoss:parseFloat(maxLossActual.toFixed(2)),kellyShares:kellyShares,kellyFraction:kellyFraction,winRate:winRate!==null?parseFloat((winRate*100).toFixed(1)):null,expProfit:alert.expProfit,avgMae:scr?scr.avgMae:null,spreadRisk:parseFloat(spreadRisk.toFixed(4)),lossSource:scr&&parseFloat(scr.avgMae)>0?'MAE':'2\u03C3'});
 });
 // Count open trades from portfolio
 var openCount=document.querySelectorAll('#portfolioGrid .trade-card').length;
@@ -1903,8 +1903,9 @@ recs.forEach(function(r){
 var zClr=Math.abs(r.z)>=2?'var(--high)':'var(--yellow)';
 var kellyCell='<span style="color:var(--subtext)">—</span>';
 if(r.kellyShares!==null){
+var lossLabel=r.lossSource==='MAE'?'<span style="color:var(--low);font-size:9px" title="Using empirical avg MAE $'+r.avgMae+'">MAE</span>':'<span style="color:var(--yellow);font-size:9px" title="Using theoretical 2\u03C3 $'+r.spreadRisk+'">2\u03C3</span>';
 kellyCell='<span style="color:var(--low);font-weight:900">'+r.kellyShares+'</span>'+
-'<span style="color:var(--subtext);font-size:10px;margin-left:4px">('+r.kellyFraction+'% K, '+r.winRate+'% WR)</span>';
+'<span style="color:var(--subtext);font-size:10px;margin-left:4px">('+r.kellyFraction+'% K, '+r.winRate+'% WR '+lossLabel+')</span>';
 }
 h+='<tr>';
 h+='<td style="font-weight:900;font-size:12px">'+r.tA+' / '+r.tB+'</td>';
@@ -1982,7 +1983,8 @@ h+='<div style="display:flex;align-items:center;gap:6px"><label style="font-size
 h+='<input type="number" class="isz-input" id="iszML-'+rowId+'" value="'+maxLoss+'" step="50" min="50" onchange="recalcInlineSizer(this,\''+rowId+'\','+pA+','+pB+','+stdev+',\''+scrKey+'\')">';
 h+='</div></div>';
 h+='<div class="isz-grid" id="iszGrid-'+rowId+'">';
-h+=buildInlineSizerCards(shares,notional,maxLossActual,z,stdev,kellyShares,kellyFrac,winRate);
+var _ilsSrc=(scr&&parseFloat(scr.avgMae)>0)?'MAE':'2\u03C3';
+h+=buildInlineSizerCards(shares,notional,maxLossActual,z,stdev,kellyShares,kellyFrac,winRate,_ilsSrc);
 h+='</div>';
 // Pre-fill trade button
 h+='<div style="margin-top:8px;text-align:right"><button class="scale-btn" style="font-size:10px;padding:4px 14px" onclick="openModal(\''+pairId.replace(/'/g,"\\'")+'\',\''+tA.replace(/'/g,"\\'")+'\',\''+tB.replace(/'/g,"\\'")+'\')">Open Trade</button></div>';
@@ -1990,7 +1992,7 @@ h+='</div></td></tr>';
 var aRow=btn.closest('tr');
 if(aRow)aRow.insertAdjacentHTML('afterend',h);
 }
-function buildInlineSizerCards(shares,notional,maxLoss,z,stdev,kellyShares,kellyFrac,winRate){
+function buildInlineSizerCards(shares,notional,maxLoss,z,stdev,kellyShares,kellyFrac,winRate,lossSource){
 var h='';
 h+='<div class="isz-card"><div class="isz-label">Shares</div><div class="isz-val" style="color:var(--accent)">'+shares+'</div></div>';
 h+='<div class="isz-card"><div class="isz-label">Notional</div><div class="isz-val">$'+notional.toFixed(0)+'</div></div>';
@@ -1998,7 +2000,8 @@ h+='<div class="isz-card"><div class="isz-label">Max Loss</div><div class="isz-v
 h+='<div class="isz-card"><div class="isz-label">Z-Score</div><div class="isz-val" style="color:var(--accent)">'+parseFloat(z).toFixed(2)+'&sigma;</div></div>';
 h+='<div class="isz-card"><div class="isz-label">StDev</div><div class="isz-val" style="color:var(--subtext)">'+stdev.toFixed(4)+'</div></div>';
 if(kellyShares!==null){
-h+='<div class="isz-card isz-kelly"><div class="isz-label">Kelly</div><div class="isz-val" style="color:var(--low)">'+kellyShares+' sh</div><div style="font-size:9px;color:var(--subtext);margin-top:2px">'+kellyFrac+'% K · '+(winRate*100).toFixed(0)+'% WR</div></div>';
+var lsTag=lossSource==='MAE'?'<span style="color:var(--low)">MAE</span>':'<span style="color:var(--yellow)">2\u03C3</span>';
+h+='<div class="isz-card isz-kelly"><div class="isz-label">Kelly</div><div class="isz-val" style="color:var(--low)">'+kellyShares+' sh</div><div style="font-size:9px;color:var(--subtext);margin-top:2px">'+kellyFrac+'% K · '+(winRate*100).toFixed(0)+'% WR · '+lsTag+'</div></div>';
 }else{
 h+='<div class="isz-card"><div class="isz-label">Kelly</div><div class="isz-val" style="color:var(--subtext)">—</div><div style="font-size:9px;color:var(--subtext);margin-top:2px">No screener data</div></div>';
 }
@@ -2018,7 +2021,8 @@ var avgL=(scr&&parseFloat(scr.avgMae)>0)?parseFloat(scr.avgMae):spreadRisk;
 if(avgW>0&&avgL>0&&winRate>0&&winRate<=1){var b2=avgW/avgL;var k2=Math.min((winRate*b2-(1-winRate))/b2,1.0);if(k2>0){kellyFrac=parseFloat((k2*100).toFixed(1));kellyShares=Math.floor(shares*Math.min(k2*0.5,1.0));}}
 }
 var grid=document.getElementById('iszGrid-'+rowId);
-if(grid){var z=0;try{var row=grid.closest('tr').previousElementSibling;z=parseFloat(row.getAttribute('data-z'))||0;}catch(e){}grid.innerHTML=buildInlineSizerCards(shares,notional,maxLoss,z,stdev,kellyShares,kellyFrac,winRate);}
+var _rlsSrc=(scr&&parseFloat(scr.avgMae)>0)?'MAE':'2\u03C3';
+if(grid){var z=0;try{var row=grid.closest('tr').previousElementSibling;z=parseFloat(row.getAttribute('data-z'))||0;}catch(e){}grid.innerHTML=buildInlineSizerCards(shares,notional,maxLoss,z,stdev,kellyShares,kellyFrac,winRate,_rlsSrc);}
 }
 // ═══════════════════════════════════════════════════════════════════
 // REGIME DETECTION — loaded on init, updates banner + score
