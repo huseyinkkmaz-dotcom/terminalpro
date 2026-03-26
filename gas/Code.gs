@@ -3110,11 +3110,12 @@ function runBacktest_(zThreshold, exitZ, maxHold, mode) {
 
     var allTrades = [];
     var startTime = new Date().getTime();
-    var MAX_MS = 150000; // 2.5 min safety — must finish well before GAS 6-min hard limit
+    var MAX_MS = 240000; // 4 min safety — must finish before GAS 6-min hard limit
     var pairsProcessed = 0;
     var pairsSkippedTime = 0;
     var pairsSkippedHist = 0;
 
+    var pairsWithTrades = 0;
     for (var pi = 0; pi < pairDefs.length; pi++) {
       if (new Date().getTime() - startTime > MAX_MS) { pairsSkippedTime += (pairDefs.length - pi); break; }
       var pair = pairDefs[pi];
@@ -3135,6 +3136,7 @@ function runBacktest_(zThreshold, exitZ, maxHold, mode) {
       if (len < WINDOW + 5) { pairsSkippedHist++; continue; }
 
       pairsProcessed++;
+      var tradesBefore = allTrades.length;
       var openTrade = null;
       for (var day = WINDOW; day < len; day++) {
         // Rolling window stats
@@ -3188,12 +3190,15 @@ function runBacktest_(zThreshold, exitZ, maxHold, mode) {
           }
         }
       }
+      if (allTrades.length > tradesBefore) pairsWithTrades++;
     }
 
     // Aggregate stats
     var elapsedMs = new Date().getTime() - startTime;
     var totalTrades = allTrades.length;
-    var _meta = { pairsDefined: pairDefs.length, pairsProcessed: pairsProcessed, pairsSkippedTime: pairsSkippedTime, pairsSkippedHist: pairsSkippedHist, elapsedMs: elapsedMs };
+    var intraPairCount = 0, creditPairCount = 0;
+    for (var mi = 0; mi < pairDefs.length; mi++) { if (pairDefs[mi].mode === 'intra') intraPairCount++; else creditPairCount++; }
+    var _meta = { pairsDefined: pairDefs.length, intraPairs: intraPairCount, creditPairs: creditPairCount, pairsProcessed: pairsProcessed, pairsWithTrades: pairsWithTrades, pairsSkippedTime: pairsSkippedTime, pairsSkippedHist: pairsSkippedHist, elapsedMs: elapsedMs, modeReceived: mode, histMapSize: Object.keys(histMap).length };
     if (totalTrades === 0) return { trades: 0, params: { zThreshold: zThreshold, exitZ: exitZ, maxHold: maxHold, mode: mode }, _meta: _meta };
 
     var winTrades = allTrades.filter(function(t){return t.pnl > 0;});
