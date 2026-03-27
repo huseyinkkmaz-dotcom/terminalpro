@@ -3242,15 +3242,8 @@ function runBacktest_(zThreshold, exitZ, maxHold, mode) {
       return { id: k, tA: ps.tA, tB: ps.tB, mode: ps.mode, trades: ps.trades, pnl: parseFloat(ps.pnl.toFixed(2)), winRate: parseFloat((ps.wins/ps.trades*100).toFixed(1)), avgPnl: parseFloat((ps.pnl/ps.trades).toFixed(2)), avgWin: ps.wins > 0 ? parseFloat((ps.winPnl/ps.wins).toFixed(2)) : 0, avgLoss: ps.losses > 0 ? parseFloat((ps.lossPnl/ps.losses).toFixed(2)) : 0, avgHold: parseFloat((ps.holdSum/ps.trades).toFixed(1)), avgEntryZ: parseFloat((ps.entryZSum/ps.trades).toFixed(2)), avgExitZ: parseFloat((ps.exitZSum/ps.trades).toFixed(2)), avgEntrySpr: parseFloat((ps.entrySprSum/ps.trades).toFixed(4)), avgExitSpr: parseFloat((ps.exitSprSum/ps.trades).toFixed(4)), recentTrades: recent };
     }).sort(function(a,b){return b.pnl - a.pnl;});
 
-    // When mode is "all", ensure both strategies are represented in topPairs
-    var topPairs;
-    if (mode === 'all') {
-      var topIntra = allPairsSorted.filter(function(p){ return p.mode === 'intra'; }).slice(0, 8);
-      var topCredit = allPairsSorted.filter(function(p){ return p.mode === 'credit'; }).slice(0, 8);
-      topPairs = topIntra.concat(topCredit).sort(function(a,b){ return b.pnl - a.pnl; }).slice(0, 15);
-    } else {
-      topPairs = allPairsSorted.slice(0, 15);
-    }
+    // Return top 30 pairs by PnL (no balanced quota — frontend handles mode labels)
+    var topPairs = allPairsSorted.slice(0, 30);
 
     return {
       trades: totalTrades,
@@ -3267,7 +3260,7 @@ function runBacktest_(zThreshold, exitZ, maxHold, mode) {
       zRevertPct: parseFloat((zRevertExits / totalTrades * 100).toFixed(1)),
       equityCurve: downsampleArray_(equityCurve, 500),
       topPairs: topPairs,
-      sampleTrades: allTrades.slice(0, 50),
+      sampleTrades: allTrades.slice(-50),
       params: { zThreshold: zThreshold, exitZ: exitZ, maxHold: maxHold, mode: mode },
       _meta: _meta
     };

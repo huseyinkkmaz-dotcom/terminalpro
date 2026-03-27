@@ -677,7 +677,7 @@ td:last-child{border-radius:0 10px 10px 0;border-right:1px solid var(--border)}
 </div>
 </div>
 <div id="btSignals" style="margin-bottom:25px"></div>
-<h3 style="font-size:11px;font-weight:900;color:var(--subtext);text-transform:uppercase;margin:25px 0 15px 0">Sample Trades</h3>
+<h3 style="font-size:11px;font-weight:900;color:var(--subtext);text-transform:uppercase;margin:25px 0 15px 0">Recent Trades — Active Signals</h3>
 <div style="overflow-x:auto"><table id="btTradesTable"><thead><tr><th>Pair</th><th>Mode</th><th>Entry Z</th><th>Exit Z</th><th>Hold</th><th>Exit Reason</th><th class="mono-data">PnL</th></tr></thead><tbody></tbody></table></div>
 </div>
 </div>
@@ -2304,11 +2304,22 @@ var ptb=document.querySelector('#btPairsTable tbody');
 var ph='';
 (bt.topPairs||[]).forEach(function(p){var pc=p.pnl>=0?'var(--low)':'var(--high)';ph+='<tr><td style="font-weight:900">'+p.id+'</td><td>'+p.trades+'</td><td>'+p.winRate+'%</td><td class="mono-data" style="color:'+pc+'">'+(p.pnl>=0?'+':'')+p.pnl+'$</td></tr>';});
 ptb.innerHTML=ph||'<tr><td colspan="4" style="color:var(--subtext);text-align:center">No pair data</td></tr>';
-// Sample trades table
+// Sample trades table — filtered to Active Now pairs, sorted by recency
 var stb=document.querySelector('#btTradesTable tbody');
 var th='';
-(bt.sampleTrades||[]).forEach(function(t){var pc=t.pnl>=0?'var(--low)':'var(--high)';var mc=t.mode==='credit'?'var(--purple)':'var(--accent)';th+='<tr><td style="font-weight:900">'+t.tA+' / '+t.tB+'</td><td style="color:'+mc+';font-weight:900;font-size:10px;text-transform:uppercase">'+t.mode+'</td><td style="font-family:JetBrains Mono">'+t.entryZ+'&sigma;</td><td style="font-family:JetBrains Mono">'+t.exitZ+'&sigma;</td><td>'+t.holdDays+'d</td><td style="font-size:10px;font-weight:900">'+(t.exitReason==='Z_REVERT'?'<span style="color:var(--low)">Z REVERT</span>':'<span style="color:var(--yellow)">MAX HOLD</span>')+'</td><td class="mono-data" style="color:'+pc+'">'+(t.pnl>=0?'+':'')+t.pnl+'$</td></tr>';});
-stb.innerHTML=th||'<tr><td colspan="7" style="color:var(--subtext);text-align:center">No sample trades</td></tr>';
+// Build active pair lookup from alert cache + DOM alerts
+var activePairIds={};
+document.querySelectorAll('#alertBody tr.alert-row').forEach(function(row){
+var tickers=row.getAttribute('data-tickers')||'';var parts=tickers.split(' ');
+if(parts.length>=2){activePairIds[(parts[0]+'|'+parts[1]).toUpperCase()]=true;activePairIds[(parts[0]+'|'+parts[1]).toUpperCase().replace(/-/g,'')]=true;}
+});
+if(window._btAlertCache){Object.keys(window._btAlertCache).forEach(function(m){Object.keys(window._btAlertCache[m]).forEach(function(k){activePairIds[k]=true;activePairIds[k.replace(/-/g,'')]=true;});});}
+var filteredTrades=(bt.sampleTrades||[]).filter(function(t){
+var key=(t.tA+'|'+t.tB).toUpperCase();
+return activePairIds[key]||activePairIds[key.replace(/-/g,'')];
+}).sort(function(a,b){return (b.exitDay||0)-(a.exitDay||0);});
+filteredTrades.forEach(function(t){var pc=t.pnl>=0?'var(--low)':'var(--high)';var mc=t.mode==='credit'?'var(--purple)':'var(--accent)';th+='<tr><td style="font-weight:900">'+t.tA+' / '+t.tB+'</td><td style="color:'+mc+';font-weight:900;font-size:10px;text-transform:uppercase">'+t.mode+'</td><td style="font-family:JetBrains Mono">'+t.entryZ+'&sigma;</td><td style="font-family:JetBrains Mono">'+t.exitZ+'&sigma;</td><td>'+t.holdDays+'d</td><td style="font-size:10px;font-weight:900">'+(t.exitReason==='Z_REVERT'?'<span style="color:var(--low)">Z REVERT</span>':'<span style="color:var(--yellow)">MAX HOLD</span>')+'</td><td class="mono-data" style="color:'+pc+'">'+(t.pnl>=0?'+':'')+t.pnl+'$</td></tr>';});
+stb.innerHTML=th||'<tr><td colspan="7" style="color:var(--subtext);text-align:center">No active signal trades in recent history</td></tr>';
 // ── ACTIONABLE SIGNALS ──
 window._lastBacktest=bt;
 try{renderActionableSignals(bt);}catch(sigErr){console.error('renderActionableSignals error:',sigErr);var sigEl=document.getElementById('btSignals');if(sigEl)sigEl.innerHTML='<div style="color:var(--high);text-align:center;padding:20px">Failed to render signals: '+sigErr.message+'</div>';}
@@ -2338,15 +2349,11 @@ if(idEl){var pid=idEl.innerText.trim().toUpperCase();portAlerts[pid]=true;}
 });
 var exitZ=parseFloat(bt.params.exitZ)||0.5;
 var h='';
-// Sort topPairs by total PnL descending
-var sorted=topPairs.slice().sort(function(a,b){return b.pnl-a.pnl;});
-var activeCount=0,watchCount=0;
-sorted.forEach(function(p){
-// Try to match pair with current alerts
+// Classify all pairs first, then sort: Active Now (by |Z|) > In Portfolio > Watch (by PnL)
+var classified=topPairs.map(function(p){
 var cid=p.id.toUpperCase().replace(/[^A-Z0-9|]/g,'');
 var altKey=cid;
 var matchedAlert=curAlerts[altKey];
-// Try alternate format
 if(!matchedAlert){
 var parts=p.id.split('|');
 if(parts.length===2){
@@ -2358,11 +2365,23 @@ if(!matchedAlert){Object.keys(curAlerts).forEach(function(k){if(k.replace(/-/g,'
 var isActive=!!matchedAlert;
 var isInPort=portAlerts[p.id.toUpperCase()]||false;
 var signal=isActive?'ACTIVE NOW':isInPort?'IN PORTFOLIO':'WATCH';
+var curZ=matchedAlert?matchedAlert.z:null;
+var priority=isActive?0:isInPort?1:2;
+return {p:p,matchedAlert:matchedAlert,isActive:isActive,isInPort:isInPort,signal:signal,curZ:curZ,priority:priority};
+});
+var sorted=classified.sort(function(a,b){
+if(a.priority!==b.priority)return a.priority-b.priority;
+if(a.priority===0)return Math.abs(b.curZ||0)-Math.abs(a.curZ||0);
+return b.p.pnl-a.p.pnl;
+});
+var activeCount=0,watchCount=0;
+sorted.forEach(function(c){
+var p=c.p,matchedAlert=c.matchedAlert,isActive=c.isActive,isInPort=c.isInPort,signal=c.signal;
 var sigClr=isActive?'var(--low)':isInPort?'var(--accent)':'var(--subtext)';
 var sigBg=isActive?'rgba(16,185,129,.12)':isInPort?'rgba(14,165,233,.1)':'rgba(255,255,255,.03)';
 var sigBdr=isActive?'rgba(16,185,129,.4)':isInPort?'rgba(14,165,233,.3)':'var(--border)';
 if(isActive)activeCount++;else watchCount++;
-var curZ=matchedAlert?matchedAlert.z:null;
+var curZ=c.curZ;
 var wrClr=p.winRate>=70?'var(--low)':p.winRate>=50?'var(--yellow)':'var(--high)';
 // Direction: positive Z → short spread (short A, long B), negative Z → long spread
 var longLeg='',shortLeg='',entryDir='';
