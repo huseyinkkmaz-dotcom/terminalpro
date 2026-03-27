@@ -152,6 +152,11 @@ function doGet(e) {
       var btMode = (e && e.parameter && e.parameter.mode) ? e.parameter.mode : 'all';
       result = { ok: true, backtestData: runBacktest_(btZThreshold, btExitZ, btMaxHold, btMode) };
     }
+    else if (action === 'getSensitivityHeatmap') {
+      var hmMaxHold = parseInt((e && e.parameter && e.parameter.maxHold) || 60);
+      var hmMode = (e && e.parameter && e.parameter.mode) ? e.parameter.mode : 'all';
+      result = { ok: true, heatmapData: runSensitivitySweep_(hmMaxHold, hmMode) };
+    }
     else if (action === 'getJournalAnalytics') {
       result = { ok: true, journalAnalytics: getJournalAnalytics_() };
     }
@@ -3625,4 +3630,128 @@ function getScreenerData_() {
     }
     return results;
   } catch(e) { return []; }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// SENSITIVITY HEATMAP — parameter sweep across Entry Z × Exit Z
+// Pre-computes Z-series once, then simulates trades for each combo
+// ═══════════════════════════════════════════════════════════════════
+function runSensitivitySweep_(maxHold, mode) {
+  try {
+    var ss = SpreadsheetApp.getActive();
+    var histMap = readTickerHistMap_(ss);
+    if (Object.keys(histMap).length === 0) return { error: 'No history data' };
+
+    // Load pair definitions (same as backtest)
+    var pairDefs = [];
+    var pairSources = [];
+    if (mode === 'all' || mode === 'intra') pairSources.push({ sheet: 'Pairs', mode: 'intra' });
+    if (mode === 'all' || mode === 'credit') pairSources.push({ sheet: 'CreditPairs', mode: 'credit' });
+    for (var s = 0; s < pairSources.length; s++) {
+      var pSheet = ss.getSheetByName(pairSources[s].sheet);
+      if (!pSheet || pSheet.getLastRow() <= 1) continue;
+      var pData = pSheet.getDataRange().getValues();
+      for (var p = 1; p < pData.length; p++) {
+        if (!pData[p][0]) continue;
+        var info = parseTickerInfo(pData[p][0]);
+        pairDefs.push({ id: info.id, tA: info.tA, tB: info.tB, mode: pairSources[s].mode });
+      }
+    }
+
+    // Phase 1: Pre-compute rolling Z-score series for each pair
+    var WINDOW = 30;
+    var startTime = new Date().getTime();
+    var MAX_MS = 240000;
+    var zSeriesList = []; // [{zScores: [floats], pricesA: [], pricesB: []}]
+    var pairsSkipped = 0;
+
+    for (var pi = 0; pi < pairDefs.length; pi++) {
+      if (new Date().getTime() - startTime > MAX_MS) { pairsSkipped += (pairDefs.length - pi); break; }
+      var pair = pairDefs[pi];
+      var histA = histMap[pair.tA.toUpperCase().trim()];
+      var histB = histMap[pair.tB.toUpperCase().trim()];
+      if (!histA || !histB) continue;
+      var len = Math.min(histA.length, histB.length);
+      if (len < WINDOW + 5) continue;
+      var pA = histA.slice(histA.length - len);
+      var pB = histB.slice(histB.length - len);
+
+      // Compute Z-score for each day from WINDOW onward
+      var zArr = new Array(len);
+      for (var day = WINDOW; day < len; day++) {
+        var sumSpr = 0, sumSprSq = 0;
+        for (var w = day - WINDOW; w < day; w++) {
+          var spr = pA[w] - pB[w];
+          sumSpr += spr;
+          sumSprSq += spr * spr;
+        }
+        var rollMean = sumSpr / WINDOW;
+        var rollVar = (sumSprSq / WINDOW) - (rollMean * rollMean);
+        var rollStdev = rollVar > 0 ? Math.sqrt(rollVar) : 0.001;
+        zArr[day] = (pA[day] - pB[day] - rollMean) / rollStdev;
+      }
+      zSeriesList.push({ z: zArr, pA: pA, pB: pB, len: len, start: WINDOW });
+    }
+
+    // Phase 2: Sweep parameter grid
+    var entryZValues = [1.5, 1.8, 2.0, 2.2, 2.5, 2.8, 3.0];
+    var exitZValues = [0.0, 0.25, 0.5, 0.75, 1.0, 1.25, 1.5];
+    var grid = [];
+
+    for (var ei = 0; ei < entryZValues.length; ei++) {
+      var row = [];
+      var zThreshold = entryZValues[ei];
+      for (var xi = 0; xi < exitZValues.length; xi++) {
+        var exitZ = exitZValues[xi];
+        if (exitZ >= zThreshold) { row.push({ trades: 0, winRate: 0, avgPnl: 0, profitFactor: 0 }); continue; }
+        var trades = 0, wins = 0, totalPnl = 0, grossWin = 0, grossLoss = 0;
+
+        for (var si = 0; si < zSeriesList.length; si++) {
+          var series = zSeriesList[si];
+          var openEntry = null;
+          for (var day = series.start; day < series.len; day++) {
+            var z = series.z[day];
+            if (z === undefined) continue;
+            if (!openEntry) {
+              if (Math.abs(z) >= zThreshold) {
+                openEntry = { day: day, z: z, dirA: z > 0 ? -1 : 1, dirB: z > 0 ? 1 : -1, pA: series.pA[day], pB: series.pB[day] };
+              }
+            } else {
+              var hold = day - openEntry.day;
+              if (Math.abs(z) <= exitZ || hold >= maxHold) {
+                var pnl = ((series.pA[day] - openEntry.pA) * openEntry.dirA + (series.pB[day] - openEntry.pB) * openEntry.dirB) * 100;
+                trades++;
+                totalPnl += pnl;
+                if (pnl > 0) { wins++; grossWin += pnl; } else { grossLoss += Math.abs(pnl); }
+                openEntry = null;
+              }
+            }
+          }
+        }
+
+        row.push({
+          trades: trades,
+          winRate: trades > 0 ? parseFloat((wins / trades * 100).toFixed(1)) : 0,
+          avgPnl: trades > 0 ? parseFloat((totalPnl / trades).toFixed(2)) : 0,
+          profitFactor: grossLoss > 0 ? parseFloat((grossWin / grossLoss).toFixed(2)) : 0,
+          totalPnl: parseFloat(totalPnl.toFixed(2))
+        });
+      }
+      grid.push(row);
+    }
+
+    return {
+      entryZValues: entryZValues,
+      exitZValues: exitZValues,
+      grid: grid,
+      maxHold: maxHold,
+      mode: mode,
+      pairsUsed: zSeriesList.length,
+      pairsSkipped: pairsSkipped,
+      elapsedMs: new Date().getTime() - startTime
+    };
+  } catch(e) {
+    console.error('runSensitivitySweep_ error: ' + e);
+    return { error: e.toString() };
+  }
 }

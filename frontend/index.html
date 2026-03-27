@@ -677,8 +677,29 @@ td:last-child{border-radius:0 10px 10px 0;border-right:1px solid var(--border)}
 </div>
 </div>
 <div id="btSignals" style="margin-bottom:25px"></div>
-<h3 style="font-size:11px;font-weight:900;color:var(--subtext);text-transform:uppercase;margin:25px 0 15px 0">Recent Trades — Active Signals</h3>
-<div style="overflow-x:auto"><table id="btTradesTable"><thead><tr><th>Pair</th><th>Mode</th><th>Entry Z</th><th>Exit Z</th><th>Hold</th><th>Exit Reason</th><th class="mono-data">PnL</th></tr></thead><tbody></tbody></table></div>
+<!-- Parameter Sensitivity Heatmap -->
+<div id="hmPanel" style="margin-top:25px">
+<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:15px;flex-wrap:wrap;gap:10px">
+<h3 style="font-size:11px;font-weight:900;color:var(--accent);text-transform:uppercase;margin:0;display:flex;align-items:center;gap:8px"><span style="font-size:14px">&#9632;</span> Parameter Sensitivity Heatmap</h3>
+<div style="display:flex;align-items:center;gap:10px">
+<div style="display:flex;gap:2px;background:var(--card);border:1px solid var(--border);border-radius:6px;padding:2px" id="hmMetricToggle">
+<button onclick="setHmMetric('winRate')" class="hm-metric-btn hm-metric-active" data-metric="winRate" style="padding:5px 10px;border:none;border-radius:4px;font-size:9px;font-weight:900;cursor:pointer;text-transform:uppercase;letter-spacing:.5px;transition:.15s">Win Rate</button>
+<button onclick="setHmMetric('avgPnl')" class="hm-metric-btn" data-metric="avgPnl" style="padding:5px 10px;border:none;border-radius:4px;font-size:9px;font-weight:900;cursor:pointer;text-transform:uppercase;letter-spacing:.5px;transition:.15s;background:transparent;color:var(--subtext)">Avg PnL</button>
+<button onclick="setHmMetric('profitFactor')" class="hm-metric-btn" data-metric="profitFactor" style="padding:5px 10px;border:none;border-radius:4px;font-size:9px;font-weight:900;cursor:pointer;text-transform:uppercase;letter-spacing:.5px;transition:.15s;background:transparent;color:var(--subtext)">Profit Factor</button>
+<button onclick="setHmMetric('trades')" class="hm-metric-btn" data-metric="trades" style="padding:5px 10px;border:none;border-radius:4px;font-size:9px;font-weight:900;cursor:pointer;text-transform:uppercase;letter-spacing:.5px;transition:.15s;background:transparent;color:var(--subtext)">Trades</button>
+</div>
+<button id="hmRunBtn" onclick="runSensitivity()" style="background:var(--accent);color:white;border:none;padding:8px 18px;border-radius:6px;font-size:10px;font-weight:900;cursor:pointer;text-transform:uppercase;letter-spacing:.5px;transition:opacity .15s" onmouseenter="this.style.opacity='0.85'" onmouseleave="this.style.opacity='1'">Run Sweep</button>
+</div>
+</div>
+<div id="hmLoading" style="display:none;text-align:center;padding:30px;color:var(--subtext);font-size:11px">Sweeping 49 parameter combos... this may take a minute.</div>
+<div id="hmResult" style="display:none">
+<div id="hmGrid" style="overflow-x:auto"></div>
+<div id="hmFooter" style="margin-top:10px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
+<div style="display:flex;align-items:center;gap:6px;font-size:9px;color:var(--subtext)"><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#ef4444"></span>Worst<span style="display:inline-block;width:60px;height:8px;border-radius:2px;background:linear-gradient(90deg,#ef4444,#f59e0b,#22c55e)"></span>Best</div>
+<div id="hmMeta" style="font-size:9px;color:var(--subtext)"></div>
+</div>
+</div>
+</div>
 </div>
 </div>
 </div>
@@ -2304,22 +2325,6 @@ var ptb=document.querySelector('#btPairsTable tbody');
 var ph='';
 (bt.topPairs||[]).forEach(function(p){var pc=p.pnl>=0?'var(--low)':'var(--high)';ph+='<tr><td style="font-weight:900">'+p.id+'</td><td>'+p.trades+'</td><td>'+p.winRate+'%</td><td class="mono-data" style="color:'+pc+'">'+(p.pnl>=0?'+':'')+p.pnl+'$</td></tr>';});
 ptb.innerHTML=ph||'<tr><td colspan="4" style="color:var(--subtext);text-align:center">No pair data</td></tr>';
-// Sample trades table — filtered to Active Now pairs, sorted by recency
-var stb=document.querySelector('#btTradesTable tbody');
-var th='';
-// Build active pair lookup from alert cache + DOM alerts
-var activePairIds={};
-document.querySelectorAll('#alertBody tr.alert-row').forEach(function(row){
-var tickers=row.getAttribute('data-tickers')||'';var parts=tickers.split(' ');
-if(parts.length>=2){activePairIds[(parts[0]+'|'+parts[1]).toUpperCase()]=true;activePairIds[(parts[0]+'|'+parts[1]).toUpperCase().replace(/-/g,'')]=true;}
-});
-if(window._btAlertCache){Object.keys(window._btAlertCache).forEach(function(m){Object.keys(window._btAlertCache[m]).forEach(function(k){activePairIds[k]=true;activePairIds[k.replace(/-/g,'')]=true;});});}
-var filteredTrades=(bt.sampleTrades||[]).filter(function(t){
-var key=(t.tA+'|'+t.tB).toUpperCase();
-return activePairIds[key]||activePairIds[key.replace(/-/g,'')];
-}).sort(function(a,b){return (b.exitDay||0)-(a.exitDay||0);});
-filteredTrades.forEach(function(t){var pc=t.pnl>=0?'var(--low)':'var(--high)';var mc=t.mode==='credit'?'var(--purple)':'var(--accent)';th+='<tr><td style="font-weight:900">'+t.tA+' / '+t.tB+'</td><td style="color:'+mc+';font-weight:900;font-size:10px;text-transform:uppercase">'+t.mode+'</td><td style="font-family:JetBrains Mono">'+t.entryZ+'&sigma;</td><td style="font-family:JetBrains Mono">'+t.exitZ+'&sigma;</td><td>'+t.holdDays+'d</td><td style="font-size:10px;font-weight:900">'+(t.exitReason==='Z_REVERT'?'<span style="color:var(--low)">Z REVERT</span>':'<span style="color:var(--yellow)">MAX HOLD</span>')+'</td><td class="mono-data" style="color:'+pc+'">'+(t.pnl>=0?'+':'')+t.pnl+'$</td></tr>';});
-stb.innerHTML=th||'<tr><td colspan="7" style="color:var(--subtext);text-align:center">No active signal trades in recent history</td></tr>';
 // ── ACTIONABLE SIGNALS ──
 window._lastBacktest=bt;
 try{renderActionableSignals(bt);}catch(sigErr){console.error('renderActionableSignals error:',sigErr);var sigEl=document.getElementById('btSignals');if(sigEl)sigEl.innerHTML='<div style="color:var(--high);text-align:center;padding:20px">Failed to render signals: '+sigErr.message+'</div>';}
@@ -2499,6 +2504,105 @@ var rows=logEl.querySelectorAll('tbody tr');
 toggleEl.innerHTML='&#9662; View Last '+rows.length+' Trades';
 }
 }
+}
+// ── PARAMETER SENSITIVITY HEATMAP ──
+var _hmData=null;
+var _hmMetric='winRate';
+async function runSensitivity(){
+var btn=document.getElementById('hmRunBtn');
+btn.disabled=true;btn.innerText='RUNNING...';
+document.getElementById('hmLoading').style.display='block';
+document.getElementById('hmResult').style.display='none';
+try{
+var data=await apiGet('getSensitivityHeatmap',{
+maxHold:document.getElementById('btMaxHold').value,
+mode:document.getElementById('btMode').value
+},300000);
+if(data&&data.ok&&data.heatmapData&&!data.heatmapData.error){
+_hmData=data.heatmapData;
+renderHeatmap();
+}else{
+document.getElementById('hmLoading').innerHTML='<div style="color:var(--high)">Sweep failed: '+(data&&data.heatmapData&&data.heatmapData.error?data.heatmapData.error:'unknown')+'</div>';
+}
+}catch(e){document.getElementById('hmLoading').innerHTML='<div style="color:var(--high)">Error: '+e.message+'</div>';}
+finally{btn.disabled=false;btn.innerText='RUN SWEEP';}
+}
+function setHmMetric(m){
+_hmMetric=m;
+document.querySelectorAll('.hm-metric-btn').forEach(function(b){
+if(b.getAttribute('data-metric')===m){b.classList.add('hm-metric-active');b.style.background='var(--accent)';b.style.color='#000';}
+else{b.classList.remove('hm-metric-active');b.style.background='transparent';b.style.color='var(--subtext)';}
+});
+if(_hmData)renderHeatmap();
+}
+function hmCellColor(val,metric){
+// Returns rgba color string — green=good, red=bad, yellow=mid
+var t=0;
+if(metric==='winRate'){t=Math.max(0,Math.min(1,(val-30)/40));} // 30%=0, 70%=1
+else if(metric==='avgPnl'){t=Math.max(0,Math.min(1,(val+50)/150));} // -50=0, 100=1
+else if(metric==='profitFactor'){t=Math.max(0,Math.min(1,(val-0.5)/2));} // 0.5=0, 2.5=1
+else if(metric==='trades'){t=Math.max(0,Math.min(1,val/200));} // 0=0, 200=1
+else if(metric==='totalPnl'){t=Math.max(0,Math.min(1,(val+500)/2000));} // -500=0, 1500=1
+// Interpolate: red(0) → yellow(0.5) → green(1)
+var r,g,b;
+if(t<0.5){var p=t*2;r=Math.round(239+(245-239)*p);g=Math.round(68+(158-68)*p);b=Math.round(68+(11-68)*p);}
+else{var p=(t-0.5)*2;r=Math.round(245+(34-245)*p);g=Math.round(158+(197-158)*p);b=Math.round(11+(94-11)*p);}
+return 'rgba('+r+','+g+','+b+',0.85)';
+}
+function hmFmtVal(val,metric){
+if(metric==='winRate')return val.toFixed(1)+'%';
+if(metric==='avgPnl')return(val>=0?'+':'')+val.toFixed(0)+'$';
+if(metric==='profitFactor')return val.toFixed(2)+'x';
+if(metric==='trades')return val.toString();
+if(metric==='totalPnl')return(val>=0?'+':'')+val.toFixed(0)+'$';
+return val.toString();
+}
+function renderHeatmap(){
+if(!_hmData||!_hmData.grid)return;
+document.getElementById('hmLoading').style.display='none';
+document.getElementById('hmResult').style.display='block';
+var d=_hmData;
+var m=_hmMetric;
+var curEntryZ=parseFloat(document.getElementById('btZEntry').value)||2.0;
+var curExitZ=parseFloat(document.getElementById('btZExit').value)||0.5;
+// Build table
+var h='<table style="border-collapse:collapse;width:100%;font-family:JetBrains Mono,monospace;font-size:11px">';
+// Header row: Exit Z values
+h+='<thead><tr><th style="padding:8px 6px;background:var(--card);border:1px solid var(--border);font-size:9px;font-weight:900;color:var(--subtext);text-transform:uppercase;min-width:70px">Entry Z \\ Exit Z</th>';
+for(var xi=0;xi<d.exitZValues.length;xi++){
+var isActiveCol=Math.abs(d.exitZValues[xi]-curExitZ)<0.01;
+h+='<th style="padding:8px 6px;background:var(--card);border:1px solid var(--border);font-size:11px;font-weight:'+(isActiveCol?'900':'600')+';color:'+(isActiveCol?'var(--accent)':'var(--subtext)')+';text-align:center;min-width:65px">'+d.exitZValues[xi].toFixed(2)+'σ</th>';
+}
+h+='</tr></thead><tbody>';
+// Data rows
+for(var ei=0;ei<d.entryZValues.length;ei++){
+var isActiveRow=Math.abs(d.entryZValues[ei]-curEntryZ)<0.01;
+h+='<tr><td style="padding:8px 10px;background:var(--card);border:1px solid var(--border);font-size:11px;font-weight:'+(isActiveRow?'900':'600')+';color:'+(isActiveRow?'var(--accent)':'var(--subtext)')+'">'+d.entryZValues[ei].toFixed(1)+'σ</td>';
+for(var xi=0;xi<d.exitZValues.length;xi++){
+var cell=d.grid[ei][xi];
+var val=cell[m]||0;
+var isCurrentCell=isActiveRow&&Math.abs(d.exitZValues[xi]-curExitZ)<0.01;
+if(cell.trades===0){
+h+='<td style="padding:8px 6px;border:1px solid var(--border);text-align:center;color:var(--subtext);background:var(--card);font-size:10px'+(isCurrentCell?';box-shadow:inset 0 0 0 2px var(--accent)':'')+'">—</td>';
+}else{
+var bg=hmCellColor(val,m);
+var textClr=m==='trades'?'#fff':(val>=0||m==='winRate'||m==='profitFactor'?'#000':'#fff');
+// Tooltip data
+var tip='Entry: '+d.entryZValues[ei]+'σ | Exit: '+d.exitZValues[xi]+'σ\\nTrades: '+cell.trades+' | WR: '+cell.winRate+'% | Avg: '+(cell.avgPnl>=0?'+':'')+cell.avgPnl+'$ | PF: '+cell.profitFactor+'x';
+h+='<td style="padding:8px 6px;border:1px solid rgba(255,255,255,.06);text-align:center;font-weight:900;color:'+textClr+';background:'+bg+';cursor:default;position:relative'+(isCurrentCell?';box-shadow:inset 0 0 0 2px var(--accent)':'')+(isCurrentCell?';border-radius:2px':'')+'" title="'+tip+'">';
+h+=hmFmtVal(val,m);
+if(isCurrentCell)h+='<div style="position:absolute;top:1px;right:3px;font-size:7px;color:var(--accent);font-weight:900">YOU</div>';
+h+='</td>';
+}
+}
+h+='</tr>';
+}
+h+='</tbody></table>';
+document.getElementById('hmGrid').innerHTML=h;
+// Footer meta
+var meta=d.pairsUsed+' pairs analyzed · Max hold: '+d.maxHold+'d · '+(d.elapsedMs/1000).toFixed(1)+'s';
+if(d.pairsSkipped>0)meta+=' · <span style="color:var(--yellow)">'+d.pairsSkipped+' skipped (timeout)</span>';
+document.getElementById('hmMeta').innerHTML=meta;
 }
 // ── PORTFOLIO EXIT TRACKING ──
 // Inject exit recommendations into portfolio trade cards when backtest data is available
