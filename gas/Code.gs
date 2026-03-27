@@ -557,6 +557,28 @@ function getOpenTrades() {
         if (creditPairCol[ci][0]) creditIds[cleanId(creditPairCol[ci][0])] = true;
       }
     }
+    // Load DivDates + Master coupon yields for auto-div tracking
+    var divMap = {};
+    var divSheet = ss.getSheetByName('DivDates');
+    if (divSheet && divSheet.getLastRow() > 1) {
+      var divData = divSheet.getRange(2, 1, divSheet.getLastRow() - 1, 2).getValues();
+      for (var d = 0; d < divData.length; d++) {
+        var dticker = String(divData[d][0]).toUpperCase().trim();
+        var ddate = divData[d][1];
+        if (dticker && ddate instanceof Date) divMap[dticker] = ddate;
+      }
+    }
+    var couponMap = {};
+    var masterSheet = ss.getSheetByName('Master');
+    if (masterSheet && masterSheet.getLastRow() > 1) {
+      var masterData = masterSheet.getDataRange().getValues();
+      for (var m = 1; m < masterData.length; m++) {
+        var mTicker = String(masterData[m][0]).toUpperCase().trim();
+        var mCoupon = parseFloat(masterData[m][2]) || 0; // Col C = Coupon Yield
+        if (mTicker && mCoupon > 0) couponMap[mTicker] = mCoupon;
+      }
+    }
+    var now = new Date();
     var results = [];
     for (var j = 1; j < openData.length; j++) {
       try {
@@ -576,38 +598,59 @@ function getOpenTrades() {
         var sB = parseMoney(openData[j][5]);
         var paidDiv = parseMoney(openData[j][7]);
         var rcvdDiv = parseMoney(openData[j][8]);
+        var openDate = openData[j][6] instanceof Date ? openData[j][6].toISOString().split('T')[0] : String(openData[j][6] || '');
         if (pair) {
           if (pair[1] && String(pair[1]).length > 1) tA_Name = String(pair[1]);
           if (pair[2] && String(pair[2]).length > 1) tB_Name = String(pair[2]);
           var liveSpr = parseFloat(pair[5])||0;
           var meanTarget = parseFloat(pair[10])||0;
+          var stdev = parseFloat(pair[11])||0;
           var livePriceA = parseFloat(pair[3])||0;
           var livePriceB = parseFloat(pair[4])||0;
           var capGains = ((livePriceA-costA)*sA) + ((livePriceB-costB)*sB);
           var netPnl = capGains + rcvdDiv - paidDiv;
           var currentZ = parseFloat(pair[12]) || 0;
           var sector = pair[15] ? String(pair[15]) : '';
+          // Div dates + coupon yields for auto-div tracking
+          var tkA = String(tA_Name).toUpperCase().trim();
+          var tkB = String(tB_Name).toUpperCase().trim();
+          var exDivA = divMap[tkA] || null;
+          var exDivB = divMap[tkB] || null;
+          var couponA = couponMap[tkA] || 0;
+          var couponB = couponMap[tkB] || 0;
           results.push({
             id: displayId, tA: tA_Name, tB: tB_Name,
             spr: liveSpr.toFixed(2), target: meanTarget.toFixed(2),
+            stdev: parseFloat(stdev.toFixed(4)),
             sA: sA, sB: sB, pA: costA.toFixed(2), pB: costB.toFixed(2),
+            livePriceA: livePriceA.toFixed(2), livePriceB: livePriceB.toFixed(2),
             dollarPnL: netPnl.toFixed(2), capGains: capGains.toFixed(2),
             paidDiv: paidDiv.toFixed(2), rcvdDiv: rcvdDiv.toFixed(2),
             centGoal: (Math.abs((costA-costB)-meanTarget)*100).toFixed(0),
             centRem: (Math.abs(liveSpr-meanTarget)*100).toFixed(0),
+            distToMean: (liveSpr - meanTarget).toFixed(4),
             isWinning: netPnl > 0, entryZ: openData[j][1],
-            currentZ: currentZ, sector: sector, strategy: strategy
+            currentZ: currentZ, sector: sector, strategy: strategy,
+            openDate: openDate,
+            exDivA: (exDivA && exDivA >= now) ? exDivA.toISOString().split('T')[0] : null,
+            exDivB: (exDivB && exDivB >= now) ? exDivB.toISOString().split('T')[0] : null,
+            couponA: couponA, couponB: couponB
           });
         } else {
           results.push({
             id: displayId+" [WAITING]", tA: tA_Name, tB: tB_Name,
-            spr:"0.00", target:"0.00", sA:sA, sB:sB,
+            spr:"0.00", target:"0.00", stdev: 0,
+            sA:sA, sB:sB,
             pA:costA.toFixed(2), pB:costB.toFixed(2),
+            livePriceA: "0.00", livePriceB: "0.00",
             dollarPnL:"0.00", capGains:"0.00",
             paidDiv: paidDiv.toFixed(2), rcvdDiv: rcvdDiv.toFixed(2),
-            centGoal:"0", centRem:"0",
+            centGoal:"0", centRem:"0", distToMean: "0",
             isWinning:false, entryZ:"0",
-            currentZ: 0, sector: '', strategy: strategy
+            currentZ: 0, sector: '', strategy: strategy,
+            openDate: openDate,
+            exDivA: null, exDivB: null,
+            couponA: 0, couponB: 0
           });
         }
       } catch(err) { console.error(err); }
@@ -2766,9 +2809,10 @@ function runNightlyScreener() {
       if (new Date().getTime() - startTime > MAX_MS) { Logger.log('Screener: timeout after ' + i + ' pairs'); break; }
       var a = top[i];
       try {
-        var analysis = analyzeSinglePair_(a.tA, a.tB, a.pA || parseFloat(a.spr), a.pB || 0, parseFloat(a.z));
+        var analysis = analyzeSinglePair_(a.tA, a.tB, a.pA || parseFloat(a.spr), a.pB || 0, parseFloat(a.z), [15, 30, 60, 90]);
         if (analysis && !analysis.error && analysis.metrics) {
           var prob = analysis.metrics.probabilities || {};
+          var wr15 = (prob.winRates && prob.winRates['15d']) ? prob.winRates['15d'].rate : null;
           var wr30 = (prob.winRates && prob.winRates['30d']) ? prob.winRates['30d'].rate : null;
           var wr60 = (prob.winRates && prob.winRates['60d']) ? prob.winRates['60d'].rate : null;
           var wr90 = (prob.winRates && prob.winRates['90d']) ? prob.winRates['90d'].rate : null;
@@ -2776,9 +2820,10 @@ function runNightlyScreener() {
           results.push({
             id: a.id, tA: a.tA, tB: a.tB, mode: a._mode,
             z: parseFloat(a.z), expProfit: parseFloat(a.expProfit),
-            wr30: wr30, wr60: wr60, wr90: wr90,
+            wr15: wr15, wr30: wr30, wr60: wr60, wr90: wr90,
             avgMae: (bs.avgMae != null) ? bs.avgMae : null, p75Mae: (bs.p75Mae != null) ? bs.p75Mae : null,
             wideningProb: (bs.wideningProb != null) ? bs.wideningProb : null, triggers: prob.triggers || 0,
+            ep15: (analysis.metrics.rollingZ && analysis.metrics.rollingZ['15d']) ? analysis.metrics.rollingZ['15d'].expectedProfit : null,
             ep30: (analysis.metrics.rollingZ && analysis.metrics.rollingZ['30d']) ? analysis.metrics.rollingZ['30d'].expectedProfit : null,
             ep60: (analysis.metrics.rollingZ && analysis.metrics.rollingZ['60d']) ? analysis.metrics.rollingZ['60d'].expectedProfit : null,
             ep90: (analysis.metrics.rollingZ && analysis.metrics.rollingZ['90d']) ? analysis.metrics.rollingZ['90d'].expectedProfit : null,
@@ -2791,15 +2836,15 @@ function runNightlyScreener() {
     var sheet = ss.getSheetByName('ScreenerCache');
     if (!sheet) {
       sheet = ss.insertSheet('ScreenerCache');
-      sheet.getRange(1,1,1,16).setValues([['PairID','TickerA','TickerB','Mode','Z','ExpProfit','WR30','WR60','WR90','AvgMAE','P75MAE','WidenProb','Triggers','EP30','EP60','UpdatedAt']]);
+      sheet.getRange(1,1,1,19).setValues([['PairID','TickerA','TickerB','Mode','Z','ExpProfit','WR30','WR60','WR90','AvgMAE','P75MAE','WidenProb','Triggers','EP30','EP60','UpdatedAt','WR15','EP15','EP90']]);
     } else {
-      if (sheet.getLastRow() > 1) sheet.getRange(2, 1, sheet.getLastRow() - 1, 16).clearContent();
+      if (sheet.getLastRow() > 1) sheet.getRange(2, 1, sheet.getLastRow() - 1, 19).clearContent();
     }
     if (results.length > 0) {
       var rows = results.map(function(r){
-        return [r.id, r.tA, r.tB, r.mode, r.z, r.expProfit, r.wr30, r.wr60, r.wr90, r.avgMae, r.p75Mae, r.wideningProb, r.triggers, r.ep30, r.ep60, r.ts];
+        return [r.id, r.tA, r.tB, r.mode, r.z, r.expProfit, r.wr30, r.wr60, r.wr90, r.avgMae, r.p75Mae, r.wideningProb, r.triggers, r.ep30, r.ep60, r.ts, r.wr15, r.ep15, r.ep90];
       });
-      sheet.getRange(2, 1, rows.length, 16).setValues(rows);
+      sheet.getRange(2, 1, rows.length, 19).setValues(rows);
     }
     Logger.log('Screener: processed ' + results.length + '/' + top.length + ' pairs in ' + ((new Date().getTime()-startTime)/1000).toFixed(1) + 's');
   } catch(e) {
@@ -3625,7 +3670,10 @@ function getScreenerData_() {
         wr30: r[6], wr60: r[7], wr90: r[8],
         avgMae: r[9], p75Mae: r[10], wideningProb: r[11],
         triggers: r[12], ep30: r[13], ep60: r[14],
-        ts: r[15]
+        ts: r[15],
+        wr15: r[16] != null ? r[16] : null,
+        ep15: r[17] != null ? r[17] : null,
+        ep90: r[18] != null ? r[18] : null
       });
     }
     return results;
