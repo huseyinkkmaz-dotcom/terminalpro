@@ -58,11 +58,14 @@ function doGet(e) {
       var alerts = getAlertData(mode);
       var diag = alerts._diag || {};
       delete alerts._diag;
+      var allPairs = alerts._allPairs || [];
+      delete alerts._allPairs;
       result = {
         ok: true,
         mode: mode,
         status: alerts.length > 0 ? "live" : "no_signals",
         alertData: alerts,
+        allPairs: allPairs,
         portfolioData: getOpenTrades(),
         historyData: getClosedTrades(),
         macroData: getMacroData(),
@@ -467,6 +470,11 @@ function getAlertData(mode) {
       if (couponA === "" || couponA === null || couponA === undefined ||
           couponB === "" || couponB === null || couponB === undefined) { _diag.noCoupon++; continue; }
       var currentZ = parseFloat(row[12]) || 0;
+
+      // Collect ALL valid pairs for sweep search (before Z-score filter)
+      var sweepInfo = parseTickerInfo(rawId);
+      output._allPairs = output._allPairs || [];
+      output._allPairs.push({ id: sweepInfo.id, tA: String(row[1] || sweepInfo.tA).trim(), tB: String(row[2] || sweepInfo.tB).trim(), z: currentZ.toFixed(2) });
 
       // FILTER: |z| >= 1.8
       if (Math.abs(currentZ) < 1.8) { _diag.lowZ++; continue; }
