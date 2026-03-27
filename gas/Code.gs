@@ -155,7 +155,18 @@ function doGet(e) {
     else if (action === 'getSensitivityHeatmap') {
       var hmMaxHold = parseInt((e && e.parameter && e.parameter.maxHold) || 60);
       var hmMode = (e && e.parameter && e.parameter.mode) ? e.parameter.mode : 'all';
-      result = { ok: true, heatmapData: runSensitivitySweep_(hmMaxHold, hmMode) };
+      var hmPairId = (e && e.parameter && e.parameter.pairId) ? e.parameter.pairId : null;
+      result = { ok: true, heatmapData: runSensitivitySweep_(hmMaxHold, hmMode, hmPairId) };
+    }
+    else if (action === 'getExitAlerts') {
+      result = { ok: true, exitAlerts: getExitAlerts_() };
+    }
+    else if (action === 'saveExitParams') {
+      var epExitZ = parseFloat((e && e.parameter && e.parameter.exitZ) || 0.5);
+      var epMaxHold = parseInt((e && e.parameter && e.parameter.maxHold) || 60);
+      var epStopLoss = parseFloat((e && e.parameter && e.parameter.stopLossPct) || 0);
+      saveExitParams_(epExitZ, epMaxHold, epStopLoss);
+      result = { ok: true, message: 'Exit params saved' };
     }
     else if (action === 'getJournalAnalytics') {
       result = { ok: true, journalAnalytics: getJournalAnalytics_() };
@@ -3684,25 +3695,34 @@ function getScreenerData_() {
 // SENSITIVITY HEATMAP — parameter sweep across Entry Z × Exit Z
 // Pre-computes Z-series once, then simulates trades for each combo
 // ═══════════════════════════════════════════════════════════════════
-function runSensitivitySweep_(maxHold, mode) {
+function runSensitivitySweep_(maxHold, mode, pairId) {
   try {
     var ss = SpreadsheetApp.getActive();
     var histMap = readTickerHistMap_(ss);
     if (Object.keys(histMap).length === 0) return { error: 'No history data' };
 
-    // Load pair definitions (same as backtest)
+    // Load pair definitions — if pairId specified, only load that pair
     var pairDefs = [];
-    var pairSources = [];
-    if (mode === 'all' || mode === 'intra') pairSources.push({ sheet: 'Pairs', mode: 'intra' });
-    if (mode === 'all' || mode === 'credit') pairSources.push({ sheet: 'CreditPairs', mode: 'credit' });
-    for (var s = 0; s < pairSources.length; s++) {
-      var pSheet = ss.getSheetByName(pairSources[s].sheet);
-      if (!pSheet || pSheet.getLastRow() <= 1) continue;
-      var pData = pSheet.getDataRange().getValues();
-      for (var p = 1; p < pData.length; p++) {
-        if (!pData[p][0]) continue;
-        var info = parseTickerInfo(pData[p][0]);
-        pairDefs.push({ id: info.id, tA: info.tA, tB: info.tB, mode: pairSources[s].mode });
+    if (pairId) {
+      var info = parseTickerInfo(pairId);
+      if (info && info.tA && info.tB) {
+        pairDefs.push({ id: info.id, tA: info.tA, tB: info.tB, mode: mode === 'credit' ? 'credit' : 'intra' });
+      } else {
+        return { error: 'Invalid pairId: ' + pairId };
+      }
+    } else {
+      var pairSources = [];
+      if (mode === 'all' || mode === 'intra') pairSources.push({ sheet: 'Pairs', mode: 'intra' });
+      if (mode === 'all' || mode === 'credit') pairSources.push({ sheet: 'CreditPairs', mode: 'credit' });
+      for (var s = 0; s < pairSources.length; s++) {
+        var pSheet = ss.getSheetByName(pairSources[s].sheet);
+        if (!pSheet || pSheet.getLastRow() <= 1) continue;
+        var pData = pSheet.getDataRange().getValues();
+        for (var p = 1; p < pData.length; p++) {
+          if (!pData[p][0]) continue;
+          var info = parseTickerInfo(pData[p][0]);
+          pairDefs.push({ id: info.id, tA: info.tA, tB: info.tB, mode: pairSources[s].mode });
+        }
       }
     }
 
@@ -3794,6 +3814,7 @@ function runSensitivitySweep_(maxHold, mode) {
       grid: grid,
       maxHold: maxHold,
       mode: mode,
+      pairId: pairId || null,
       pairsUsed: zSeriesList.length,
       pairsSkipped: pairsSkipped,
       elapsedMs: new Date().getTime() - startTime
@@ -3801,5 +3822,300 @@ function runSensitivitySweep_(maxHold, mode) {
   } catch(e) {
     console.error('runSensitivitySweep_ error: ' + e);
     return { error: e.toString() };
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// EXIT ALERTS — proactive exit signal detection for open trades
+// Three triggers: Statistical Target, Time Stop, Stop Loss
+// ═══════════════════════════════════════════════════════════════════
+
+/**
+ * Check all open trades for exit signals. Called hourly by trigger
+ * and on-demand via getExitAlerts API endpoint.
+ * @param {Object} [params] - Optional override thresholds {exitZ, maxHold, stopLossPct}
+ * @returns {Array} Array of exit signal objects
+ */
+function checkExitSignals_(params) {
+  try {
+    var ss = SpreadsheetApp.getActive();
+    var openSheet = ss.getSheetByName('OpenTrades');
+    if (!openSheet || openSheet.getLastRow() < 2) return [];
+
+    var openData = openSheet.getDataRange().getValues();
+
+    // Merge live rows from WebCache + WebCacheCredit (same as getOpenTrades)
+    var liveRows = [];
+    var intra = ss.getSheetByName('WebCache');
+    if (!intra || intra.getLastRow() <= 1) intra = ss.getSheetByName('Live');
+    var credit = ss.getSheetByName('WebCacheCredit');
+    var sources = [intra, credit];
+    for (var s = 0; s < sources.length; s++) {
+      var ls = sources[s];
+      if (ls && ls.getLastRow() > 1) {
+        var rows = ls.getRange(2, 1, ls.getLastRow() - 1, 24).getValues();
+        liveRows = liveRows.concat(rows);
+      }
+    }
+
+    // Load screener cache for P75 MAE data
+    var screenerMap = {};
+    var scrSheet = ss.getSheetByName('ScreenerCache');
+    if (scrSheet && scrSheet.getLastRow() > 1) {
+      var scrData = scrSheet.getDataRange().getValues();
+      for (var si = 1; si < scrData.length; si++) {
+        var scrId = String(scrData[si][0] || '').toUpperCase().replace(/[^A-Z0-9|]/g, '');
+        if (scrId) {
+          screenerMap[scrId] = {
+            p75Mae: parseFloat(scrData[si][10]) || 0,
+            avgMae: parseFloat(scrData[si][9]) || 0
+          };
+        }
+      }
+    }
+
+    // Default thresholds — can be overridden by params
+    var exitZ = (params && params.exitZ) ? parseFloat(params.exitZ) : 0.5;
+    var maxHold = (params && params.maxHold) ? parseInt(params.maxHold) : 60;
+    var stopLossPct = (params && params.stopLossPct) ? parseFloat(params.stopLossPct) : 0;
+    var now = new Date();
+    var signals = [];
+
+    for (var j = 1; j < openData.length; j++) {
+      var rawId = openData[j][0];
+      if (!rawId) continue;
+      var info = parseTickerInfo(rawId);
+      var openAnchor = cleanId(rawId);
+
+      // Find live data for this pair
+      var pair = null;
+      for (var k = 0; k < liveRows.length; k++) {
+        if (liveRows[k][0] && cleanId(liveRows[k][0]) === openAnchor) { pair = liveRows[k]; break; }
+      }
+      if (!pair) continue;
+
+      var costA = parseMoney(openData[j][2]);
+      var costB = parseMoney(openData[j][3]);
+      var sA = parseMoney(openData[j][4]);
+      var sB = parseMoney(openData[j][5]);
+      var paidDiv = parseMoney(openData[j][7]);
+      var rcvdDiv = parseMoney(openData[j][8]);
+      var openDate = openData[j][6] instanceof Date ? openData[j][6] : new Date(openData[j][6]);
+
+      var livePriceA = parseFloat(pair[3]) || 0;
+      var livePriceB = parseFloat(pair[4]) || 0;
+      var currentZ = parseFloat(pair[12]) || 0;
+      var stdev = parseFloat(pair[11]) || 0;
+      var mean = parseFloat(pair[10]) || 0;
+
+      var capGains = ((livePriceA - costA) * sA) + ((livePriceB - costB) * sB);
+      var netPnl = capGains + rcvdDiv - paidDiv;
+      var daysHeld = Math.floor((now - openDate) / 86400000);
+      var entryNotional = Math.abs(costA * sA) + Math.abs(costB * sB);
+
+      // --- Trigger 1: Statistical Target Reached ---
+      if (Math.abs(currentZ) <= exitZ) {
+        signals.push({
+          pairId: info.id,
+          tA: info.tA,
+          tB: info.tB,
+          trigger: 'STATISTICAL_TARGET',
+          severity: 'profit',
+          message: 'Z-score reverted to ' + currentZ.toFixed(2) + 'σ (target: ≤' + exitZ.toFixed(1) + 'σ) — take profit',
+          currentZ: currentZ,
+          daysHeld: daysHeld,
+          unrealizedPnl: parseFloat(netPnl.toFixed(2)),
+          timestamp: now.toISOString()
+        });
+      }
+
+      // --- Trigger 2: Time Stop ---
+      if (daysHeld >= maxHold) {
+        signals.push({
+          pairId: info.id,
+          tA: info.tA,
+          tB: info.tB,
+          trigger: 'TIME_STOP',
+          severity: 'warning',
+          message: 'Day ' + daysHeld + ' of ' + maxHold + '-day max hold — consider closing',
+          currentZ: currentZ,
+          daysHeld: daysHeld,
+          unrealizedPnl: parseFloat(netPnl.toFixed(2)),
+          timestamp: now.toISOString()
+        });
+      }
+
+      // --- Trigger 3: Stop Loss ---
+      var scrKey = openAnchor;
+      var scrInfo = screenerMap[scrKey];
+      var lossThreshold = 0;
+
+      if (stopLossPct > 0 && entryNotional > 0) {
+        // Hard dollar/pct stop loss
+        lossThreshold = entryNotional * (stopLossPct / 100);
+      } else if (scrInfo && scrInfo.p75Mae > 0) {
+        // P75 MAE-based stop loss (from screener)
+        lossThreshold = scrInfo.p75Mae;
+      } else if (stdev > 0) {
+        // Fallback: 2σ spread risk × avg position size
+        var avgShares = (Math.abs(sA) + Math.abs(sB)) / 2;
+        lossThreshold = 2 * stdev * avgShares;
+      }
+
+      if (lossThreshold > 0 && netPnl < 0 && Math.abs(netPnl) >= lossThreshold) {
+        var lossSource = (stopLossPct > 0) ? (stopLossPct + '% of notional') : (scrInfo && scrInfo.p75Mae > 0 ? 'P75 MAE' : '2σ spread risk');
+        signals.push({
+          pairId: info.id,
+          tA: info.tA,
+          tB: info.tB,
+          trigger: 'STOP_LOSS',
+          severity: 'danger',
+          message: 'Loss $' + Math.abs(netPnl).toFixed(2) + ' exceeds ' + lossSource + ' threshold ($' + lossThreshold.toFixed(2) + ')',
+          currentZ: currentZ,
+          daysHeld: daysHeld,
+          unrealizedPnl: parseFloat(netPnl.toFixed(2)),
+          lossThreshold: parseFloat(lossThreshold.toFixed(2)),
+          timestamp: now.toISOString()
+        });
+      }
+    }
+
+    return signals;
+  } catch (e) {
+    console.error('checkExitSignals_ error: ' + e);
+    return [];
+  }
+}
+
+/**
+ * Hourly trigger — checks exit signals and logs them to ExitAlerts sheet.
+ */
+function runExitAlertCheck() {
+  try {
+    var ss = SpreadsheetApp.getActive();
+    // Read user-configured thresholds from ExitParams sheet (if exists)
+    var params = {};
+    var paramSheet = ss.getSheetByName('ExitParams');
+    if (paramSheet && paramSheet.getLastRow() > 1) {
+      var paramData = paramSheet.getDataRange().getValues();
+      for (var i = 1; i < paramData.length; i++) {
+        var key = String(paramData[i][0]).trim();
+        var val = paramData[i][1];
+        if (key === 'exitZ') params.exitZ = parseFloat(val);
+        else if (key === 'maxHold') params.maxHold = parseInt(val);
+        else if (key === 'stopLossPct') params.stopLossPct = parseFloat(val);
+      }
+    }
+
+    var signals = checkExitSignals_(params);
+    if (signals.length === 0) return;
+
+    // Write to ExitAlerts sheet (append-only log)
+    var alertSheet = ss.getSheetByName('ExitAlerts');
+    if (!alertSheet) {
+      alertSheet = ss.insertSheet('ExitAlerts');
+      alertSheet.getRange(1, 1, 1, 9).setValues([['Timestamp', 'PairID', 'TickerA', 'TickerB', 'Trigger', 'Severity', 'Message', 'CurrentZ', 'UnrealizedPnL']]);
+      alertSheet.getRange(1, 1, 1, 9).setFontWeight('bold').setBackground('#1a1a2e').setFontColor('#ffffff');
+    }
+
+    var rows = [];
+    for (var i = 0; i < signals.length; i++) {
+      var sig = signals[i];
+      rows.push([sig.timestamp, sig.pairId, sig.tA, sig.tB, sig.trigger, sig.severity, sig.message, sig.currentZ, sig.unrealizedPnl]);
+    }
+    alertSheet.getRange(alertSheet.getLastRow() + 1, 1, rows.length, 9).setValues(rows);
+
+    // Trim to last 500 rows to prevent sheet bloat
+    var totalRows = alertSheet.getLastRow();
+    if (totalRows > 501) {
+      alertSheet.deleteRows(2, totalRows - 501);
+    }
+
+    Logger.log('Exit alert check: ' + signals.length + ' signals logged.');
+  } catch (e) {
+    Logger.log('runExitAlertCheck error: ' + e);
+  }
+}
+
+/**
+ * API endpoint — returns recent exit alerts + live check.
+ * Combines: fresh live signals + last 24h of logged signals.
+ */
+function getExitAlerts_() {
+  try {
+    var ss = SpreadsheetApp.getActive();
+    // Read user thresholds
+    var params = {};
+    var paramSheet = ss.getSheetByName('ExitParams');
+    if (paramSheet && paramSheet.getLastRow() > 1) {
+      var paramData = paramSheet.getDataRange().getValues();
+      for (var i = 1; i < paramData.length; i++) {
+        var key = String(paramData[i][0]).trim();
+        var val = paramData[i][1];
+        if (key === 'exitZ') params.exitZ = parseFloat(val);
+        else if (key === 'maxHold') params.maxHold = parseInt(val);
+        else if (key === 'stopLossPct') params.stopLossPct = parseFloat(val);
+      }
+    }
+
+    // Fresh live check
+    var liveSignals = checkExitSignals_(params);
+
+    // Read recent logged signals (last 24h) from ExitAlerts sheet
+    var recentLog = [];
+    var alertSheet = ss.getSheetByName('ExitAlerts');
+    if (alertSheet && alertSheet.getLastRow() > 1) {
+      var logData = alertSheet.getDataRange().getValues();
+      var cutoff = new Date(new Date().getTime() - 86400000); // 24h ago
+      for (var i = logData.length - 1; i >= 1; i--) {
+        var ts = new Date(logData[i][0]);
+        if (ts < cutoff) break;
+        recentLog.push({
+          timestamp: logData[i][0],
+          pairId: logData[i][1],
+          trigger: logData[i][4],
+          severity: logData[i][5],
+          message: logData[i][6],
+          currentZ: logData[i][7],
+          unrealizedPnl: logData[i][8]
+        });
+      }
+    }
+
+    return {
+      liveSignals: liveSignals,
+      recentLog: recentLog,
+      params: { exitZ: params.exitZ || 0.5, maxHold: params.maxHold || 60, stopLossPct: params.stopLossPct || 0 }
+    };
+  } catch (e) {
+    console.error('getExitAlerts_ error: ' + e);
+    return { liveSignals: [], recentLog: [], params: {} };
+  }
+}
+
+/**
+ * Save exit alert parameters to ExitParams sheet.
+ * Called via ?action=saveExitParams&exitZ=0.5&maxHold=60&stopLossPct=5
+ */
+function saveExitParams_(exitZ, maxHold, stopLossPct) {
+  try {
+    var ss = SpreadsheetApp.getActive();
+    var sheet = ss.getSheetByName('ExitParams');
+    if (!sheet) {
+      sheet = ss.insertSheet('ExitParams');
+      sheet.getRange(1, 1, 1, 2).setValues([['Key', 'Value']]);
+      sheet.getRange(1, 1, 1, 2).setFontWeight('bold');
+    }
+    // Clear and rewrite
+    if (sheet.getLastRow() > 1) sheet.deleteRows(2, sheet.getLastRow() - 1);
+    sheet.getRange(2, 1, 3, 2).setValues([
+      ['exitZ', exitZ],
+      ['maxHold', maxHold],
+      ['stopLossPct', stopLossPct]
+    ]);
+    return true;
+  } catch (e) {
+    console.error('saveExitParams_ error: ' + e);
+    return false;
   }
 }

@@ -280,7 +280,7 @@ function createAutoTrigger() {
     if (fn === 'setupAllBatched' || fn === 'updateLivePrices' ||
         fn === 'snapshotZScores' || fn === 'dailyCreditRefresh' || fn === 'fetchDividendDates' ||
         fn === 'dailyMacroRefresh' || fn === 'computeMacroValuationsBatch' || fn === 'updateBasketAnalytics' ||
-        fn === 'runNightlyScreener') {
+        fn === 'runNightlyScreener' || fn === 'runExitAlertCheck') {
       ScriptApp.deleteTrigger(triggers[i]);
     }
   }
@@ -332,11 +332,18 @@ function createAutoTrigger() {
     .everyDays(1)
     .create();
 
-  Logger.log('All triggers installed:\n• updateLivePrices: every 10 min\n• snapshotZScores: every hour\n• dailyCreditRefresh: daily 5 AM\n• fetchDividendDates: daily 6 AM\n• dailyMacroRefresh: daily 7 AM\n• updateBasketAnalytics: daily 8 AM\n• runNightlyScreener: daily 9 AM');
+  // HOURLY: runExitAlertCheck (proactive exit signals for open trades)
+  ScriptApp.newTrigger('runExitAlertCheck')
+    .timeBased()
+    .everyHours(1)
+    .create();
+
+  Logger.log('All triggers installed:\n• updateLivePrices: every 10 min\n• snapshotZScores: every hour\n• runExitAlertCheck: every hour\n• dailyCreditRefresh: daily 5 AM\n• fetchDividendDates: daily 6 AM\n• dailyMacroRefresh: daily 7 AM\n• updateBasketAnalytics: daily 8 AM\n• runNightlyScreener: daily 9 AM');
   showMsg_(
     'Triggers installed!\n\n' +
     '• updateLivePrices: every 10 min (snapshots prices to WebCache)\n' +
     '• snapshotZScores: every hour (trend tracking)\n' +
+    '• runExitAlertCheck: every hour (proactive exit signals)\n' +
     '• dailyCreditRefresh: daily 5 AM (credit pair regeneration)\n' +
     '• fetchDividendDates: daily 6 AM (Yahoo Finance ex-div dates)\n' +
     '• dailyMacroRefresh: daily 7 AM (macro valuation vs treasuries)\n' +

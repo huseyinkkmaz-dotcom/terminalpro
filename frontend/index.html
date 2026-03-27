@@ -389,6 +389,41 @@ td:last-child{border-radius:0 10px 10px 0;border-right:1px solid var(--border)}
 .cm-mini-z{font-family:'JetBrains Mono',monospace;font-size:16px;font-weight:900;margin-bottom:4px}
 .cm-mini-wr{font-size:11px;font-weight:900;margin-bottom:4px}
 .cm-mini-ep{font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:700}
+/* ── Exit Alert Banners ── */
+.exit-banner{padding:10px 14px;border-radius:8px;margin-bottom:10px;display:flex;align-items:center;gap:10px;font-size:11px;font-weight:700;animation:exitPulse 2s ease-in-out infinite}
+.exit-banner.danger{background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.4);color:var(--high)}
+.exit-banner.warning{background:rgba(245,158,11,.1);border:1px solid rgba(245,158,11,.4);color:var(--yellow)}
+.exit-banner.profit{background:rgba(16,185,129,.1);border:1px solid rgba(16,185,129,.4);color:var(--low)}
+.exit-banner-icon{font-size:16px;flex-shrink:0}
+.exit-banner-body{flex:1}
+.exit-banner-type{font-size:9px;font-weight:900;text-transform:uppercase;letter-spacing:1px;margin-bottom:3px}
+.exit-banner-msg{font-size:11px;font-weight:600}
+.exit-banner-meta{font-size:10px;color:var(--subtext);margin-top:2px}
+.exit-banner-action{background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.15);color:white;padding:6px 14px;border-radius:6px;font-size:10px;font-weight:900;cursor:pointer;text-transform:uppercase;letter-spacing:.5px;white-space:nowrap;transition:background .15s}
+.exit-banner-action:hover{background:rgba(255,255,255,.2)}
+@keyframes exitPulse{0%,100%{opacity:1}50%{opacity:.85}}
+.exit-badge{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:10px;font-size:9px;font-weight:900;text-transform:uppercase;letter-spacing:.5px;vertical-align:middle;margin-left:6px}
+.exit-badge.danger{background:rgba(239,68,68,.15);color:var(--high)}
+.exit-badge.warning{background:rgba(245,158,11,.15);color:var(--yellow)}
+.exit-badge.profit{background:rgba(16,185,129,.15);color:var(--low)}
+/* ── Exit Params Config Modal ── */
+.exit-cfg-btn{background:none;border:1px solid var(--border);color:var(--subtext);padding:4px 8px;border-radius:4px;font-size:10px;cursor:pointer;transition:.15s}
+.exit-cfg-btn:hover{border-color:var(--accent);color:var(--accent)}
+.exit-cfg-panel{display:none;background:var(--card);border:1px solid var(--border);border-radius:10px;padding:16px;margin-top:10px;margin-bottom:10px}
+.exit-cfg-panel.open{display:block}
+.exit-cfg-row{display:flex;gap:16px;align-items:flex-end;flex-wrap:wrap}
+.exit-cfg-row label{font-size:9px;font-weight:900;color:var(--subtext);text-transform:uppercase;display:block;margin-bottom:4px}
+.exit-cfg-row input{background:var(--bg);border:1px solid var(--border);color:var(--text);padding:8px 12px;border-radius:6px;font-family:'JetBrains Mono',monospace;font-size:12px;width:110px}
+/* ── Heatmap Scope Toggle ── */
+.hm-scope-toggle{display:flex;gap:2px;background:var(--card);border:1px solid var(--border);border-radius:6px;padding:2px}
+.hm-scope-btn{padding:5px 10px;border:none;border-radius:4px;font-size:9px;font-weight:900;cursor:pointer;text-transform:uppercase;letter-spacing:.5px;transition:.15s;background:transparent;color:var(--subtext)}
+.hm-scope-btn.active{background:var(--accent);color:#000}
+.hm-pair-search{background:var(--bg);border:1px solid var(--border);color:var(--text);padding:6px 12px;border-radius:6px;font-family:'JetBrains Mono',monospace;font-size:11px;width:200px;display:none}
+.hm-pair-search.visible{display:block}
+.hm-pair-list{position:absolute;background:var(--card);border:1px solid var(--border);border-radius:6px;max-height:200px;overflow-y:auto;z-index:100;width:220px;display:none}
+.hm-pair-list.visible{display:block}
+.hm-pair-item{padding:6px 12px;font-size:11px;color:var(--text);cursor:pointer;font-family:'JetBrains Mono',monospace}
+.hm-pair-item:hover{background:rgba(14,165,233,.15)}
 </style>
 </head>
 <body>
@@ -519,6 +554,22 @@ td:last-child{border-radius:0 10px 10px 0;border-right:1px solid var(--border)}
 </div>
 </div>
 </div>
+<div id="exitCfgWrap" style="margin-bottom:12px">
+<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+<span id="exitBadgeCount" style="display:none" class="exit-badge danger">0 EXIT SIGNALS</span>
+<button class="exit-cfg-btn" onclick="toggleExitCfg()">&#9881; Exit Params</button>
+</div>
+<div class="exit-cfg-panel" id="exitCfgPanel">
+<div class="exit-cfg-row">
+<div><label>Exit Z Threshold</label><input id="exitCfgZ" type="number" value="0.5" step="0.1" min="0" max="2"></div>
+<div><label>Max Hold Days</label><input id="exitCfgHold" type="number" value="60" step="5" min="5" max="365"></div>
+<div><label>Stop Loss %</label><input id="exitCfgStop" type="number" value="0" step="0.5" min="0" max="50" placeholder="0 = auto"></div>
+<button onclick="saveExitCfg()" style="background:var(--accent);color:white;border:none;padding:8px 16px;border-radius:6px;font-size:10px;font-weight:900;cursor:pointer;text-transform:uppercase;letter-spacing:.5px;align-self:flex-end">Save</button>
+</div>
+<div style="font-size:9px;color:var(--subtext);margin-top:8px">Stop Loss 0% = auto (uses P75 MAE from screener, or 2σ fallback)</div>
+</div>
+</div>
+<div id="exitSignalsContainer"></div>
 <div class="portfolio-grid" id="portfolioGrid"></div>
 </div>
 <div id="watchlist" class="tab-content">
@@ -681,7 +732,15 @@ td:last-child{border-radius:0 10px 10px 0;border-right:1px solid var(--border)}
 <div id="hmPanel" style="margin-top:25px">
 <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:15px;flex-wrap:wrap;gap:10px">
 <h3 style="font-size:11px;font-weight:900;color:var(--accent);text-transform:uppercase;margin:0;display:flex;align-items:center;gap:8px"><span style="font-size:14px">&#9632;</span> Parameter Sensitivity Heatmap</h3>
-<div style="display:flex;align-items:center;gap:10px">
+<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+<div class="hm-scope-toggle" id="hmScopeToggle">
+<button class="hm-scope-btn active" onclick="setHmScope('global')">Global Pool</button>
+<button class="hm-scope-btn" onclick="setHmScope('pair')">Specific Pair</button>
+</div>
+<div style="position:relative;display:inline-block">
+<input type="text" class="hm-pair-search" id="hmPairSearch" placeholder="Search pair (e.g. BAC-B)" oninput="hmFilterPairs()" onfocus="hmFilterPairs()" autocomplete="off">
+<div class="hm-pair-list" id="hmPairList"></div>
+</div>
 <div style="display:flex;gap:2px;background:var(--card);border:1px solid var(--border);border-radius:6px;padding:2px" id="hmMetricToggle">
 <button onclick="setHmMetric('winRate')" class="hm-metric-btn hm-metric-active" data-metric="winRate" style="padding:5px 10px;border:none;border-radius:4px;font-size:9px;font-weight:900;cursor:pointer;text-transform:uppercase;letter-spacing:.5px;transition:.15s">Win Rate</button>
 <button onclick="setHmMetric('avgPnl')" class="hm-metric-btn" data-metric="avgPnl" style="padding:5px 10px;border:none;border-radius:4px;font-size:9px;font-weight:900;cursor:pointer;text-transform:uppercase;letter-spacing:.5px;transition:.15s;background:transparent;color:var(--subtext)">Avg PnL</button>
@@ -1024,7 +1083,7 @@ function showDiag(d,ad,data){if(data&&data.status==="initializing"){showInitiali
 function hideLoader(){var o=document.getElementById("loadingOverlay");if(o){o.classList.add("hidden");setTimeout(function(){o.style.display="none";},500);}}
 window.addEventListener("DOMContentLoaded",async()=>{
   console.log("[TerminalPro] Page loaded. GAS_URL=",GAS_URL?GAS_URL.substring(0,50)+"...":"(empty)");
-  sqLoad();sqRender();
+  sqLoad();sqRender();loadExitParams();requestNotificationPermission();
   var safetyTimer=setTimeout(function(){console.error("[TerminalPro] Safety timeout — forcing loader hide after 35s");hideLoader();},35000);
   try{setConnStatus("loading","Connecting...");const data=await apiGet("getData",{mode:currentMode});console.log("[TerminalPro] Data received, ok=",data&&data.ok,"status=",data&&data.status);if(data&&data.ok){updateUI(data);showDiag(data._diag,data.alertData,data);loadWatchlistIds();loadScreenerCache();loadRegimeData();if(data.status==="initializing"){setConnStatus("ok","Initializing");setTimeout(()=>refreshData(),30000);}else{setConnStatus("ok","Connected");}}else{var errMsg=data&&data.message?data.message:"Unknown error";console.error("[TerminalPro] API returned ok:false",data);setConnStatus("err","Error: "+errMsg);showApiError(errMsg);}}catch(e){console.error("[TerminalPro] FETCH ERROR:",e.message||e);setConnStatus("err",e.message);showApiError(e.message);}finally{clearTimeout(safetyTimer);hideLoader();}
 });
@@ -1133,6 +1192,7 @@ var sandboxAddBtn='<button class="'+sqCls+'" id="sqbtn-'+sqBtnId+'" data-pair-id
 h+='<tr class="alert-row" data-s="'+r.id.toLowerCase()+' '+(r.sec||'').toLowerCase()+' '+act.l.toLowerCase()+'" data-sec="'+(r.sec||'')+'" data-tickers="'+r.tA.toUpperCase()+' '+r.tB.toUpperCase()+'" data-z="'+r.z+'" data-age="'+ag+'" data-liq="'+al+'" data-profit="'+ep+'" data-score="'+sc+'">'+scoreTd+'<td><div style="display:flex;align-items:center;gap:4px">'+analyzeBtn+sizerBtn+sandboxAddBtn+'<button class="'+starCls+'" id="star-'+si.replace(/[^a-zA-Z0-9]/g,'')+'" onclick="addToWatchlist(\''+si+'\',this)" title="Add to Watchlist">'+starIcon+'</button><button class="plus-btn" onclick="openModal(\''+si+'\',\''+sa+'\',\''+sb+'\')">+</button><div><a href="'+url+'" target="_blank" class="'+lk+'">'+r.id+'</a>'+screenBadge+'<div class="range-tag">'+r.rng+'</div><div style="font-size:10px;color:var(--subtext);font-weight:900;text-transform:uppercase;margin-top:2px">'+r.sec+'</div></div></div></td>'+'<td><div class="mono-data">$'+r.spr+'</div></td>'+divTd+'<td><div class="mono-data" style="color:var(--low)">$'+ep+'</div></td>'+'<td><div style="color:var(--accent)" class="mono-data">'+z.toFixed(2)+'σ</div></td>'+'<td><div class="mono-data">'+r.yA+'% / '+r.yB+'%</div></td>'+'<td><div style="display:flex;flex-direction:column;gap:2px"><div style="display:flex;align-items:center"><span class="dot '+lc+'"></span>'+lt+'</div>'+sp+'</div></td>'+'<td><div>'+at+'</div></td>'+'<td><div class="trend-tape">'+tr+'</div></td>'+'<td><div class="action-tag" style="color:'+act.c+';border-color:'+act.c+'">'+act.l+'</div></td></tr>';rowIdx++;});
 document.getElementById('alertBody').innerHTML=h;applyFilters();if(activeScoreFilter>0)filterByScore(activeScoreFilter);}
 function updateUI(data){if(!data)return;renderAlerts(data.alertData);renderMacro(data.macroData);
+window._lastPortfolioData=data.portfolioData||[];
 var lng=0,sht=0;if(data.portfolioData)data.portfolioData.forEach(function(p){var pA=parseFloat(p.pA)||0,pB=parseFloat(p.pB)||0,sA=parseFloat(p.sA)||0,sB=parseFloat(p.sB)||0;if(sA>0)lng+=pA*sA;else sht+=Math.abs(pA*sA);if(sB>0)lng+=pB*sB;else sht+=Math.abs(pB*sB);});
 document.getElementById('valLong').innerText='$'+lng.toFixed(0);document.getElementById('valShort').innerText='$'+sht.toFixed(0);
 var ph='';if(data.portfolioData&&data.portfolioData.length>0){data.portfolioData.forEach(function(p,i){var prog=Math.min(100,Math.max(0,(1-(Math.abs(p.centRem)/(Math.abs(p.centGoal)||1)))*100));var c=p.isWinning?'var(--low)':'var(--high)';var tA=p.tA||"LEG A",tB=p.tB||"LEG B";var ez=parseFloat(p.entryZ)||0;var mv=parseFloat(p.target)||0;var tm=mv>=0?'<div class="target-val accent">'+tA+' SHOULD BE $'+mv.toFixed(2)+' HIGHER THAN '+tB+'</div>':'<div class="target-val accent">'+tA+' SHOULD BE $'+Math.abs(mv).toFixed(2)+' LOWER THAN '+tB+'</div>';var sa=String(tA).replace(/'/g,"\\'"),sb=String(tB).replace(/'/g,"\\'"),si=String(p.id).replace(/'/g,"\\'");
@@ -1140,6 +1200,7 @@ var pd=parseFloat(p.paidDiv)||0,rd=parseFloat(p.rcvdDiv)||0,nd=rd-pd,cg=parseFlo
 ph+='<div class="trade-card" id="card-'+i+'">'+'<div style="display:flex;justify-content:space-between;align-items:flex-start"><div><div style="font-weight:900;font-size:22px;color:var(--accent)">'+p.id+'</div><div style="display:flex;gap:6px;align-items:center;margin-top:4px"><div style="font-size:12px;color:var(--subtext);font-weight:700">Spread: $'+p.spr+'</div><div class="entry-indicator">ENTRY: '+ez.toFixed(2)+'σ</div></div></div><div style="font-family:\'JetBrains Mono\';font-weight:900;font-size:22px;color:'+c+'">'+(p.dollarPnL>=0?'+':'')+p.dollarPnL+'$</div></div>'+'<div class="target-ribbon"><div class="target-row"><div class="target-desc">CURRENT SPREAD</div><div class="target-val">$'+p.spr+' (Diff)</div></div><div class="target-row"><div class="target-desc">TARGET MEAN</div>'+tm+'</div></div>'+'<div style="display:flex;gap:12px;margin-top:20px;margin-bottom:20px"><div style="flex:1;padding:12px;background:rgba(255,255,255,.03);border-radius:10px;border:1px solid var(--border)"><div style="font-size:10px;color:var(--accent);font-weight:900;text-transform:uppercase;margin-bottom:6px">'+tA+'</div><div style="font-family:\'JetBrains Mono\';font-size:15px;font-weight:900;color:white">$'+p.pA+'</div><div style="font-size:10px;color:var(--subtext);margin-top:4px">Qty: '+p.sA+'</div></div><div style="flex:1;padding:12px;background:rgba(255,255,255,.03);border-radius:10px;border:1px solid var(--border)"><div style="font-size:10px;color:var(--accent);font-weight:900;text-transform:uppercase;margin-bottom:6px">'+tB+'</div><div style="font-family:\'JetBrains Mono\';font-size:15px;font-weight:900;color:white">$'+p.pB+'</div><div style="font-size:10px;color:var(--subtext);margin-top:4px">Qty: '+p.sB+'</div></div></div>'+'<div class="div-flow-row"><div class="div-flow-item"><div class="div-flow-label" style="color:var(--subtext)">Cap Gains</div><div class="div-flow-val" style="color:'+cgClr+'">'+(cg>=0?'+':'')+cg.toFixed(2)+'$</div></div><div class="div-flow-item"><div class="div-flow-label" style="color:var(--high)">Paid Div</div><div class="div-flow-val" style="color:var(--high)">-'+pd.toFixed(2)+'$</div><button class="div-btn paid" onclick="openDivModal(\''+si+'\',\'paid\')" style="margin-top:4px">+ Add</button></div><div class="div-flow-item"><div class="div-flow-label" style="color:var(--low)">Rcvd Div</div><div class="div-flow-val" style="color:var(--low)">+'+rd.toFixed(2)+'$</div><button class="div-btn rcvd" onclick="openDivModal(\''+si+'\',\'received\')" style="margin-top:4px">+ Add</button></div><div class="div-flow-item"><div class="div-flow-label" style="color:var(--subtext)">Net Div</div><div class="div-flow-val" style="color:'+ndClr+'">'+(nd>=0?'+':'')+nd.toFixed(2)+'$</div></div></div>'+'<div class="progress-container"><div class="progress-bar" style="width:'+prog+'%;background:'+c+'"></div></div>'+'<div style="display:flex;justify-content:space-between;font-size:11px;font-weight:900;text-transform:uppercase"><span>Dist: '+p.centGoal+'¢</span><span style="color:'+c+'">Rem: '+p.centRem+'¢</span></div>'+'<div style="display:flex;justify-content:space-between;margin-top:20px"><button class="scale-btn" onclick="openModal(\''+si+'\',\''+sa+'\',\''+sb+'\')">Scale</button><button class="close-trade-btn" onclick="openCloseModal(\''+si+'\',\'card-'+i+'\')">Close</button></div></div>';});}
 document.getElementById('portfolioGrid').innerHTML=ph;
 renderHealthBar(data.portfolioData);
+checkExitSignalsClient();
 var hd=data.historyData||[];
 var totalPnl=0,wins=0,losses=0;hd.forEach(function(h){var p=parseFloat(h.pnl)||0;totalPnl+=p;if(p>0)wins++;else if(p<0)losses++;});
 var wr=hd.length>0?((wins/hd.length)*100).toFixed(0):'0';
@@ -2514,10 +2575,17 @@ btn.disabled=true;btn.innerText='RUNNING...';
 document.getElementById('hmLoading').style.display='block';
 document.getElementById('hmResult').style.display='none';
 try{
-var data=await apiGet('getSensitivityHeatmap',{
+var hmParams={
 maxHold:document.getElementById('btMaxHold').value,
 mode:document.getElementById('btMode').value
-},300000);
+};
+if(_hmScope==='pair'&&_hmSelectedPair){
+hmParams.pairId=_hmSelectedPair.id;
+document.getElementById('hmLoading').innerHTML='Analyzing <b>'+_hmSelectedPair.id+'</b>... this should be fast.';
+}else{
+document.getElementById('hmLoading').innerHTML='Sweeping 49 parameter combos... this may take a minute.';
+}
+var data=await apiGet('getSensitivityHeatmap',hmParams,300000);
 if(data&&data.ok&&data.heatmapData&&!data.heatmapData.error){
 _hmData=data.heatmapData;
 renderHeatmap();
@@ -2600,11 +2668,315 @@ h+='</tr>';
 h+='</tbody></table>';
 document.getElementById('hmGrid').innerHTML=h;
 // Footer meta
-var meta=d.pairsUsed+' pairs analyzed · Max hold: '+d.maxHold+'d · '+(d.elapsedMs/1000).toFixed(1)+'s';
+var meta='';
+if(d.pairId){
+meta='<span style="color:var(--accent);font-weight:900">'+d.pairId+'</span> · ';
+}
+meta+=d.pairsUsed+' pair'+(d.pairsUsed!==1?'s':'')+' analyzed · Max hold: '+d.maxHold+'d · '+(d.elapsedMs/1000).toFixed(1)+'s';
 if(d.pairsSkipped>0)meta+=' · <span style="color:var(--yellow)">'+d.pairsSkipped+' skipped (timeout)</span>';
 document.getElementById('hmMeta').innerHTML=meta;
 }
-// ── PORTFOLIO EXIT TRACKING ──
+// ── HEATMAP SCOPE TOGGLE (Global Pool vs Specific Pair) ──
+var _hmScope = 'global';
+var _hmSelectedPair = null; // {id, tA, tB}
+
+function setHmScope(scope) {
+  _hmScope = scope;
+  document.querySelectorAll('#hmScopeToggle .hm-scope-btn').forEach(function(b) {
+    b.classList.toggle('active', b.textContent.toLowerCase().indexOf(scope === 'global' ? 'global' : 'specific') !== -1);
+  });
+  var search = document.getElementById('hmPairSearch');
+  if (scope === 'pair') {
+    search.classList.add('visible');
+    search.focus();
+  } else {
+    search.classList.remove('visible');
+    document.getElementById('hmPairList').classList.remove('visible');
+    _hmSelectedPair = null;
+    search.value = '';
+  }
+}
+
+function hmFilterPairs() {
+  var q = document.getElementById('hmPairSearch').value.toUpperCase().trim();
+  var list = document.getElementById('hmPairList');
+  // Gather pairs from _alertDataMap + portfolio data
+  var seen = {};
+  var pairs = [];
+  Object.keys(window._alertDataMap).forEach(function(key) {
+    var r = window._alertDataMap[key];
+    var pid = r.id || (r.tA + '|' + r.tB);
+    var cid = pid.toUpperCase().replace(/[^A-Z0-9|]/g, '');
+    if (!seen[cid]) {
+      seen[cid] = true;
+      pairs.push({ id: pid, tA: r.tA, tB: r.tB });
+    }
+  });
+  // Also include portfolio pairs
+  if (window._lastPortfolioData) {
+    window._lastPortfolioData.forEach(function(p) {
+      var cid = (p.tA + '|' + p.tB).toUpperCase().replace(/[^A-Z0-9|]/g, '');
+      if (!seen[cid]) {
+        seen[cid] = true;
+        pairs.push({ id: p.id, tA: p.tA, tB: p.tB });
+      }
+    });
+  }
+  // Filter
+  var filtered = q.length > 0 ? pairs.filter(function(p) {
+    return p.id.toUpperCase().indexOf(q) !== -1 || p.tA.toUpperCase().indexOf(q) !== -1 || p.tB.toUpperCase().indexOf(q) !== -1;
+  }) : pairs;
+  filtered = filtered.slice(0, 20);
+  var h = '';
+  filtered.forEach(function(p) {
+    h += '<div class="hm-pair-item" onclick="hmSelectPair(\'' + p.id.replace(/'/g, "\\'") + '\',\'' + p.tA.replace(/'/g, "\\'") + '\',\'' + p.tB.replace(/'/g, "\\'") + '\')">' + p.id + '</div>';
+  });
+  list.innerHTML = h;
+  list.classList.toggle('visible', filtered.length > 0);
+}
+
+function hmSelectPair(id, tA, tB) {
+  _hmSelectedPair = { id: id, tA: tA, tB: tB };
+  document.getElementById('hmPairSearch').value = id;
+  document.getElementById('hmPairList').classList.remove('visible');
+}
+
+// Close pair list on outside click
+document.addEventListener('click', function(e) {
+  if (!e.target.closest('#hmPairSearch') && !e.target.closest('#hmPairList')) {
+    document.getElementById('hmPairList').classList.remove('visible');
+  }
+});
+
+// Override runSensitivity to pass pairId when in specific pair mode
+var _origRunSensitivity = null;
+
+// ── EXIT ALERTS SYSTEM ──
+var _exitSignals = []; // current live exit signals
+var _exitParams = { exitZ: 0.5, maxHold: 60, stopLossPct: 0 };
+var _prevExitSignalIds = new Set(); // for browser notification deduplication
+window._lastPortfolioData = null;
+
+function loadExitParams() {
+  try {
+    var saved = localStorage.getItem('tpExitParams');
+    if (saved) {
+      var p = JSON.parse(saved);
+      _exitParams = { exitZ: p.exitZ || 0.5, maxHold: p.maxHold || 60, stopLossPct: p.stopLossPct || 0 };
+      document.getElementById('exitCfgZ').value = _exitParams.exitZ;
+      document.getElementById('exitCfgHold').value = _exitParams.maxHold;
+      document.getElementById('exitCfgStop').value = _exitParams.stopLossPct;
+    }
+  } catch (e) {}
+}
+
+function toggleExitCfg() {
+  document.getElementById('exitCfgPanel').classList.toggle('open');
+}
+
+async function saveExitCfg() {
+  _exitParams.exitZ = parseFloat(document.getElementById('exitCfgZ').value) || 0.5;
+  _exitParams.maxHold = parseInt(document.getElementById('exitCfgHold').value) || 60;
+  _exitParams.stopLossPct = parseFloat(document.getElementById('exitCfgStop').value) || 0;
+  localStorage.setItem('tpExitParams', JSON.stringify(_exitParams));
+  // Save to backend for hourly trigger
+  try {
+    await apiGet('saveExitParams', {
+      exitZ: _exitParams.exitZ,
+      maxHold: _exitParams.maxHold,
+      stopLossPct: _exitParams.stopLossPct
+    });
+  } catch (e) { console.warn('Failed to save exit params to backend:', e); }
+  // Re-run client-side checks
+  checkExitSignalsClient();
+  document.getElementById('exitCfgPanel').classList.remove('open');
+}
+
+/**
+ * Client-side exit signal detection — runs on every data refresh.
+ * Uses portfolio data already loaded (no extra API call).
+ */
+function checkExitSignalsClient() {
+  var portfolio = window._lastPortfolioData;
+  if (!portfolio || portfolio.length === 0) {
+    _exitSignals = [];
+    renderExitSignals();
+    return;
+  }
+  var signals = [];
+  var now = new Date();
+
+  portfolio.forEach(function(p) {
+    var currentZ = parseFloat(p.currentZ) || 0;
+    var daysHeld = 0;
+    if (p.openDate) {
+      var od = new Date(p.openDate + 'T00:00:00');
+      daysHeld = Math.floor((now - od) / 86400000);
+    }
+    var costA = parseFloat(p.pA) || 0;
+    var costB = parseFloat(p.pB) || 0;
+    var sA = parseFloat(p.sA) || 0;
+    var sB = parseFloat(p.sB) || 0;
+    var netPnl = parseFloat(p.dollarPnL) || 0;
+    var entryNotional = Math.abs(costA * sA) + Math.abs(costB * sB);
+    var stdev = parseFloat(p.stdev) || 0;
+
+    // Trigger 1: Statistical Target
+    if (Math.abs(currentZ) <= _exitParams.exitZ) {
+      signals.push({
+        pairId: p.id, tA: p.tA, tB: p.tB,
+        trigger: 'STATISTICAL_TARGET', severity: 'profit',
+        message: 'Z-score reverted to ' + currentZ.toFixed(2) + '\u03C3 (target: \u2264' + _exitParams.exitZ.toFixed(1) + '\u03C3) \u2014 take profit',
+        currentZ: currentZ, daysHeld: daysHeld, unrealizedPnl: netPnl, cardIdx: null
+      });
+    }
+
+    // Trigger 2: Time Stop
+    if (daysHeld >= _exitParams.maxHold) {
+      signals.push({
+        pairId: p.id, tA: p.tA, tB: p.tB,
+        trigger: 'TIME_STOP', severity: 'warning',
+        message: 'Day ' + daysHeld + ' of ' + _exitParams.maxHold + '-day max hold \u2014 consider closing',
+        currentZ: currentZ, daysHeld: daysHeld, unrealizedPnl: netPnl, cardIdx: null
+      });
+    }
+
+    // Trigger 3: Stop Loss
+    var lossThreshold = 0;
+    var cid = (p.tA + '|' + p.tB).toUpperCase().replace(/[^A-Z0-9|]/g, '');
+    var scrInfo = screenerCache[cid];
+    if (_exitParams.stopLossPct > 0 && entryNotional > 0) {
+      lossThreshold = entryNotional * (_exitParams.stopLossPct / 100);
+    } else if (scrInfo && scrInfo.p75Mae > 0) {
+      lossThreshold = parseFloat(scrInfo.p75Mae);
+    } else if (stdev > 0) {
+      var avgShares = (Math.abs(sA) + Math.abs(sB)) / 2;
+      lossThreshold = 2 * stdev * avgShares;
+    }
+
+    if (lossThreshold > 0 && netPnl < 0 && Math.abs(netPnl) >= lossThreshold) {
+      var lossSource = (_exitParams.stopLossPct > 0) ? (_exitParams.stopLossPct + '% of notional') : (scrInfo && scrInfo.p75Mae > 0 ? 'P75 MAE' : '2\u03C3 spread risk');
+      signals.push({
+        pairId: p.id, tA: p.tA, tB: p.tB,
+        trigger: 'STOP_LOSS', severity: 'danger',
+        message: 'Loss $' + Math.abs(netPnl).toFixed(2) + ' exceeds ' + lossSource + ' threshold ($' + lossThreshold.toFixed(2) + ')',
+        currentZ: currentZ, daysHeld: daysHeld, unrealizedPnl: netPnl, cardIdx: null
+      });
+    }
+  });
+
+  // Check for new signals and fire browser notifications
+  var currentIds = new Set(signals.map(function(s) { return s.pairId + ':' + s.trigger; }));
+  signals.forEach(function(s) {
+    var key = s.pairId + ':' + s.trigger;
+    if (!_prevExitSignalIds.has(key)) {
+      fireExitNotification(s);
+    }
+  });
+  _prevExitSignalIds = currentIds;
+
+  _exitSignals = signals;
+  renderExitSignals();
+}
+
+function renderExitSignals() {
+  // Update badge count
+  var badge = document.getElementById('exitBadgeCount');
+  if (_exitSignals.length > 0) {
+    badge.style.display = 'inline-flex';
+    badge.textContent = _exitSignals.length + ' EXIT SIGNAL' + (_exitSignals.length > 1 ? 'S' : '');
+    badge.className = 'exit-badge ' + (_exitSignals.some(function(s) { return s.severity === 'danger'; }) ? 'danger' : _exitSignals.some(function(s) { return s.severity === 'warning'; }) ? 'warning' : 'profit');
+  } else {
+    badge.style.display = 'none';
+  }
+
+  // Update nav tab badge
+  var navItems = document.querySelectorAll('.nav-item');
+  navItems.forEach(function(n) {
+    if (n.textContent.indexOf('Active Portfolio') !== -1 || n.textContent.indexOf('Portfolio') !== -1) {
+      var existBadge = n.querySelector('.exit-nav-badge');
+      if (_exitSignals.length > 0) {
+        if (!existBadge) {
+          existBadge = document.createElement('span');
+          existBadge.className = 'exit-nav-badge';
+          existBadge.style.cssText = 'display:inline-block;background:var(--high);color:white;font-size:9px;font-weight:900;padding:1px 6px;border-radius:8px;margin-left:4px';
+          n.appendChild(existBadge);
+        }
+        existBadge.textContent = _exitSignals.length;
+      } else if (existBadge) {
+        existBadge.remove();
+      }
+    }
+  });
+
+  // Render banners above portfolio grid (grouped by pair)
+  var container = document.getElementById('exitSignalsContainer');
+  if (!container) return;
+  if (_exitSignals.length === 0) { container.innerHTML = ''; return; }
+
+  var h = '';
+  _exitSignals.forEach(function(s) {
+    var icon = s.severity === 'danger' ? '&#9888;' : (s.severity === 'warning' ? '&#9200;' : '&#9989;');
+    var typeLabel = s.trigger === 'STATISTICAL_TARGET' ? 'TARGET REACHED' : (s.trigger === 'TIME_STOP' ? 'TIME STOP' : 'STOP LOSS');
+    var si = String(s.pairId).replace(/'/g, "\\'");
+    var sa = String(s.tA).replace(/'/g, "\\'");
+    var sb = String(s.tB).replace(/'/g, "\\'");
+    h += '<div class="exit-banner ' + s.severity + '">';
+    h += '<div class="exit-banner-icon">' + icon + '</div>';
+    h += '<div class="exit-banner-body">';
+    h += '<div class="exit-banner-type">' + typeLabel + ' \u2014 ' + s.pairId + '</div>';
+    h += '<div class="exit-banner-msg">' + s.message + '</div>';
+    h += '<div class="exit-banner-meta">Z: ' + s.currentZ.toFixed(2) + '\u03C3 \u00B7 Day ' + s.daysHeld + ' \u00B7 PnL: ' + (s.unrealizedPnl >= 0 ? '+' : '') + parseFloat(s.unrealizedPnl).toFixed(2) + '$</div>';
+    h += '</div>';
+    h += '<button class="exit-banner-action" onclick="openCloseModal(\'' + si + '\')">Close Trade</button>';
+    h += '</div>';
+  });
+  container.innerHTML = h;
+
+  // Also inject banners into individual trade cards
+  _exitSignals.forEach(function(s) {
+    var cleanPid = s.pairId.toUpperCase().replace(/[^A-Z0-9|]/g, '');
+    document.querySelectorAll('#portfolioGrid .trade-card').forEach(function(card) {
+      var idEl = card.querySelector('div[style*="font-size:22px"]');
+      if (!idEl) return;
+      var cardPid = idEl.innerText.trim().toUpperCase().replace(/[^A-Z0-9|]/g, '');
+      if (cardPid !== cleanPid) return;
+      if (card.querySelector('.exit-banner[data-trigger="' + s.trigger + '"]')) return;
+      var banner = document.createElement('div');
+      banner.className = 'exit-banner ' + s.severity;
+      banner.setAttribute('data-trigger', s.trigger);
+      banner.style.marginTop = '10px';
+      var icon = s.severity === 'danger' ? '&#9888;' : (s.severity === 'warning' ? '&#9200;' : '&#9989;');
+      var typeLabel = s.trigger === 'STATISTICAL_TARGET' ? 'TARGET REACHED' : (s.trigger === 'TIME_STOP' ? 'TIME STOP' : 'STOP LOSS');
+      banner.innerHTML = '<div class="exit-banner-icon">' + icon + '</div><div class="exit-banner-body"><div class="exit-banner-type">' + typeLabel + '</div><div class="exit-banner-msg">' + s.message + '</div></div>';
+      var progBar = card.querySelector('.progress-container');
+      if (progBar) card.insertBefore(banner, progBar);
+      else card.appendChild(banner);
+    });
+  });
+}
+
+// Browser Notification API
+function requestNotificationPermission() {
+  if ('Notification' in window && Notification.permission === 'default') {
+    Notification.requestPermission();
+  }
+}
+
+function fireExitNotification(signal) {
+  if (!('Notification' in window) || Notification.permission !== 'granted') return;
+  var typeLabel = signal.trigger === 'STATISTICAL_TARGET' ? 'Target Reached' : (signal.trigger === 'TIME_STOP' ? 'Time Stop' : 'Stop Loss');
+  try {
+    new Notification('Exit Signal: ' + signal.pairId, {
+      body: typeLabel + ' \u2014 ' + signal.message,
+      icon: 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">' + (signal.severity === 'danger' ? '\u26A0' : signal.severity === 'warning' ? '\u23F0' : '\u2705') + '</text></svg>',
+      tag: signal.pairId + ':' + signal.trigger,
+      requireInteraction: signal.severity === 'danger'
+    });
+  } catch (e) {}
+}
+
+// ── PORTFOLIO EXIT TRACKING (legacy backtest-based) ──
 // Inject exit recommendations into portfolio trade cards when backtest data is available
 function injectExitSignals(){
 var bt=window._lastBacktest;
