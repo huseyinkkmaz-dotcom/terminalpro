@@ -20,7 +20,7 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);paddi
 .switch-input:checked+.switch-slider::before{transform:translateX(16px);background:white}
 .container{max-width:1550px;margin:30px auto;padding:0 30px}
 .tab-content{display:none}.tab-content.active{display:block}
-.top-spread-compact{font-size:11px;font-weight:900;color:var(--subtext);margin-bottom:12px;display:flex;align-items:center;white-space:nowrap;overflow-x:auto}
+.top-spread-compact{font-size:11px;font-weight:900;color:var(--subtext);margin-bottom:16px;display:flex;align-items:center;gap:8px;white-space:nowrap;overflow-x:auto}
 .spread-val-compact{font-family:'JetBrains Mono',monospace;color:var(--low);margin:0 8px;font-size:12px}
 .spread-link-compact{color:var(--text);text-decoration:none;border-bottom:1px dotted var(--subtext);transition:.2s}
 .spread-link-compact:hover{color:var(--accent);border-bottom-color:var(--accent)}
@@ -35,7 +35,7 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);paddi
 .exp-val-long{font-family:'JetBrains Mono';font-weight:900;color:var(--low);font-size:13px}
 .exp-val-short{font-family:'JetBrains Mono';font-weight:900;color:var(--high);font-size:13px}
 table{width:100%;border-collapse:separate;border-spacing:0 6px}
-th{text-align:left;padding:15px;color:var(--subtext);font-size:9px;text-transform:uppercase;font-weight:900;user-select:none}
+th{text-align:left;padding:12px 16px;color:var(--subtext);font-size:9px;text-transform:uppercase;font-weight:900;user-select:none;letter-spacing:1px;white-space:nowrap}
 .sortable{cursor:pointer;transition:.2s}.sortable:hover{color:var(--accent)}
 td{background:var(--card);padding:16px 20px;border-top:1px solid var(--border);border-bottom:1px solid var(--border);vertical-align:middle}
 td:first-child{border-radius:10px 0 0 10px;border-left:1px solid var(--border)}
@@ -47,7 +47,7 @@ td:last-child{border-radius:0 10px 10px 0;border-right:1px solid var(--border)}
 .dot-green{background:var(--low);box-shadow:0 0 8px var(--low)}
 .dot-yellow{background:var(--yellow);box-shadow:0 0 8px var(--yellow)}
 .dot-red{background:var(--high);box-shadow:0 0 8px var(--high)}
-.action-tag{font-size:9px;font-weight:900;padding:6px 14px;border-radius:4px;border:1.5px solid;text-align:center;display:inline-block}
+.action-tag{font-size:9px;font-weight:900;padding:5px 12px;border-radius:6px;border:1px solid;text-align:center;display:inline-block;letter-spacing:.5px}
 .mono-data{font-family:'JetBrains Mono',monospace;font-weight:900}
 .range-tag{font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--subtext);margin-top:4px;font-weight:700;opacity:.8}
 .trend-tape{display:flex;gap:3px;overflow-x:auto;max-width:180px;scrollbar-width:none;margin-top:6px;align-items:center}
@@ -269,8 +269,6 @@ td:last-child{border-radius:0 10px 10px 0;border-right:1px solid var(--border)}
 .pa-empty-icon{font-size:40px;margin-bottom:16px}
 .pa-empty-title{font-weight:900;font-size:16px;margin-bottom:8px;color:var(--text)}
 /* ── Screener: Score Column + Filter Pills + Inline Analyze ── */
-.score-cell{display:flex;align-items:center;gap:6px}
-.score-badge{font-family:'JetBrains Mono';font-weight:900;font-size:13px;padding:3px 8px;border-radius:6px;min-width:32px;text-align:center}
 .score-bar{width:40px;height:5px;border-radius:3px;background:rgba(255,255,255,.06);overflow:hidden}
 .score-bar-fill{height:100%;border-radius:3px;transition:width .3s}
 .filter-pills{display:flex;gap:8px;align-items:center}
@@ -424,6 +422,43 @@ td:last-child{border-radius:0 10px 10px 0;border-right:1px solid var(--border)}
 .hm-pair-list.visible{display:block}
 .hm-pair-item{padding:6px 12px;font-size:11px;color:var(--text);cursor:pointer;font-family:'JetBrains Mono',monospace}
 .hm-pair-item:hover{background:rgba(14,165,233,.15)}
+/* ── UI CLARITY IMPROVEMENTS ── */
+/* Instrument cell: separate pair info from tool buttons */
+.instr-main{display:flex;flex-direction:column;gap:2px;min-width:0}
+.instr-tools{display:flex;gap:3px;align-items:center;flex-shrink:0;opacity:.6;transition:opacity .2s}
+.alert-row:hover .instr-tools{opacity:1}
+.instr-cell{display:flex;align-items:center;gap:10px}
+.instr-meta{display:flex;gap:6px;align-items:center;margin-top:3px;flex-wrap:wrap}
+/* Improved score badge */
+.score-cell{display:flex;align-items:center;gap:8px}
+.score-badge{font-family:'JetBrains Mono';font-weight:900;font-size:14px;padding:4px 10px;border-radius:6px;min-width:34px;text-align:center;line-height:1}
+.score-ring{width:28px;height:28px;border-radius:50%;position:relative;display:flex;align-items:center;justify-content:center}
+.score-ring svg{width:28px;height:28px;transform:rotate(-90deg)}
+.score-ring circle{fill:none;stroke-width:3}
+/* Improved macro bar with visual groups */
+.macro-bar-group{display:flex;align-items:center;gap:8px;padding:4px 12px;background:rgba(255,255,255,.02);border-radius:6px;border:1px solid rgba(255,255,255,.04)}
+/* Cleaner table headers */
+th .th-hint{font-weight:400;font-size:8px;letter-spacing:0;text-transform:none;color:rgba(156,163,175,.6);display:block;margin-top:2px}
+/* Improved filter bar */
+.filter-bar{display:flex;gap:12px;margin-bottom:20px;align-items:center;flex-wrap:wrap;padding:12px 16px;background:rgba(255,255,255,.015);border:1px solid rgba(255,255,255,.04);border-radius:10px}
+.filter-bar .search-wrap{flex:1;min-width:200px;position:relative}
+.filter-bar .search-wrap input{width:100%;padding:10px 16px 10px 36px;background:var(--bg);border:1px solid var(--border);color:white;border-radius:8px;outline:none;box-sizing:border-box;font-size:12px}
+.filter-bar .search-icon{position:absolute;left:12px;top:50%;transform:translateY(-50%);color:var(--subtext);font-size:13px;pointer-events:none}
+.filter-divider{width:1px;height:24px;background:var(--border);flex-shrink:0}
+/* Trade card clarity */
+.tc-label{font-size:9px;font-weight:900;color:var(--subtext);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px}
+.tc-row{display:flex;justify-content:space-between;align-items:center;padding:4px 0}
+.tc-progress-label{display:flex;justify-content:space-between;font-size:10px;font-weight:700;color:var(--subtext);margin-top:6px}
+.tc-progress-label .tc-val{font-family:'JetBrains Mono';font-weight:900}
+/* Health bar always-visible summary */
+.health-summary{display:flex;gap:10px;align-items:center}
+.health-summary-stat{font-family:'JetBrains Mono';font-size:10px;font-weight:700;color:var(--subtext);padding:2px 8px;background:rgba(255,255,255,.03);border-radius:4px}
+/* Cleaner action tags */
+.action-tag.extreme{background:rgba(14,165,233,.08)}
+.action-tag.strong{background:rgba(255,255,255,.04)}
+/* Column tooltips for abbreviations */
+.col-tooltip{position:relative;cursor:help;border-bottom:1px dotted var(--subtext)}
+.col-tooltip:hover::after{content:attr(data-tip);position:absolute;bottom:100%;left:50%;transform:translateX(-50%);background:var(--card);border:1px solid var(--border);padding:4px 8px;border-radius:4px;font-size:9px;white-space:nowrap;z-index:10;color:var(--text);font-weight:400;text-transform:none;letter-spacing:0}
 </style>
 </head>
 <body>
@@ -492,7 +527,7 @@ td:last-child{border-radius:0 10px 10px 0;border-right:1px solid var(--border)}
 <div class="nav-item" onclick="tabMacro(this)">Macro Value</div>
 <div class="nav-item" onclick="tabAnalytics(this)">Analytics</div>
 <div class="nav-item" onclick="tabHistory(this)">History</div>
-<div class="nav-item" onclick="tabDivCapture(this)">Div Capture</div>
+<div class="nav-item" onclick="tabDivCapture(this)">Dividends</div>
 <div class="nav-item" onclick="tabBacktest(this)">Backtest</div>
 <div class="live-switch"><span class="switch-label">Live (5m)</span><label><input type="checkbox" class="switch-input" id="autoRefresh" onchange="toggleLive()"><div class="switch-slider"></div></label></div>
 <div class="conn-dot loading" id="connDot" title="API Status"></div>
@@ -501,18 +536,18 @@ td:last-child{border-radius:0 10px 10px 0;border-right:1px solid var(--border)}
 <div id="alerts" class="tab-content active" data-mode="intra">
 <div class="strategy-switch"><div class="strat-pill intra active" onclick="switchMode('intra',this)">Intra-Company</div><div class="strat-pill credit" onclick="switchMode('credit',this)">Credit Arb</div></div>
 <div class="top-spread-compact">
-<span>TOP EXP. PROFIT:</span><span id="topSpreadVal" class="spread-val-compact">...</span><a id="topSpreadLink" href="#" target="_blank" class="spread-link-compact">---</a>
-<span class="macro-divider">|</span><div class="macro-stat"><span class="macro-label">US10Y:</span><span class="macro-val" id="m_us10y">---</span><span class="macro-chg" id="c_us10y"></span></div>
-<span class="macro-divider">|</span><div class="macro-stat"><span class="macro-label">TLT:</span><span class="macro-val" id="m_tlt">---</span><span class="macro-chg" id="c_tlt"></span></div>
-<span class="macro-divider">|</span><div class="macro-stat"><span class="macro-label">PFF:</span><span class="macro-val" id="m_pff">---</span><span class="macro-chg" id="c_pff"></span></div>
-<span class="macro-divider">|</span><span class="pair-count" id="pairCount">0 signals</span>
+<div class="macro-bar-group"><span style="color:var(--subtext)">Best Setup:</span><span id="topSpreadVal" class="spread-val-compact">...</span><a id="topSpreadLink" href="#" target="_blank" class="spread-link-compact">---</a></div>
+<div class="macro-bar-group"><span class="macro-label" title="10-Year US Treasury Yield">US10Y</span><span class="macro-val" id="m_us10y">---</span><span class="macro-chg" id="c_us10y"></span></div>
+<div class="macro-bar-group"><span class="macro-label" title="iShares 20+ Year Treasury Bond ETF">TLT</span><span class="macro-val" id="m_tlt">---</span><span class="macro-chg" id="c_tlt"></span></div>
+<div class="macro-bar-group"><span class="macro-label" title="iShares Preferred & Income Securities ETF">PFF</span><span class="macro-val" id="m_pff">---</span><span class="macro-chg" id="c_pff"></span></div>
+<span class="pair-count" id="pairCount">0 signals</span>
 </div>
-<div style="display:flex;justify-content:flex-start;align-items:flex-end;margin-bottom:25px"><div id="secBar"></div></div>
-<div style="display:flex;gap:15px;margin-bottom:25px;align-items:center">
-<input type="text" id="sInput" placeholder="Search..." onkeyup="search()" style="flex:1;min-width:0;padding:18px 25px;background:var(--card);border:1px solid var(--border);color:white;border-radius:10px;outline:none;box-sizing:border-box">
-<div id="excludeWrap" style="flex:none"><input type="text" id="excludeInput" placeholder="Filter out ticker..." oninput="applyFilters()" style="width:220px;padding:18px 25px;background:var(--card);border:1px solid rgba(239,68,68,.4);color:#ef4444;border-radius:10px;outline:none;box-sizing:border-box;font-family:Inter,sans-serif;font-size:13px"></div>
-</div>
-<div style="display:flex;gap:15px;margin-bottom:20px;align-items:center;flex-wrap:wrap">
+<div class="filter-bar">
+<div class="search-wrap"><span class="search-icon">&#128269;</span><input type="text" id="sInput" placeholder="Search pairs..." onkeyup="search()"></div>
+<div id="excludeWrap" style="flex:none"><input type="text" id="excludeInput" placeholder="Exclude ticker..." oninput="applyFilters()" style="width:180px;padding:10px 16px;background:var(--bg);border:1px solid rgba(239,68,68,.3);color:#ef4444;border-radius:8px;outline:none;box-sizing:border-box;font-size:12px"></div>
+<div class="filter-divider"></div>
+<div id="secBar"></div>
+<div class="filter-divider"></div>
 <span class="filter-label">Show:</span>
 <div class="filter-pills" id="filterPills">
 <button class="filter-pill" onclick="filterByScore(5,this)">Top 5</button>
@@ -520,15 +555,19 @@ td:last-child{border-radius:0 10px 10px 0;border-right:1px solid var(--border)}
 <button class="filter-pill" onclick="filterByScore(20,this)">Top 20</button>
 <button class="filter-pill active" onclick="filterByScore(0,this)">All</button>
 </div>
-<span class="filter-label" style="margin-left:auto" id="screenerAge"></span>
+<span class="filter-label" style="margin-left:auto;font-size:8px" id="screenerAge"></span>
 </div>
-<table><thead><tr><th class="sortable" onclick="sortScore()">Score ⇅</th><th>Instrument</th><th>Current</th><th>Div Date</th><th class="sortable" onclick="sortProfit()">Exp. Profit ⇅</th><th class="sortable" onclick="sortZ()">Z-Score ⇅</th><th>Yields</th><th class="sortable" onclick="sortLiq()">Liquidity ⇅</th><th class="sortable" onclick="sortAge()">Active ⇅</th><th>Z Trend</th><th>Action</th></tr></thead><tbody id="alertBody"></tbody></table>
+<table><thead><tr><th class="sortable" onclick="sortScore()">Score &#8645;</th><th>Pair</th><th>Spread</th><th>Ex-Dividend<span class="th-hint">next date per leg</span></th><th class="sortable" onclick="sortProfit()">Expected Profit &#8645;</th><th class="sortable" onclick="sortZ()">Z-Score &#8645;</th><th>Yields<span class="th-hint">A% / B%</span></th><th class="sortable" onclick="sortLiq()">Avg Liquidity &#8645;</th><th class="sortable" onclick="sortAge()">Days Active &#8645;</th><th>Z Trend<span class="th-hint">24h snapshots</span></th><th>Signal</th></tr></thead><tbody id="alertBody"></tbody></table>
 </div>
 <div id="portfolio" class="tab-content">
 <div class="exposure-pill-box"><div class="exp-pill"><span class="exp-label">LONG</span><span class="exp-val-long" id="valLong">$0</span></div><div class="exp-pill"><span class="exp-label">SHORT</span><span class="exp-val-short" id="valShort">$0</span></div></div>
 <div class="health-bar collapsed" id="healthBar">
 <div class="health-header" onclick="toggleHealthBar()">
 <div class="health-title">Portfolio Health <span class="health-z-pill" id="healthZPill" style="color:var(--subtext);border-color:var(--border)">—</span><span class="health-status" id="healthStatus"></span></div>
+<div class="health-summary" id="healthSummaryCollapsed">
+<span class="health-summary-stat" id="hsSectorSummary"></span>
+<span class="health-summary-stat" id="hsStratSummary"></span>
+</div>
 <span class="health-chevron" id="healthChevron">&#9660;</span>
 </div>
 <div class="health-body" id="healthBody">
@@ -646,7 +685,7 @@ td:last-child{border-radius:0 10px 10px 0;border-right:1px solid var(--border)}
 <div id="histClosedSection">
 <div id="historySummary" style="display:flex;gap:15px;margin-bottom:20px"></div>
 <div style="overflow-x:auto">
-<table id="historyTable"><thead><tr><th>Instrument</th><th>Type</th><th>Entry</th><th>Exit</th><th>Size</th><th>Open</th><th>Close</th><th>Hold</th><th class="mono-data">Cap Gains</th><th class="mono-data">Net Div</th><th class="mono-data">Net PnL</th><th>Return</th><th>Journal</th></tr></thead><tbody></tbody></table>
+<table id="historyTable"><thead><tr><th>Pair</th><th>Type</th><th>Entry Prices</th><th>Exit Prices</th><th>Position Size</th><th>Opened</th><th>Closed</th><th>Days Held</th><th class="mono-data">Capital Gains</th><th class="mono-data">Net Dividends</th><th class="mono-data">Net P&amp;L</th><th>Return %</th><th>Notes</th></tr></thead><tbody></tbody></table>
 </div>
 </div>
 <div id="histJournalSection" style="display:none">
@@ -681,7 +720,7 @@ td:last-child{border-radius:0 10px 10px 0;border-right:1px solid var(--border)}
 <button class="filter-pill" onclick="divCapFilter('bigcapture',this)">&ge; $1.00 Capture</button>
 </div>
 <div style="overflow-x:auto">
-<table id="divCapTable"><thead><tr><th>Pair</th><th>Mode</th><th>Z-Score</th><th>Long Leg</th><th>Long Div</th><th>Short Div</th><th>Spread Capture</th><th>Ex-Div A</th><th>Ex-Div B</th><th>Yield A</th><th>Yield B</th></tr></thead><tbody></tbody></table>
+<table id="divCapTable"><thead><tr><th>Pair</th><th>Strategy</th><th>Z-Score</th><th>Long Leg</th><th>Long Dividend</th><th>Short Dividend</th><th>Spread Capture<span class="th-hint">est. profit potential</span></th><th>Ex-Div Date A</th><th>Ex-Div Date B</th><th>Yield A</th><th>Yield B</th></tr></thead><tbody></tbody></table>
 </div>
 </div>
 </div>
@@ -1178,7 +1217,8 @@ if(r.exDivA||r.exDivB){divTd='<td><div style="display:flex;flex-direction:column
 var ep=r.expProfit||'0.00';
 // Score cell
 var sc=r._score;var scc=scoreColor(sc);
-var scoreTd='<td><div class="score-cell"><span class="score-badge" style="color:'+scc.c+';background:'+scc.bg+'">'+sc+'</span><div class="score-bar"><div class="score-bar-fill" style="width:'+sc+'%;background:'+scc.c+'"></div></div></div></td>';
+var pct=Math.min(100,Math.max(0,sc));var circ=Math.PI*2*11;var dash=circ*pct/100;
+var scoreTd='<td><div class="score-cell"><div class="score-ring"><svg viewBox="0 0 28 28"><circle cx="14" cy="14" r="11" stroke="rgba(255,255,255,.06)" /><circle cx="14" cy="14" r="11" stroke="'+scc.c+'" stroke-dasharray="'+dash.toFixed(1)+' '+circ.toFixed(1)+'" /></svg></div><span class="score-badge" style="color:'+scc.c+';background:'+scc.bg+'">'+sc+'</span></div></td>';
 // Screener badge + analyze button
 var scrData=screenerCache[cleanIdFE(r.id)];
 var screenBadge='';if(scrData&&scrData.wr30!==null&&scrData.wr30!==''&&!isNaN(parseFloat(scrData.wr30))){var wrVal=parseFloat(scrData.wr30);var bClr=wrVal>=70?'rgba(16,185,129,.18)':wrVal>=60?'rgba(16,185,129,.1)':wrVal>=40?'rgba(245,158,11,.1)':'rgba(239,68,68,.08)';var bTxt=wrVal>=70?'var(--low)':wrVal>=60?'var(--low)':wrVal>=40?'var(--yellow)':'var(--high)';var bBorder=wrVal>=70?'rgba(16,185,129,.5)':'';screenBadge='<span class="screened-badge'+(wrVal>=70?' screened-hot':'')+'" style="background:'+bClr+';color:'+bTxt+(bBorder?';border-color:'+bBorder:';border-color:'+bTxt)+'" title="Pre-screened: '+wrVal+'% 30d win rate">'+Math.round(wrVal)+'% WR</span>';}
@@ -1190,7 +1230,8 @@ var stdevVal=parseFloat(r.stdev)||0;
 var sizerBtn='<button class="analyze-btn sizer-inline-btn" onclick="inlineSizer(this,\''+sa+'\',\''+sb+'\','+pAVal+','+pBVal+','+z+','+stdevVal+',\''+sizerRid+'\',\''+si+'\')" title="Position Sizer">&#9638;</button>';
 var sqBtnId=cleanIdFE(r.id);var sqInQ=sandboxQueue.some(function(q){return cleanIdFE(q.id)===sqBtnId;});var sqIcon=sqInQ?'&#10003;':'&#9646;';var sqCls=sqInQ?'sandbox-btn added':'sandbox-btn';
 var sandboxAddBtn='<button class="'+sqCls+'" id="sqbtn-'+sqBtnId+'" data-pair-id="'+sqBtnId+'" onclick="addToSandboxQueue(\''+si+'\',\''+sa+'\',\''+sb+'\','+pAVal+','+pBVal+','+z+',\''+currentMode+'\')" title="Add to Sandbox Queue">'+sqIcon+'</button>';
-h+='<tr class="alert-row" data-s="'+r.id.toLowerCase()+' '+(r.sec||'').toLowerCase()+' '+act.l.toLowerCase()+'" data-sec="'+(r.sec||'')+'" data-tickers="'+r.tA.toUpperCase()+' '+r.tB.toUpperCase()+'" data-z="'+r.z+'" data-age="'+ag+'" data-liq="'+al+'" data-profit="'+ep+'" data-score="'+sc+'">'+scoreTd+'<td><div style="display:flex;align-items:center;gap:4px">'+analyzeBtn+sizerBtn+sandboxAddBtn+'<button class="'+starCls+'" id="star-'+si.replace(/[^a-zA-Z0-9]/g,'')+'" onclick="addToWatchlist(\''+si+'\',this)" title="Add to Watchlist">'+starIcon+'</button><button class="plus-btn" onclick="openModal(\''+si+'\',\''+sa+'\',\''+sb+'\')">+</button><div><a href="'+url+'" target="_blank" class="'+lk+'">'+r.id+'</a>'+screenBadge+'<div class="range-tag">'+r.rng+'</div><div style="font-size:10px;color:var(--subtext);font-weight:900;text-transform:uppercase;margin-top:2px">'+r.sec+'</div></div></div></td>'+'<td><div class="mono-data">$'+r.spr+'</div></td>'+divTd+'<td><div class="mono-data" style="color:var(--low)">$'+ep+'</div></td>'+'<td><div style="color:var(--accent)" class="mono-data">'+z.toFixed(2)+'σ</div></td>'+'<td><div class="mono-data">'+r.yA+'% / '+r.yB+'%</div></td>'+'<td><div style="display:flex;flex-direction:column;gap:2px"><div style="display:flex;align-items:center"><span class="dot '+lc+'"></span>'+lt+'</div>'+sp+'</div></td>'+'<td><div>'+at+'</div></td>'+'<td><div class="trend-tape">'+tr+'</div></td>'+'<td><div class="action-tag" style="color:'+act.c+';border-color:'+act.c+'">'+act.l+'</div></td></tr>';rowIdx++;});
+var actCls=az>=3?' extreme':(az>=2.2?' strong':'');
+h+='<tr class="alert-row" data-s="'+r.id.toLowerCase()+' '+(r.sec||'').toLowerCase()+' '+act.l.toLowerCase()+'" data-sec="'+(r.sec||'')+'" data-tickers="'+r.tA.toUpperCase()+' '+r.tB.toUpperCase()+'" data-z="'+r.z+'" data-age="'+ag+'" data-liq="'+al+'" data-profit="'+ep+'" data-score="'+sc+'">'+scoreTd+'<td><div class="instr-cell"><div class="instr-tools">'+analyzeBtn+sizerBtn+sandboxAddBtn+'<button class="'+starCls+'" id="star-'+si.replace(/[^a-zA-Z0-9]/g,'')+'" onclick="addToWatchlist(\''+si+'\',this)" title="Watchlist">'+starIcon+'</button><button class="plus-btn" onclick="openModal(\''+si+'\',\''+sa+'\',\''+sb+'\')">+</button></div><div class="instr-main"><a href="'+url+'" target="_blank" class="'+lk+'">'+r.id+'</a><div class="instr-meta">'+screenBadge+'<span class="range-tag" style="margin:0">'+r.rng+'</span><span style="font-size:9px;color:var(--subtext);font-weight:700;text-transform:uppercase">'+r.sec+'</span></div></div></div></td>'+'<td><div class="mono-data">$'+r.spr+'</div></td>'+divTd+'<td><div class="mono-data" style="color:var(--low)">$'+ep+'</div></td>'+'<td><div style="color:var(--accent)" class="mono-data">'+z.toFixed(2)+'&sigma;</div></td>'+'<td><div class="mono-data" style="font-size:11px">'+r.yA+'%<span style="color:var(--subtext);margin:0 3px">/</span>'+r.yB+'%</div></td>'+'<td><div style="display:flex;flex-direction:column;gap:2px"><div style="display:flex;align-items:center"><span class="dot '+lc+'"></span><span class="mono-data" style="font-size:11px">'+lt+'</span></div>'+sp+'</div></td>'+'<td><div class="mono-data" style="font-size:11px">'+at+'</div></td>'+'<td><div class="trend-tape">'+tr+'</div></td>'+'<td><div class="action-tag'+actCls+'" style="color:'+act.c+';border-color:'+act.c+'">'+act.l+'</div></td></tr>';rowIdx++;});
 document.getElementById('alertBody').innerHTML=h;applyFilters();if(activeScoreFilter>0)filterByScore(activeScoreFilter);}
 function updateUI(data){if(!data)return;renderAlerts(data.alertData);renderMacro(data.macroData);
 // Store ALL valid pairs for sweep search (includes non-alerting pairs)
@@ -1200,7 +1241,7 @@ var lng=0,sht=0;if(data.portfolioData)data.portfolioData.forEach(function(p){var
 document.getElementById('valLong').innerText='$'+lng.toFixed(0);document.getElementById('valShort').innerText='$'+sht.toFixed(0);
 var ph='';if(data.portfolioData&&data.portfolioData.length>0){data.portfolioData.forEach(function(p,i){var prog=Math.min(100,Math.max(0,(1-(Math.abs(p.centRem)/(Math.abs(p.centGoal)||1)))*100));var c=p.isWinning?'var(--low)':'var(--high)';var tA=p.tA||"LEG A",tB=p.tB||"LEG B";var ez=parseFloat(p.entryZ)||0;var mv=parseFloat(p.target)||0;var tm=mv>=0?'<div class="target-val accent">'+tA+' SHOULD BE $'+mv.toFixed(2)+' HIGHER THAN '+tB+'</div>':'<div class="target-val accent">'+tA+' SHOULD BE $'+Math.abs(mv).toFixed(2)+' LOWER THAN '+tB+'</div>';var sa=String(tA).replace(/'/g,"\\'"),sb=String(tB).replace(/'/g,"\\'"),si=String(p.id).replace(/'/g,"\\'");
 var pd=parseFloat(p.paidDiv)||0,rd=parseFloat(p.rcvdDiv)||0,nd=rd-pd,cg=parseFloat(p.capGains)||0;var ndClr=nd>=0?'var(--low)':'var(--high)';var cgClr=cg>=0?'var(--low)':'var(--high)';
-ph+='<div class="trade-card" id="card-'+i+'">'+'<div style="display:flex;justify-content:space-between;align-items:flex-start"><div><div style="font-weight:900;font-size:22px;color:var(--accent)">'+p.id+'</div><div style="display:flex;gap:6px;align-items:center;margin-top:4px"><div style="font-size:12px;color:var(--subtext);font-weight:700">Spread: $'+p.spr+'</div><div class="entry-indicator">ENTRY: '+ez.toFixed(2)+'σ</div></div></div><div style="font-family:\'JetBrains Mono\';font-weight:900;font-size:22px;color:'+c+'">'+(p.dollarPnL>=0?'+':'')+p.dollarPnL+'$</div></div>'+'<div class="target-ribbon"><div class="target-row"><div class="target-desc">CURRENT SPREAD</div><div class="target-val">$'+p.spr+' (Diff)</div></div><div class="target-row"><div class="target-desc">TARGET MEAN</div>'+tm+'</div></div>'+'<div style="display:flex;gap:12px;margin-top:20px;margin-bottom:20px"><div style="flex:1;padding:12px;background:rgba(255,255,255,.03);border-radius:10px;border:1px solid var(--border)"><div style="font-size:10px;color:var(--accent);font-weight:900;text-transform:uppercase;margin-bottom:6px">'+tA+'</div><div style="font-family:\'JetBrains Mono\';font-size:15px;font-weight:900;color:white">$'+p.pA+'</div><div style="font-size:10px;color:var(--subtext);margin-top:4px">Qty: '+p.sA+'</div></div><div style="flex:1;padding:12px;background:rgba(255,255,255,.03);border-radius:10px;border:1px solid var(--border)"><div style="font-size:10px;color:var(--accent);font-weight:900;text-transform:uppercase;margin-bottom:6px">'+tB+'</div><div style="font-family:\'JetBrains Mono\';font-size:15px;font-weight:900;color:white">$'+p.pB+'</div><div style="font-size:10px;color:var(--subtext);margin-top:4px">Qty: '+p.sB+'</div></div></div>'+'<div class="div-flow-row"><div class="div-flow-item"><div class="div-flow-label" style="color:var(--subtext)">Cap Gains</div><div class="div-flow-val" style="color:'+cgClr+'">'+(cg>=0?'+':'')+cg.toFixed(2)+'$</div></div><div class="div-flow-item"><div class="div-flow-label" style="color:var(--high)">Paid Div</div><div class="div-flow-val" style="color:var(--high)">-'+pd.toFixed(2)+'$</div><button class="div-btn paid" onclick="openDivModal(\''+si+'\',\'paid\')" style="margin-top:4px">+ Add</button></div><div class="div-flow-item"><div class="div-flow-label" style="color:var(--low)">Rcvd Div</div><div class="div-flow-val" style="color:var(--low)">+'+rd.toFixed(2)+'$</div><button class="div-btn rcvd" onclick="openDivModal(\''+si+'\',\'received\')" style="margin-top:4px">+ Add</button></div><div class="div-flow-item"><div class="div-flow-label" style="color:var(--subtext)">Net Div</div><div class="div-flow-val" style="color:'+ndClr+'">'+(nd>=0?'+':'')+nd.toFixed(2)+'$</div></div></div>'+'<div class="progress-container"><div class="progress-bar" style="width:'+prog+'%;background:'+c+'"></div></div>'+'<div style="display:flex;justify-content:space-between;font-size:11px;font-weight:900;text-transform:uppercase"><span>Dist: '+p.centGoal+'¢</span><span style="color:'+c+'">Rem: '+p.centRem+'¢</span></div>'+'<div style="display:flex;justify-content:space-between;margin-top:20px"><button class="scale-btn" onclick="openModal(\''+si+'\',\''+sa+'\',\''+sb+'\')">Scale</button><button class="close-trade-btn" onclick="openCloseModal(\''+si+'\',\'card-'+i+'\')">Close</button></div></div>';});}
+ph+='<div class="trade-card" id="card-'+i+'">'+'<div style="display:flex;justify-content:space-between;align-items:flex-start"><div><div style="font-weight:900;font-size:22px;color:var(--accent)">'+p.id+'</div><div style="display:flex;gap:6px;align-items:center;margin-top:4px"><div style="font-size:12px;color:var(--subtext);font-weight:700">Spread: $'+p.spr+'</div><div class="entry-indicator">ENTRY: '+ez.toFixed(2)+'σ</div></div></div><div style="font-family:\'JetBrains Mono\';font-weight:900;font-size:22px;color:'+c+'">'+(p.dollarPnL>=0?'+':'')+p.dollarPnL+'$</div></div>'+'<div class="target-ribbon"><div class="target-row"><div class="target-desc">CURRENT SPREAD</div><div class="target-val">$'+p.spr+' (Diff)</div></div><div class="target-row"><div class="target-desc">TARGET MEAN</div>'+tm+'</div></div>'+'<div style="display:flex;gap:12px;margin-top:20px;margin-bottom:20px"><div style="flex:1;padding:12px;background:rgba(255,255,255,.03);border-radius:10px;border:1px solid var(--border)"><div style="font-size:10px;color:var(--accent);font-weight:900;text-transform:uppercase;margin-bottom:6px">'+tA+'</div><div style="font-family:\'JetBrains Mono\';font-size:15px;font-weight:900;color:white">$'+p.pA+'</div><div style="font-size:10px;color:var(--subtext);margin-top:4px">Qty: '+p.sA+'</div></div><div style="flex:1;padding:12px;background:rgba(255,255,255,.03);border-radius:10px;border:1px solid var(--border)"><div style="font-size:10px;color:var(--accent);font-weight:900;text-transform:uppercase;margin-bottom:6px">'+tB+'</div><div style="font-family:\'JetBrains Mono\';font-size:15px;font-weight:900;color:white">$'+p.pB+'</div><div style="font-size:10px;color:var(--subtext);margin-top:4px">Qty: '+p.sB+'</div></div></div>'+'<div class="div-flow-row"><div class="div-flow-item"><div class="div-flow-label" style="color:var(--subtext)">Capital Gains</div><div class="div-flow-val" style="color:'+cgClr+'">'+(cg>=0?'+':'')+cg.toFixed(2)+'$</div></div><div class="div-flow-item"><div class="div-flow-label" style="color:var(--high)">Dividends Paid</div><div class="div-flow-val" style="color:var(--high)">-'+pd.toFixed(2)+'$</div><button class="div-btn paid" onclick="openDivModal(\''+si+'\',\'paid\')" style="margin-top:4px">+ Add</button></div><div class="div-flow-item"><div class="div-flow-label" style="color:var(--low)">Dividends Received</div><div class="div-flow-val" style="color:var(--low)">+'+rd.toFixed(2)+'$</div><button class="div-btn rcvd" onclick="openDivModal(\''+si+'\',\'received\')" style="margin-top:4px">+ Add</button></div><div class="div-flow-item"><div class="div-flow-label" style="color:var(--subtext)">Net Dividends</div><div class="div-flow-val" style="color:'+ndClr+'">'+(nd>=0?'+':'')+nd.toFixed(2)+'$</div></div></div>'+'<div class="progress-container"><div class="progress-bar" style="width:'+prog+'%;background:'+c+'"></div></div>'+'<div class="tc-progress-label"><span>Total Distance: <span class="tc-val">'+p.centGoal+'&cent;</span></span><span style="color:'+c+'">Remaining: <span class="tc-val">'+p.centRem+'&cent;</span></span></div>'+'<div style="display:flex;justify-content:space-between;margin-top:20px"><button class="scale-btn" onclick="openModal(\''+si+'\',\''+sa+'\',\''+sb+'\')">Scale</button><button class="close-trade-btn" onclick="openCloseModal(\''+si+'\',\'card-'+i+'\')">Close</button></div></div>';});}
 document.getElementById('portfolioGrid').innerHTML=ph;
 renderHealthBar(data.portfolioData);
 checkExitSignalsClient();
@@ -1245,6 +1286,13 @@ secEl.innerHTML=sh;
 document.getElementById('stratIntra').innerText=stratMap.intra;
 document.getElementById('stratCredit').innerText=stratMap.credit;
 document.getElementById('stratTotal').innerText=portfolioData.length;
+// Collapsed summary stats
+var topSec=secKeys.length>0?secKeys[0]:'--';
+var topPct=secKeys.length>0&&wTot>0?(sectorMap[secKeys[0]]/wTot*100).toFixed(0)+'%':'';
+var hsSec=document.getElementById('hsSectorSummary');
+if(hsSec)hsSec.innerText=topSec+(topPct?' '+topPct:'');
+var hsStrat=document.getElementById('hsStratSummary');
+if(hsStrat)hsStrat.innerText=stratMap.intra+'I / '+stratMap.credit+'C';
 // Fetch rolling Z from backend (async, won't block UI)
 fetchBasketAnalytics();
 }
