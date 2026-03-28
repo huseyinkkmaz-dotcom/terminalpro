@@ -161,6 +161,11 @@ function doGet(e) {
       var hmPairId = (e && e.parameter && e.parameter.pairId) ? e.parameter.pairId : null;
       result = { ok: true, heatmapData: runSensitivitySweep_(hmMaxHold, hmMode, hmPairId) };
     }
+    else if (action === 'getOptimalSweep') {
+      var osMaxHold = parseInt((e && e.parameter && e.parameter.maxHold) || 60);
+      var osMode = (e && e.parameter && e.parameter.mode) ? e.parameter.mode : 'all';
+      result = { ok: true, sweepData: runOptimalSweep_(osMaxHold, osMode) };
+    }
     else if (action === 'getExitAlerts') {
       result = { ok: true, exitAlerts: getExitAlerts_() };
     }
@@ -3836,6 +3841,159 @@ function runSensitivitySweep_(maxHold, mode, pairId) {
     };
   } catch(e) {
     console.error('runSensitivitySweep_ error: ' + e);
+    return { error: e.toString() };
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// OPTIMAL ENTRY/EXIT SWEEP — per-pair parameter optimization
+// Scans only dislocated pairs (|Z| >= 1.8), sweeps 7×7 param grid
+// per pair, returns Top 25 ranked by maximized Avg PnL
+// ═══════════════════════════════════════════════════════════════════
+function runOptimalSweep_(maxHold, mode) {
+  try {
+    var startTime = new Date().getTime();
+    var MAX_MS = 240000; // 4-min safety
+
+    // Step 1: Get only dislocated pairs from live alerts
+    var alertPairs = [];
+    var modes = [];
+    if (mode === 'all' || mode === 'intra') modes.push('intra');
+    if (mode === 'all' || mode === 'credit') modes.push('credit');
+    for (var mi = 0; mi < modes.length; mi++) {
+      var alerts = getAlertData(modes[mi]);
+      if (!alerts || !alerts.length) continue;
+      for (var ai = 0; ai < alerts.length; ai++) {
+        var a = alerts[ai];
+        if (!a || !a.tA || !a.tB) continue;
+        alertPairs.push({
+          id: a.id, tA: a.tA, tB: a.tB, mode: modes[mi],
+          sector: a.sec || '', currentZ: parseFloat(a.z) || 0,
+          pA: parseFloat(a.pA) || 0, pB: parseFloat(a.pB) || 0
+        });
+      }
+    }
+    if (alertPairs.length === 0) return { results: [], pairsScanned: 0, elapsedMs: new Date().getTime() - startTime };
+
+    // Step 2: Load ticker history once
+    var ss = SpreadsheetApp.getActive();
+    var histMap = readTickerHistMap_(ss);
+    if (Object.keys(histMap).length === 0) return { error: 'No history data' };
+
+    // Step 3: Per-pair parameter sweep
+    var WINDOW = 30;
+    var entryGrid = [1.5, 1.8, 2.0, 2.2, 2.5, 2.8, 3.0];
+    var exitGrid = [0.0, 0.25, 0.5, 0.75, 1.0, 1.25, 1.5];
+    var MIN_TRADES = 3; // minimum trades for a combo to be considered
+    var results = [];
+    var pairsSkippedTime = 0;
+    var pairsSkippedHist = 0;
+
+    for (var pi = 0; pi < alertPairs.length; pi++) {
+      if (new Date().getTime() - startTime > MAX_MS) { pairsSkippedTime += (alertPairs.length - pi); break; }
+      var pair = alertPairs[pi];
+      var tA = pair.tA.toUpperCase().trim();
+      var tB = pair.tB.toUpperCase().trim();
+      var histA = histMap[tA];
+      var histB = histMap[tB];
+      if (!histA || !histB) { pairsSkippedHist++; continue; }
+      var len = Math.min(histA.length, histB.length);
+      if (len < WINDOW + 5) { pairsSkippedHist++; continue; }
+      var pA = histA.slice(histA.length - len);
+      var pB = histB.slice(histB.length - len);
+
+      // Compute rolling Z-score series
+      var zArr = new Array(len);
+      for (var day = WINDOW; day < len; day++) {
+        var sumSpr = 0, sumSprSq = 0;
+        for (var w = day - WINDOW; w < day; w++) {
+          var spr = pA[w] - pB[w];
+          sumSpr += spr;
+          sumSprSq += spr * spr;
+        }
+        var rollMean = sumSpr / WINDOW;
+        var rollVar = (sumSprSq / WINDOW) - (rollMean * rollMean);
+        var rollStdev = rollVar > 0 ? Math.sqrt(rollVar) : 0.001;
+        zArr[day] = (pA[day] - pB[day] - rollMean) / rollStdev;
+      }
+
+      // Sweep all entry/exit combos, find the one with best avgPnl
+      var bestAvgPnl = -Infinity;
+      var bestCombo = null;
+
+      for (var ei = 0; ei < entryGrid.length; ei++) {
+        var zThreshold = entryGrid[ei];
+        for (var xi = 0; xi < exitGrid.length; xi++) {
+          var exitZ = exitGrid[xi];
+          if (exitZ >= zThreshold) continue;
+
+          var trades = 0, wins = 0, totalPnl = 0, grossWin = 0, grossLoss = 0, holdSum = 0;
+          var openEntry = null;
+          for (var day = WINDOW; day < len; day++) {
+            var z = zArr[day];
+            if (z === undefined) continue;
+            if (!openEntry) {
+              if (Math.abs(z) >= zThreshold) {
+                openEntry = { day: day, z: z, dirA: z > 0 ? -1 : 1, dirB: z > 0 ? 1 : -1, pA: pA[day], pB: pB[day] };
+              }
+            } else {
+              var hold = day - openEntry.day;
+              if (Math.abs(z) <= exitZ || hold >= maxHold) {
+                var pnl = ((pA[day] - openEntry.pA) * openEntry.dirA + (pB[day] - openEntry.pB) * openEntry.dirB) * 100;
+                trades++;
+                totalPnl += pnl;
+                holdSum += hold;
+                if (pnl > 0) { wins++; grossWin += pnl; } else { grossLoss += Math.abs(pnl); }
+                openEntry = null;
+              }
+            }
+          }
+
+          if (trades >= MIN_TRADES) {
+            var avgPnl = totalPnl / trades;
+            if (avgPnl > bestAvgPnl) {
+              bestAvgPnl = avgPnl;
+              bestCombo = {
+                optimalEntryZ: zThreshold,
+                optimalExitZ: exitZ,
+                avgPnl: parseFloat(avgPnl.toFixed(2)),
+                winRate: parseFloat((wins / trades * 100).toFixed(1)),
+                trades: trades,
+                avgHold: parseFloat((holdSum / trades).toFixed(1)),
+                totalPnl: parseFloat(totalPnl.toFixed(2)),
+                profitFactor: grossLoss > 0 ? parseFloat((grossWin / grossLoss).toFixed(2)) : (grossWin > 0 ? 99.9 : 0)
+              };
+            }
+          }
+        }
+      }
+
+      if (bestCombo) {
+        bestCombo.id = pair.id;
+        bestCombo.tA = pair.tA;
+        bestCombo.tB = pair.tB;
+        bestCombo.mode = pair.mode;
+        bestCombo.sector = pair.sector;
+        bestCombo.currentZ = parseFloat(pair.currentZ.toFixed(2));
+        results.push(bestCombo);
+      }
+    }
+
+    // Step 4: Rank by avgPnl descending, return top 25
+    results.sort(function(a, b) { return b.avgPnl - a.avgPnl; });
+    var top25 = results.slice(0, 25);
+
+    return {
+      results: top25,
+      pairsScanned: alertPairs.length,
+      pairsOptimized: results.length,
+      pairsSkippedHist: pairsSkippedHist,
+      pairsSkippedTime: pairsSkippedTime,
+      elapsedMs: new Date().getTime() - startTime,
+      params: { maxHold: maxHold, mode: mode, entryGrid: entryGrid, exitGrid: exitGrid }
+    };
+  } catch(e) {
+    console.error('runOptimalSweep_ error: ' + e);
     return { error: e.toString() };
   }
 }

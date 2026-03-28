@@ -727,6 +727,39 @@ th .th-hint{font-weight:400;font-size:8px;letter-spacing:0;text-transform:none;c
 <!-- ═══ BACKTEST TAB ═══ -->
 <div id="backtestTab" class="tab-content">
 <h2 style="font-size:14px;font-weight:900;color:var(--subtext);text-transform:uppercase;margin:0 0 20px 0">Backtest Engine</h2>
+<!-- ── OPTIMAL SWEEP PANEL ── -->
+<div id="osPanel" style="margin-bottom:30px">
+<div id="osPanelToggle" onclick="toggleOptimalSweep()" style="display:flex;align-items:center;gap:8px;cursor:pointer;background:rgba(168,85,247,.06);border:1px solid rgba(168,85,247,.25);border-radius:8px;padding:12px 16px;transition:.2s;user-select:none">
+<span id="osPanelArrow" style="font-size:10px;color:#a855f7;transition:transform .2s;display:inline-block">&#9654;</span>
+<span style="font-size:11px;font-weight:900;color:#a855f7;text-transform:uppercase;letter-spacing:1px">Top 25 — Optimal Entry/Exit Sweep</span>
+<span style="font-size:10px;color:var(--subtext);font-weight:400;margin-left:4px">— Find the best historically proven params for every dislocated pair</span>
+</div>
+<div id="osPanelBody" style="display:none;margin-top:0;padding:20px;background:rgba(168,85,247,.03);border-radius:0 0 8px 8px;border:1px solid rgba(168,85,247,.15);border-top:none;border-left:2px solid #a855f7">
+<div style="display:flex;gap:15px;align-items:flex-end;margin-bottom:18px;flex-wrap:wrap">
+<div><label style="font-size:9px;font-weight:900;color:var(--subtext);text-transform:uppercase;display:block;margin-bottom:6px">Max Hold (days)</label><input id="osMaxHold" type="number" value="60" step="5" min="3" max="180" style="background:var(--bg);border:1px solid var(--border);color:var(--text);padding:10px 14px;border-radius:6px;font-family:'JetBrains Mono';font-size:13px;width:90px"></div>
+<div><label style="font-size:9px;font-weight:900;color:var(--subtext);text-transform:uppercase;display:block;margin-bottom:6px">Mode</label><select id="osMode" style="background:var(--bg);border:1px solid var(--border);color:var(--text);padding:10px 14px;border-radius:6px;font-size:12px;width:110px"><option value="all">All Pairs</option><option value="intra">Intra Only</option><option value="credit">Credit Only</option></select></div>
+<button id="osRunBtn" onclick="runOptimalSweep()" style="background:#a855f7;color:white;border:none;padding:12px 28px;border-radius:6px;font-size:11px;font-weight:900;cursor:pointer;text-transform:uppercase;letter-spacing:1px;transition:opacity .15s" onmouseenter="this.style.opacity='0.85'" onmouseleave="this.style.opacity='1'">Run Sweep</button>
+</div>
+<div id="osLoading" style="display:none;text-align:center;padding:30px;color:var(--subtext);font-size:11px">Scanning dislocated pairs & optimizing parameters... this may take a minute.</div>
+<div id="osResults" style="display:none">
+<div id="osMeta" style="margin-bottom:12px"></div>
+<div style="overflow-x:auto"><table id="osTable" style="font-size:12px"><thead><tr>
+<th style="width:30px">#</th>
+<th>Pair</th>
+<th>Mode</th>
+<th>Current Z</th>
+<th>Optimal Entry</th>
+<th>Optimal Exit</th>
+<th class="mono-data">Avg PnL<span class="th-hint">per 100sh</span></th>
+<th>Win Rate</th>
+<th>Trades</th>
+<th>Avg Hold</th>
+<th>Profit Factor</th>
+</tr></thead><tbody></tbody></table></div>
+</div>
+</div>
+</div>
+<!-- ── STANDARD BACKTEST CONTROLS ── -->
 <div style="display:flex;gap:15px;align-items:flex-end;margin-bottom:25px;flex-wrap:wrap">
 <div><label style="font-size:9px;font-weight:900;color:var(--subtext);text-transform:uppercase;display:block;margin-bottom:6px">Z Entry Threshold</label><input id="btZEntry" type="number" value="2.0" step="0.1" min="1.0" max="4.0" style="background:var(--card);border:1px solid var(--border);color:var(--text);padding:10px 14px;border-radius:6px;font-family:'JetBrains Mono';font-size:13px;width:90px"></div>
 <div><label style="font-size:9px;font-weight:900;color:var(--subtext);text-transform:uppercase;display:block;margin-bottom:6px">Z Exit Target</label><input id="btZExit" type="number" value="0.5" step="0.1" min="0" max="2.0" style="background:var(--card);border:1px solid var(--border);color:var(--text);padding:10px 14px;border-radius:6px;font-family:'JetBrains Mono';font-size:13px;width:90px"></div>
@@ -2358,6 +2391,70 @@ document.querySelectorAll('.tab-content').forEach(x=>x.classList.remove('active'
 document.querySelectorAll('.nav-item').forEach(x=>x.classList.remove('active'));
 document.getElementById('backtestTab').classList.add('active');
 el.classList.add('active');
+}
+// ── OPTIMAL SWEEP ──
+function toggleOptimalSweep(){
+var body=document.getElementById('osPanelBody');
+var arrow=document.getElementById('osPanelArrow');
+if(body.style.display==='none'){body.style.display='block';arrow.style.transform='rotate(90deg)';}
+else{body.style.display='none';arrow.style.transform='rotate(0deg)';}
+}
+async function runOptimalSweep(){
+var btn=document.getElementById('osRunBtn');
+btn.disabled=true;btn.innerText='SWEEPING...';
+document.getElementById('osLoading').style.display='block';
+document.getElementById('osResults').style.display='none';
+try{
+var data=await apiGet('getOptimalSweep',{
+maxHold:document.getElementById('osMaxHold').value,
+mode:document.getElementById('osMode').value
+},300000);
+if(data&&data.ok&&data.sweepData){renderOptimalSweep(data.sweepData);}
+else{document.getElementById('osLoading').innerHTML='<div style="color:var(--high)">Sweep failed: '+(data&&data.message?data.message:'unknown error')+'</div>';}
+}catch(e){document.getElementById('osLoading').innerHTML='<div style="color:var(--high)">Error: '+e.message+'</div>';}
+finally{btn.disabled=false;btn.innerText='RUN SWEEP';}
+}
+function renderOptimalSweep(sw){
+document.getElementById('osLoading').style.display='none';
+document.getElementById('osResults').style.display='block';
+var res=sw.results||[];
+if(res.length===0){
+document.getElementById('osResults').innerHTML='<div style="text-align:center;padding:30px;color:var(--subtext)"><div style="font-size:24px;margin-bottom:8px">&#128269;</div><div style="font-weight:900">No optimizable pairs found</div><div style="margin-top:6px;font-size:11px">No pairs with |Z| &ge; 1.8 had enough historical trades (min 3) for optimization.</div></div>';
+return;
+}
+// Meta info
+var meta='<div style="display:flex;gap:16px;flex-wrap:wrap;font-size:10px;color:var(--subtext);margin-bottom:4px">';
+meta+='<span>Scanned: <b style="color:var(--text)">'+sw.pairsScanned+'</b> dislocated pairs</span>';
+meta+='<span>Optimized: <b style="color:var(--text)">'+sw.pairsOptimized+'</b></span>';
+if(sw.pairsSkippedTime>0)meta+='<span style="color:var(--yellow)">&#9888; '+sw.pairsSkippedTime+' skipped (timeout)</span>';
+meta+='<span>Elapsed: '+(sw.elapsedMs/1000).toFixed(1)+'s</span>';
+meta+='</div>';
+document.getElementById('osMeta').innerHTML=meta;
+// Table
+var tb=document.querySelector('#osTable tbody');
+var h='';
+for(var i=0;i<res.length;i++){
+var r=res[i];
+var zClr=Math.abs(r.currentZ)>=2.5?'var(--high)':(Math.abs(r.currentZ)>=2.0?'var(--yellow)':'var(--text)');
+var pnlClr=r.avgPnl>=0?'var(--low)':'var(--high)';
+var wrClr=r.winRate>=60?'var(--low)':(r.winRate>=50?'var(--yellow)':'var(--high)');
+var pfClr=r.profitFactor>=1.5?'var(--low)':(r.profitFactor>=1?'var(--yellow)':'var(--high)');
+var modeBadge=r.mode==='intra'?'<span style="background:rgba(59,130,246,.15);color:#60a5fa;padding:2px 6px;border-radius:4px;font-size:9px;font-weight:900">INTRA</span>':'<span style="background:rgba(168,85,247,.15);color:#c084fc;padding:2px 6px;border-radius:4px;font-size:9px;font-weight:900">CREDIT</span>';
+h+='<tr>';
+h+='<td style="color:var(--subtext);font-weight:900">'+(i+1)+'</td>';
+h+='<td style="font-weight:900;white-space:nowrap">'+r.tA+' / '+r.tB+'</td>';
+h+='<td>'+modeBadge+'</td>';
+h+='<td style="font-family:JetBrains Mono;color:'+zClr+';font-weight:900">'+r.currentZ.toFixed(2)+'</td>';
+h+='<td style="font-family:JetBrains Mono;font-weight:700">'+r.optimalEntryZ.toFixed(1)+'</td>';
+h+='<td style="font-family:JetBrains Mono;font-weight:700">'+r.optimalExitZ.toFixed(2)+'</td>';
+h+='<td class="mono-data" style="color:'+pnlClr+';font-weight:900">'+(r.avgPnl>=0?'+':'')+r.avgPnl.toFixed(2)+'$</td>';
+h+='<td style="color:'+wrClr+';font-weight:700">'+r.winRate+'%</td>';
+h+='<td>'+r.trades+'</td>';
+h+='<td>'+r.avgHold+'d</td>';
+h+='<td style="color:'+pfClr+';font-weight:700">'+r.profitFactor+'x</td>';
+h+='</tr>';
+}
+tb.innerHTML=h;
 }
 window._btAlertCache={};
 async function runBacktest(){
