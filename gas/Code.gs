@@ -3190,6 +3190,13 @@ function runBacktest_(zThreshold, exitZ, maxHold, mode) {
       var pair = pairDefs[pi];
       var tA = pair.tA.toUpperCase().trim();
       var tB = pair.tB.toUpperCase().trim();
+
+      // FILTER: blacklisted tickers — excluded from all backtest modes
+      if (isBlacklisted(tA) || isBlacklisted(tB)) { pairsSkippedHist++; continue; }
+
+      // FILTER: intra-only tickers — excluded from credit backtest
+      if (pair.mode === 'credit' && (isIntraOnly(tA) || isIntraOnly(tB))) { pairsSkippedHist++; continue; }
+
       var histA = histMap[tA];
       var histB = histMap[tB];
       if (!histA || !histB) { pairsSkippedHist++; continue; }
