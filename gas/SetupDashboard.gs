@@ -141,6 +141,7 @@ function setupAllBatched() {
       ensureSheet_(ss, 'Watchlist', ['PairID', 'AddedDate', 'AddedZ', 'Mode', 'AddedExpProfit', 'AddedSpread']);
       ensureSheet_(ss, 'BasketCache', ['Key', 'Value', 'UpdatedAt']);
       ensureSheet_(ss, 'ScreenerCache', ['PairID','TickerA','TickerB','Mode','Z','ExpProfit','WR30','WR60','WR90','AvgMAE','P75MAE','WidenProb','Triggers','EP30','EP60','UpdatedAt','WR15','EP15','EP90']);
+      ensureSheet_(ss, 'ModelPortfolioCache', ['Rank','Pairs','BasketZ','BlendedWR','ExpProfit','WidenProb','SectorMix','AvgCorrelation','Metrics','UpdatedAt']);
       ensureSheet_(ss, 'TreasuryHist', ['Date', 'US2Y', 'US5Y', 'US7Y', 'US10Y', 'US30Y']);
       Logger.log('Phase 2 complete: Supporting sheets ready.');
 
@@ -281,7 +282,7 @@ function createAutoTrigger() {
     if (fn === 'setupAllBatched' || fn === 'updateLivePrices' ||
         fn === 'snapshotZScores' || fn === 'dailyCreditRefresh' || fn === 'fetchDividendDates' ||
         fn === 'dailyMacroRefresh' || fn === 'computeMacroValuationsBatch' || fn === 'updateBasketAnalytics' ||
-        fn === 'runNightlyScreener' || fn === 'runExitAlertCheck') {
+        fn === 'runNightlyScreener' || fn === 'runExitAlertCheck' || fn === 'runModelPortfolioGenerator') {
       ScriptApp.deleteTrigger(triggers[i]);
     }
   }
@@ -333,13 +334,20 @@ function createAutoTrigger() {
     .everyDays(1)
     .create();
 
+  // DAILY: runModelPortfolioGenerator at 10 AM (build optimal 5 model portfolios from screener data)
+  ScriptApp.newTrigger('runModelPortfolioGenerator')
+    .timeBased()
+    .atHour(10)
+    .everyDays(1)
+    .create();
+
   // HOURLY: runExitAlertCheck (proactive exit signals for open trades)
   ScriptApp.newTrigger('runExitAlertCheck')
     .timeBased()
     .everyHours(1)
     .create();
 
-  Logger.log('All triggers installed:\n• updateLivePrices: every 10 min\n• snapshotZScores: every hour\n• runExitAlertCheck: every hour\n• dailyCreditRefresh: daily 5 AM\n• fetchDividendDates: daily 6 AM\n• dailyMacroRefresh: daily 7 AM\n• updateBasketAnalytics: daily 8 AM\n• runNightlyScreener: daily 9 AM');
+  Logger.log('All triggers installed:\n• updateLivePrices: every 10 min\n• snapshotZScores: every hour\n• runExitAlertCheck: every hour\n• dailyCreditRefresh: daily 5 AM\n• fetchDividendDates: daily 6 AM\n• dailyMacroRefresh: daily 7 AM\n• updateBasketAnalytics: daily 8 AM\n• runNightlyScreener: daily 9 AM\n• runModelPortfolioGenerator: daily 10 AM');
   showMsg_(
     'Triggers installed!\n\n' +
     '• updateLivePrices: every 10 min (snapshots prices to WebCache)\n' +
@@ -349,7 +357,8 @@ function createAutoTrigger() {
     '• fetchDividendDates: daily 6 AM (Yahoo Finance ex-div dates)\n' +
     '• dailyMacroRefresh: daily 7 AM (macro valuation vs treasuries)\n' +
     '• updateBasketAnalytics: daily 8 AM (portfolio basket Z-scores)\n' +
-    '• runNightlyScreener: daily 9 AM (pre-compute top alert probabilities)\n\n' +
+    '• runNightlyScreener: daily 9 AM (pre-compute top alert probabilities)\n' +
+    '• runModelPortfolioGenerator: daily 10 AM (build optimal model portfolios)\n\n' +
     'Now run setupAllBatched() to build the sheets.\n' +
     'Then run updateLivePrices() to populate WebCache immediately.'
   );

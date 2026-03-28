@@ -197,6 +197,13 @@ function doGet(e) {
     else if (action === 'getNotificationSettings') {
       result = { ok: true, settings: getNotificationSettings_() };
     }
+    else if (action === 'getModelPortfolios') {
+      result = { ok: true, modelPortfolios: getModelPortfolios_() };
+    }
+    else if (action === 'runModelPortfolios') {
+      runModelPortfolioGenerator();
+      result = { ok: true, modelPortfolios: getModelPortfolios_() };
+    }
     else {
       result = { ok: false, message: "Unknown action: " + action };
     }
@@ -4341,4 +4348,458 @@ function getNotificationSettings_() {
   } catch (e) {
     return { chatId: '', botToken: '' };
   }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// MODEL PORTFOLIO GENERATOR
+// ═══════════════════════════════════════════════════════════════════
+// 3-stage pipeline:
+//   Stage 1: Candidate selection from ScreenerCache + live alerts
+//   Stage 2: Pairwise spread correlation matrix
+//   Stage 3: Greedy diversified portfolio construction (5 portfolios × 5 pairs)
+// ═══════════════════════════════════════════════════════════════════
+
+/**
+ * Read cached model portfolios from ModelPortfolioCache sheet.
+ */
+function getModelPortfolios_() {
+  try {
+    var ss = SpreadsheetApp.getActive();
+    var sheet = ss.getSheetByName('ModelPortfolioCache');
+    if (!sheet || sheet.getLastRow() <= 1) return { portfolios: [], updatedAt: null };
+    var data = sheet.getDataRange().getValues();
+    var portfolios = [];
+    for (var i = 1; i < data.length; i++) {
+      var r = data[i];
+      if (!r[0] && r[0] !== 0) continue;
+      try {
+        portfolios.push({
+          rank: parseInt(r[0]) || (i),
+          pairs: JSON.parse(r[1] || '[]'),
+          basketZ: parseFloat(r[2]) || 0,
+          blendedWR: parseFloat(r[3]) || 0,
+          expectedProfit: parseFloat(r[4]) || 0,
+          widenProb: parseFloat(r[5]) || 0,
+          sectorMix: JSON.parse(r[6] || '{}'),
+          avgCorrelation: parseFloat(r[7]) || 0,
+          metrics: JSON.parse(r[8] || '{}'),
+          updatedAt: r[9] || ''
+        });
+      } catch (e) { continue; }
+    }
+    var ts = portfolios.length > 0 ? portfolios[0].updatedAt : null;
+    return { portfolios: portfolios, updatedAt: ts };
+  } catch (e) {
+    return { portfolios: [], updatedAt: null, error: e.toString() };
+  }
+}
+
+/**
+ * Main generator — called by daily trigger or on-demand via API.
+ * Writes 5 model portfolios to ModelPortfolioCache sheet.
+ */
+function runModelPortfolioGenerator() {
+  var startTime = new Date().getTime();
+  var MAX_MS = 240000; // 4 min safety
+  try {
+    var ss = SpreadsheetApp.getActive();
+    var histMap = readTickerHistMap_(ss);
+
+    // ── STAGE 1: Candidate selection ──
+    // Pull from ScreenerCache (pre-analyzed pairs with win rates + MAE)
+    var candidates = buildCandidatePool_(ss, histMap);
+    if (candidates.length < 3) {
+      Logger.log('ModelPortfolio: Only ' + candidates.length + ' candidates, need at least 3. Aborting.');
+      return;
+    }
+
+    // Cap at 15 candidates to keep C(15,5) tractable for correlation
+    if (candidates.length > 15) candidates = candidates.slice(0, 15);
+    Logger.log('ModelPortfolio: Stage 1 complete — ' + candidates.length + ' candidates in ' + ((new Date().getTime() - startTime) / 1000).toFixed(1) + 's');
+
+    // ── STAGE 2: Correlation matrix ──
+    var corrMatrix = buildCorrelationMatrix_(candidates, histMap);
+    Logger.log('ModelPortfolio: Stage 2 complete — correlation matrix built in ' + ((new Date().getTime() - startTime) / 1000).toFixed(1) + 's');
+
+    // ── STAGE 3: Greedy diversified portfolio construction ──
+    var NUM_PORTFOLIOS = 5;
+    var PAIRS_PER_PORTFOLIO = 5;
+    // Allow smaller portfolios if we have fewer candidates
+    var actualPairsPerPortfolio = Math.min(PAIRS_PER_PORTFOLIO, candidates.length);
+    var usedPairIds = {}; // track pairs used across portfolios for diversity
+    var portfolios = [];
+
+    for (var p = 0; p < NUM_PORTFOLIOS; p++) {
+      if (new Date().getTime() - startTime > MAX_MS) break;
+      var portfolio = buildSinglePortfolio_(candidates, corrMatrix, usedPairIds, actualPairsPerPortfolio);
+      if (portfolio.pairs.length === 0) break;
+
+      // Mark pairs as used (soft penalty, not hard exclusion)
+      for (var pp = 0; pp < portfolio.pairs.length; pp++) {
+        var usedId = portfolio.pairs[pp].id;
+        usedPairIds[usedId] = (usedPairIds[usedId] || 0) + 1;
+      }
+
+      // Run computeBasketMetrics_ on the final basket for real Z-scores
+      var legs = [];
+      for (var lp = 0; lp < portfolio.pairs.length; lp++) {
+        var pair = portfolio.pairs[lp];
+        var z = parseFloat(pair.z) || 0;
+        // Z > 0 → spread above mean → short A / long B
+        var dirA = z > 0 ? -1 : 1;
+        var dirB = z > 0 ? 1 : -1;
+        legs.push({ ticker: pair.tA, size: 100, direction: dirA });
+        legs.push({ ticker: pair.tB, size: 100, direction: dirB });
+      }
+      var basketMetrics = computeBasketMetrics_(legs, histMap);
+      if (basketMetrics && !basketMetrics.error) {
+        var rz30 = (basketMetrics.rollingZ && basketMetrics.rollingZ['30d']) ? basketMetrics.rollingZ['30d'] : {};
+        var rz60 = (basketMetrics.rollingZ && basketMetrics.rollingZ['60d']) ? basketMetrics.rollingZ['60d'] : {};
+        var rz90 = (basketMetrics.rollingZ && basketMetrics.rollingZ['90d']) ? basketMetrics.rollingZ['90d'] : {};
+        portfolio.basketZ = rz60.z || rz30.z || 0;
+        portfolio.expectedProfit = rz60.expectedProfit || rz30.expectedProfit || 0;
+        portfolio.basketHistory = basketMetrics.dailyValues || [];
+        portfolio.rollingZ = { '30d': rz30, '60d': rz60, '90d': rz90 };
+        // Extract bad scenario from probability engine
+        if (basketMetrics.probabilities && basketMetrics.probabilities.badScenario) {
+          portfolio.badScenario = basketMetrics.probabilities.badScenario;
+        }
+        if (basketMetrics.probabilities && basketMetrics.probabilities.winRates) {
+          var wr60 = basketMetrics.probabilities.winRates['60d'];
+          if (wr60 && wr60.rate != null) portfolio.blendedWR = wr60.rate;
+        }
+      }
+      // Clean up internal arrays before caching
+      delete portfolio.basketHistory;
+      portfolios.push(portfolio);
+    }
+
+    // Sort portfolios by composite score (blended WR × expected profit, penalize widen)
+    portfolios.sort(function(a, b) {
+      var scoreA = (a.blendedWR || 0) * 0.4 + Math.min((a.expectedProfit || 0) * 20, 30) + (1 - (a.widenProb || 0) / 100) * 15 + (1 - Math.abs(a.avgCorrelation || 0)) * 15;
+      var scoreB = (b.blendedWR || 0) * 0.4 + Math.min((b.expectedProfit || 0) * 20, 30) + (1 - (b.widenProb || 0) / 100) * 15 + (1 - Math.abs(b.avgCorrelation || 0)) * 15;
+      return scoreB - scoreA;
+    });
+
+    // Write to ModelPortfolioCache
+    writeModelPortfolioCache_(ss, portfolios);
+    Logger.log('ModelPortfolio: Complete — ' + portfolios.length + ' portfolios generated in ' + ((new Date().getTime() - startTime) / 1000).toFixed(1) + 's');
+  } catch (e) {
+    Logger.log('ModelPortfolio error: ' + e);
+  }
+}
+
+/**
+ * Stage 1: Build candidate pool from ScreenerCache + live alerts.
+ * Returns up to 15 candidates sorted by composite quality score.
+ */
+function buildCandidatePool_(ss, histMap) {
+  var candidates = [];
+  var seen = {};
+
+  // Source 1: ScreenerCache (pre-analyzed with win rates + MAE)
+  var scrSheet = ss.getSheetByName('ScreenerCache');
+  if (scrSheet && scrSheet.getLastRow() > 1) {
+    var scrData = scrSheet.getDataRange().getValues();
+    for (var i = 1; i < scrData.length; i++) {
+      var r = scrData[i];
+      var id = String(r[0] || '').trim();
+      if (!id) continue;
+      var tA = String(r[1] || '').trim();
+      var tB = String(r[2] || '').trim();
+      // Need both tickers in histMap
+      if (!histMap[tA.toUpperCase()] || !histMap[tB.toUpperCase()]) continue;
+      var cid = cleanId(id);
+      if (seen[cid]) continue;
+      seen[cid] = true;
+      var wr30 = parseFloat(r[6]) || 0;
+      var wr60 = parseFloat(r[7]) || 0;
+      var wr90 = parseFloat(r[8]) || 0;
+      var avgMae = parseFloat(r[9]) || 0;
+      var p75Mae = parseFloat(r[10]) || 0;
+      var widenProb = parseFloat(r[11]) || 0;
+      var ep60 = parseFloat(r[14]) || 0;
+      var z = parseFloat(r[4]) || 0;
+      var mode = String(r[3] || 'intra');
+      var sector = '';
+
+      // Look up sector from WebCache/WebCacheCredit
+      var cacheName = (mode === 'credit') ? 'WebCacheCredit' : 'WebCache';
+      var cacheSheet = ss.getSheetByName(cacheName);
+      if (cacheSheet && cacheSheet.getLastRow() > 1) {
+        var cacheData = cacheSheet.getDataRange().getValues();
+        for (var ci = 1; ci < cacheData.length; ci++) {
+          if (cleanId(cacheData[ci][0]) === cid) {
+            sector = String(cacheData[ci][15] || '');
+            break;
+          }
+        }
+      }
+
+      // Composite quality score for ranking
+      var qualityScore = computeCandidateScore_(wr60, ep60, widenProb, z, avgMae);
+
+      candidates.push({
+        id: id, tA: tA, tB: tB, mode: mode, sector: sector,
+        z: z, wr30: wr30, wr60: wr60, wr90: wr90,
+        ep60: ep60, widenProb: widenProb,
+        avgMae: avgMae, p75Mae: p75Mae,
+        qualityScore: qualityScore
+      });
+    }
+  }
+
+  // Source 2: Live alerts (fill up to 15 if screener didn't have enough)
+  if (candidates.length < 15) {
+    var modes = ['intra', 'credit'];
+    for (var m = 0; m < modes.length; m++) {
+      try {
+        var alerts = getAlertData(modes[m]);
+        delete alerts._diag;
+        delete alerts._allPairs;
+        for (var a = 0; a < alerts.length; a++) {
+          var alert = alerts[a];
+          var aid = cleanId(alert.id);
+          if (seen[aid]) continue;
+          var aTa = String(alert.tA || '').trim().toUpperCase();
+          var aTb = String(alert.tB || '').trim().toUpperCase();
+          if (!histMap[aTa] || !histMap[aTb]) continue;
+          seen[aid] = true;
+          var aZ = parseFloat(alert.z) || 0;
+          var aEp = parseFloat(alert.expProfit) || 0;
+          // No screener data → estimate quality from available fields
+          var estWr = Math.min(80, 50 + Math.abs(aZ) * 5); // rough estimate
+          var estWiden = 30; // default assumption
+          var aScore = computeCandidateScore_(estWr, aEp, estWiden, aZ, 0);
+          candidates.push({
+            id: alert.id, tA: alert.tA, tB: alert.tB,
+            mode: modes[m], sector: alert.sec || '',
+            z: aZ, wr30: estWr, wr60: estWr, wr90: estWr,
+            ep60: aEp, widenProb: estWiden,
+            avgMae: 0, p75Mae: 0,
+            qualityScore: aScore
+          });
+          if (candidates.length >= 15) break;
+        }
+      } catch (e) { /* skip mode if error */ }
+      if (candidates.length >= 15) break;
+    }
+  }
+
+  // Sort by quality score descending
+  candidates.sort(function(a, b) { return b.qualityScore - a.qualityScore; });
+  return candidates;
+}
+
+/**
+ * Compute a 0-100 candidate quality score.
+ * Weights: WR(30%), EP(25%), low widen(20%), |Z| magnitude(15%), low MAE(10%)
+ */
+function computeCandidateScore_(wr60, ep60, widenProb, z, avgMae) {
+  // Normalize win rate: 50% = 0, 100% = 30
+  var wrScore = Math.max(0, Math.min(30, (wr60 - 50) * 0.6));
+  // Normalize expected profit: $0 = 0, $2+ = 25
+  var epScore = Math.min(25, Math.abs(ep60) * 12.5);
+  // Widen penalty: 0% widen = 20, 50%+ = 0
+  var widenScore = Math.max(0, 20 - (widenProb * 0.4));
+  // Z magnitude: |Z| of 1.8 = 5, |Z| of 3.0 = 15
+  var zScore = Math.min(15, Math.max(0, (Math.abs(z) - 1.5) * 10));
+  // MAE bonus: lower is better. 0 = 10, 2+ = 0
+  var maeScore = avgMae > 0 ? Math.max(0, 10 - avgMae * 5) : 5;
+  return wrScore + epScore + widenScore + zScore + maeScore;
+}
+
+/**
+ * Stage 2: Build pairwise correlation matrix between candidate spread series.
+ * Returns a 2D array: corrMatrix[i][j] = Pearson correlation of daily spreads.
+ */
+function buildCorrelationMatrix_(candidates, histMap) {
+  var n = candidates.length;
+  // Pre-compute daily spread series for each candidate
+  var spreadSeries = [];
+  for (var i = 0; i < n; i++) {
+    var c = candidates[i];
+    var tA = String(c.tA).toUpperCase();
+    var tB = String(c.tB).toUpperCase();
+    var histA = histMap[tA] || [];
+    var histB = histMap[tB] || [];
+    var len = Math.min(histA.length, histB.length);
+    var series = [];
+    for (var d = 0; d < len; d++) {
+      var idxA = histA.length - len + d;
+      var idxB = histB.length - len + d;
+      series.push(histA[idxA] - histB[idxB]);
+    }
+    spreadSeries.push(series);
+  }
+
+  // Compute Pearson correlation for each pair of candidates
+  var matrix = [];
+  for (var i = 0; i < n; i++) {
+    matrix[i] = [];
+    for (var j = 0; j < n; j++) {
+      if (i === j) { matrix[i][j] = 1.0; continue; }
+      if (j < i) { matrix[i][j] = matrix[j][i]; continue; } // symmetric
+      matrix[i][j] = pearsonCorrelation_(spreadSeries[i], spreadSeries[j]);
+    }
+  }
+  return matrix;
+}
+
+/**
+ * Pearson correlation between two arrays.
+ * Aligns on the shorter length. Returns 0 if insufficient data.
+ */
+function pearsonCorrelation_(a, b) {
+  var n = Math.min(a.length, b.length);
+  if (n < 10) return 0;
+  // Use last n values from each
+  var offA = a.length - n;
+  var offB = b.length - n;
+  var sumA = 0, sumB = 0;
+  for (var i = 0; i < n; i++) { sumA += a[offA + i]; sumB += b[offB + i]; }
+  var meanA = sumA / n, meanB = sumB / n;
+  var num = 0, denA = 0, denB = 0;
+  for (var i = 0; i < n; i++) {
+    var da = a[offA + i] - meanA;
+    var db = b[offB + i] - meanB;
+    num += da * db;
+    denA += da * da;
+    denB += db * db;
+  }
+  var den = Math.sqrt(denA * denB);
+  return den > 0 ? num / den : 0;
+}
+
+/**
+ * Stage 3: Build a single diversified portfolio using greedy best-first with diversity penalty.
+ * @param {Array} candidates - sorted candidate pool
+ * @param {Array} corrMatrix - 2D correlation matrix
+ * @param {Object} usedPairIds - pairs already used in previous portfolios {id: count}
+ * @param {number} size - number of pairs to include
+ */
+function buildSinglePortfolio_(candidates, corrMatrix, usedPairIds, size) {
+  var selected = []; // indices into candidates array
+  var selectedIds = {};
+  var sectorCounts = {};
+
+  for (var slot = 0; slot < size; slot++) {
+    var bestIdx = -1;
+    var bestScore = -Infinity;
+
+    for (var ci = 0; ci < candidates.length; ci++) {
+      if (selectedIds[ci] !== undefined) continue; // already in this portfolio
+      var c = candidates[ci];
+
+      // Base quality score
+      var score = c.qualityScore;
+
+      // Diversity penalty 1: correlation with existing legs
+      if (selected.length > 0) {
+        var maxCorr = 0;
+        for (var si = 0; si < selected.length; si++) {
+          var corr = Math.abs(corrMatrix[ci][selected[si]]);
+          if (corr > maxCorr) maxCorr = corr;
+        }
+        // Heavy penalty for high correlation (0.7 weight)
+        score *= (1 - 0.7 * maxCorr);
+      }
+
+      // Diversity penalty 2: sector concentration
+      var sec = c.sector || 'Other';
+      var curSectorCount = sectorCounts[sec] || 0;
+      if (curSectorCount >= 2) {
+        score *= 0.3; // strong penalty for 3+ in same sector
+      } else if (curSectorCount >= 1) {
+        score *= 0.7; // mild penalty for 2 in same sector
+      }
+
+      // Diversity penalty 3: reuse across portfolios
+      var useCount = usedPairIds[c.id] || 0;
+      if (useCount > 0) {
+        score *= Math.pow(0.5, useCount); // halve score for each reuse
+      }
+
+      if (score > bestScore) {
+        bestScore = score;
+        bestIdx = ci;
+      }
+    }
+
+    if (bestIdx < 0) break;
+    selected.push(bestIdx);
+    selectedIds[bestIdx] = true;
+    var sec2 = candidates[bestIdx].sector || 'Other';
+    sectorCounts[sec2] = (sectorCounts[sec2] || 0) + 1;
+  }
+
+  // Build portfolio result
+  var pairs = [];
+  var totalWr = 0, totalEp = 0, totalWiden = 0;
+  var avgCorrSum = 0, corrCount = 0;
+  var sectorMix = {};
+
+  for (var i = 0; i < selected.length; i++) {
+    var c = candidates[selected[i]];
+    pairs.push({
+      id: c.id, tA: c.tA, tB: c.tB,
+      mode: c.mode, sector: c.sector,
+      z: c.z, wr60: c.wr60, ep60: c.ep60,
+      widenProb: c.widenProb, qualityScore: c.qualityScore
+    });
+    totalWr += c.wr60;
+    totalEp += Math.abs(c.ep60);
+    totalWiden += c.widenProb;
+    var sec3 = c.sector || 'Other';
+    sectorMix[sec3] = (sectorMix[sec3] || 0) + 1;
+
+    // Accumulate pairwise correlations for avg
+    for (var j = i + 1; j < selected.length; j++) {
+      avgCorrSum += Math.abs(corrMatrix[selected[i]][selected[j]]);
+      corrCount++;
+    }
+  }
+
+  var n = pairs.length || 1;
+  return {
+    pairs: pairs,
+    blendedWR: parseFloat((totalWr / n).toFixed(1)),
+    expectedProfit: parseFloat((totalEp / n).toFixed(4)),
+    widenProb: parseFloat((totalWiden / n).toFixed(1)),
+    avgCorrelation: corrCount > 0 ? parseFloat((avgCorrSum / corrCount).toFixed(3)) : 0,
+    sectorMix: sectorMix,
+    basketZ: 0, // will be overwritten by computeBasketMetrics_
+    rollingZ: {},
+    badScenario: {}
+  };
+}
+
+/**
+ * Write model portfolios to ModelPortfolioCache sheet.
+ */
+function writeModelPortfolioCache_(ss, portfolios) {
+  var sheet = ss.getSheetByName('ModelPortfolioCache');
+  if (!sheet) {
+    sheet = ss.insertSheet('ModelPortfolioCache');
+    sheet.getRange(1, 1, 1, 10).setValues([['Rank', 'Pairs', 'BasketZ', 'BlendedWR', 'ExpProfit', 'WidenProb', 'SectorMix', 'AvgCorrelation', 'Metrics', 'UpdatedAt']]);
+  } else {
+    if (sheet.getLastRow() > 1) sheet.getRange(2, 1, sheet.getLastRow() - 1, 10).clearContent();
+  }
+  if (portfolios.length === 0) return;
+  var ts = new Date().toISOString();
+  var rows = portfolios.map(function(p, idx) {
+    return [
+      idx + 1,
+      JSON.stringify(p.pairs),
+      p.basketZ,
+      p.blendedWR,
+      p.expectedProfit,
+      p.widenProb,
+      JSON.stringify(p.sectorMix),
+      p.avgCorrelation,
+      JSON.stringify({ rollingZ: p.rollingZ || {}, badScenario: p.badScenario || {} }),
+      ts
+    ];
+  });
+  sheet.getRange(2, 1, rows.length, 10).setValues(rows);
 }
