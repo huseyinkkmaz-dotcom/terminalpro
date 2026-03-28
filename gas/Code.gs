@@ -391,7 +391,8 @@ function getAlertData(mode) {
             dateKey = ts.getFullYear() + '-' + (mm < 10 ? '0' : '') + mm + '-' + (dd < 10 ? '0' : '') + dd;
           } else if (typeof ts === 'string' && ts.length >= 10) {
             // Fallback: parse "YYYY-MM-DD..." string timestamps
-            dateKey = ts.substring(0, 10);
+            var candidate = ts.substring(0, 10);
+            if (/^\d{4}-\d{2}-\d{2}$/.test(candidate)) dateKey = candidate;
           }
           if (!dateKey) continue; // skip entries without valid timestamps
           if (dateKey === todayKey) continue; // exclude today — live Z appended later
@@ -865,7 +866,8 @@ function getBasketAnalytics() {
         for (var i = 0; i < slice.length; i++) sum += slice[i];
         var mean = sum / slice.length;
         for (var i = 0; i < slice.length; i++) sq += (slice[i] - mean) * (slice[i] - mean);
-        var std = Math.sqrt(sq / (slice.length - 1));
+        var denom = slice.length > 1 ? slice.length - 1 : 1;
+        var std = Math.sqrt(sq / denom);
         var current = basketValues[basketValues.length - 1];
         rollingZ[n + 'd'] = {
           z: std > 0.0001 ? parseFloat(((current - mean) / std).toFixed(2)) : 0,
@@ -1012,7 +1014,8 @@ function computeBasketMetrics_(legs, histMap, customWindows) {
       var mean = sum / slice.length;
       var sq = 0;
       for (var k = 0; k < slice.length; k++) sq += (slice[k] - mean) * (slice[k] - mean);
-      var std = Math.sqrt(sq / (slice.length - 1));
+      var denom = slice.length > 1 ? slice.length - 1 : 1;
+      var std = Math.sqrt(sq / denom);
       var z = std > 0.0001 ? (currentValue - mean) / std : 0;
       var expectedProfit = mean - currentValue; // positive = portfolio should revert UP (per-share)
       rollingZ[n + 'd'] = {
@@ -1331,7 +1334,7 @@ function computeHistoricalProbabilities_(dailyValues, refValue, rollingZ, totalW
 
   // Determine if we're above or below the 90d mean to define "adverse" direction.
   // If spread > mean, adverse = spread widens further up. If spread < mean, adverse = widens further down.
-  var mean90 = (rollingZ['90d'] && !rollingZ['90d'].insufficient) ? rollingZ['90d'].mean : 0;
+  var mean90 = (rollingZ && rollingZ['90d'] && !rollingZ['90d'].insufficient) ? rollingZ['90d'].mean : 0;
   var isAboveMean = refValue >= mean90;
 
   // ── Two-Pass Trigger Search ──
@@ -1399,7 +1402,7 @@ function computeHistoricalProbabilities_(dailyValues, refValue, rollingZ, totalW
   var sortedMae = maeValues.slice().sort(function(a, b) { return a - b; });
   for (var i = 0; i < maeValues.length; i++) maeSum += maeValues[i];
   var avgMae = maeSum / maeValues.length;
-  var p75Idx = Math.floor(sortedMae.length * 0.75);
+  var p75Idx = Math.floor((sortedMae.length - 1) * 0.75);
   var p75Mae = sortedMae[Math.min(p75Idx, sortedMae.length - 1)];
 
   result.badScenario = {
@@ -1563,7 +1566,7 @@ function computeHistoricalProbabilitiesWide_(dailyValues, refValue, rollingZ, to
   if (fullRange < 0.001) return result;
   var tolerance = fullRange * 0.10; // 10% tolerance (wider than standard 5%)
 
-  var mean90 = (rollingZ['90d'] && !rollingZ['90d'].insufficient) ? rollingZ['90d'].mean : 0;
+  var mean90 = (rollingZ && rollingZ['90d'] && !rollingZ['90d'].insufficient) ? rollingZ['90d'].mean : 0;
   var isAboveMean = refValue >= mean90;
 
   var triggers = [];
@@ -1605,7 +1608,7 @@ function computeHistoricalProbabilitiesWide_(dailyValues, refValue, rollingZ, to
   var sortedMae = maeValues.slice().sort(function(a, b) { return a - b; });
   for (var i = 0; i < maeValues.length; i++) maeSum += maeValues[i];
   var avgMae = maeSum / maeValues.length;
-  var p75Idx = Math.floor(sortedMae.length * 0.75);
+  var p75Idx = Math.floor((sortedMae.length - 1) * 0.75);
   var p75Mae = sortedMae[Math.min(p75Idx, sortedMae.length - 1)];
 
   result.badScenario = {
@@ -2233,7 +2236,7 @@ function saveTradeToSheet(trade) {
     var live = ls.getDataRange().getValues();
     for (var i = 1; i < live.length; i++) {
       if (cleanId(live[i][0]) === cleanTradeId) {
-        curZ = live[i][12]; // M: Z-Score
+        curZ = parseFloat(live[i][12]) || 0; // M: Z-Score
         realId = live[i][0];
         foundPair = true;
         break;
@@ -2335,10 +2338,10 @@ function partialCloseTradeInSheet(id, reduceA, reduceB) {
       // Preserve sign (long=+, short=-)
       var signA = sA >= 0 ? 1 : -1;
       var signB = sB >= 0 ? 1 : -1;
-      // Proportionally split div amounts between closed and remaining portions
-      var totalSize = Math.abs(sA) + Math.abs(sB);
-      var closedSize = closedA + closedB;
-      var divRatio = totalSize > 0 ? closedSize / totalSize : 1;
+      // Proportionally split div amounts between closed and remaining portions (per-leg average)
+      var ratioA = Math.abs(sA) > 0 ? closedA / Math.abs(sA) : 1;
+      var ratioB = Math.abs(sB) > 0 ? closedB / Math.abs(sB) : 1;
+      var divRatio = (ratioA + ratioB) / 2;
       var closedPaidDiv = Math.round(totalPaidDiv * divRatio * 100) / 100;
       var closedRcvdDiv = Math.round(totalRcvdDiv * divRatio * 100) / 100;
       // Look up live exit prices
@@ -3488,7 +3491,7 @@ function getPositionSizing_(maxLossPerTrade) {
         if (avgWin > 0 && avgLoss > 0 && winRate > 0 && winRate <= 1) {
           // Kelly fraction: f* = (p * b - q) / b where b = avgWin/avgLoss, p = winRate, q = 1-p
           var b = avgWin / avgLoss;
-          var kelly = Math.min((winRate * b - (1 - winRate)) / b, 1.0);
+          var kelly = b > 0 ? Math.min((winRate * b - (1 - winRate)) / b, 1.0) : 0;
           if (kelly > 0) {
             kellyFraction = parseFloat((kelly * 100).toFixed(1)); // as percentage
             // Half-Kelly shares (conservative): kelly/2 * maxLoss-based shares

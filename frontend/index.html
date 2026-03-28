@@ -1778,7 +1778,7 @@ var cgClr=m.capitalGains>=0?'var(--low)':'var(--high)';var ndClr=m.netDividends>
 var rz90Live=m.rollingZ&&m.rollingZ['90d']&&!m.rollingZ['90d'].insufficient?m.rollingZ['90d']:null;
 var mean90=rz90Live?rz90Live.mean:0;
 var expectedDollarProfit=Math.abs(m.entrySpread-mean90)*(m.totalWeight||1);
-var capturePct=expectedDollarProfit>0.01?(m.totalPnL/expectedDollarProfit*100):0;
+var capturePct=expectedDollarProfit>0.01?Math.max(0,Math.min(m.totalPnL/expectedDollarProfit*100,999)):0;
 var captureClr=capturePct>=70?'var(--low)':capturePct>=30?'var(--accent)':capturePct>=0?'var(--yellow)':'var(--high)';
 h+='<div class="pa-pnl-bar">';
 h+='<div class="pa-pnl-card"><div class="pa-pnl-label">Capital Gains</div><div class="pa-pnl-val" style="color:'+cgClr+'">'+(m.capitalGains>=0?'+':'-')+'$'+Math.abs(m.capitalGains).toFixed(2)+'</div></div>';
