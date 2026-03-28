@@ -1181,14 +1181,14 @@ function closeJournal(){document.getElementById('journalOverlay').classList.remo
 async function saveJournalNote(){var btn=document.getElementById('journalSaveBtn');var note=document.getElementById('journalNote').value;btn.disabled=true;btn.innerText='SAVING...';try{await apiGet('saveNote',{row:journalRowIdx,note:note});document.getElementById('journalSaved').classList.add('show');btn.innerText='SAVE NOTE';btn.disabled=false;var noteBtn=document.getElementById('nbtn-'+journalRowIdx);if(noteBtn){noteBtn.innerText=note?'Edit Note':'Add Note';noteBtn.className=note?'note-btn has-note':'note-btn';}}catch(e){btn.innerText='SAVE NOTE';btn.disabled=false;alert('Failed to save note.');}}
 async function doClearHistory(){if(!confirm('Clear all history? This cannot be undone.'))return;try{await apiGet("clearHistory");refreshData();}catch(e){alert('Failed to clear history.');}}
 var activeSector='';
-function applyFilters(){var q=document.getElementById('sInput').value.toLowerCase();var ex=(document.getElementById('excludeInput').value||'').toUpperCase().trim();var exTokens=ex?ex.split(/[,\s]+/).filter(function(t){return t.length>0;}):[];document.querySelectorAll('.alert-row').forEach(r=>{var textOk=!q||r.getAttribute('data-s').includes(q);var secOk=!activeSector||r.getAttribute('data-sec')===activeSector;var excludeOk=true;if(exTokens.length>0){var tickers=r.getAttribute('data-tickers')||'';for(var e=0;e<exTokens.length;e++){if(tickers.indexOf(exTokens[e])!==-1){excludeOk=false;break;}}}r.style.display=(textOk&&secOk&&excludeOk)?'':'none';});}
+function applyFilters(){var q=document.getElementById('sInput').value.toLowerCase();var ex=(document.getElementById('excludeInput').value||'').toUpperCase().trim();var exTokens=ex?ex.split(/[,\s]+/).filter(function(t){return t.length>0;}):[];var rows=Array.from(document.querySelectorAll('.alert-row'));rows.forEach(r=>{var textOk=!q||r.getAttribute('data-s').includes(q);var secOk=!activeSector||r.getAttribute('data-sec')===activeSector;var excludeOk=true;if(exTokens.length>0){var tickers=r.getAttribute('data-tickers')||'';for(var e=0;e<exTokens.length;e++){if(tickers.indexOf(exTokens[e])!==-1){excludeOk=false;break;}}}r.style.display=(textOk&&secOk&&excludeOk)?'':'none';});if(activeScoreFilter>0){var visible=rows.filter(r=>r.style.display!=='none');visible.sort(function(a,b){return(parseFloat(b.getAttribute('data-score'))||0)-(parseFloat(a.getAttribute('data-score'))||0);});visible.forEach(function(r,i){if(i>=activeScoreFilter)r.style.display='none';});}}
 function search(){applyFilters();}
 function toggleSecDropdown(){var el=document.getElementById('secDropdown');if(el)el.classList.toggle('open');}
 function pickSector(sec,label){activeSector=sec;var lbl=document.getElementById('secLabel');if(lbl)lbl.innerText=label||'ALL SECTORS';var dd=document.getElementById('secDropdown');if(dd){dd.classList.remove('open');var items=dd.querySelectorAll('.sec-menu-item');items.forEach(function(it){it.classList.remove('active');if((!sec&&it.textContent.indexOf('All Sectors')!==-1)||(sec&&it.textContent.indexOf(sec)!==-1))it.classList.add('active');});}applyFilters();}
 document.addEventListener('click',function(e){var dd=document.getElementById('secDropdown');if(dd&&!dd.contains(e.target))dd.classList.remove('open');});
 function sortAge(){sortBy('data-age');}function sortZ(){sortBy('data-z',true);}function sortLiq(){sortBy('data-liq');}function sortProfit(){sortBy('data-profit');}function sortScore(){sortBy('data-score');}
 function filterByScore(n,btn){activeScoreFilter=n;document.querySelectorAll('.filter-pill').forEach(function(p){p.classList.remove('active','active-purple');});if(btn)btn.classList.add(currentMode==='credit'?'active-purple':'active');var rows=Array.from(document.querySelectorAll('.alert-row'));rows.sort(function(a,b){return(parseFloat(b.getAttribute('data-score'))||0)-(parseFloat(a.getAttribute('data-score'))||0);});rows.forEach(function(r,i){if(n>0&&i>=n)r.style.display='none';else r.style.display='';});}
-function sortBy(attr,abs){const tb=document.querySelector("#alertBody");const rows=Array.from(tb.querySelectorAll("tr"));rows.sort((a,b)=>{let av=parseFloat(a.getAttribute(attr))||0,bv=parseFloat(b.getAttribute(attr))||0;if(abs){av=Math.abs(av);bv=Math.abs(bv);}return sortAsc?(bv-av):(av-bv);});rows.forEach(r=>tb.appendChild(r));sortAsc=!sortAsc;}
+function sortBy(attr,abs){const tb=document.querySelector("#alertBody");const rows=Array.from(tb.querySelectorAll("tr"));rows.sort((a,b)=>{let av=parseFloat(a.getAttribute(attr))||0,bv=parseFloat(b.getAttribute(attr))||0;if(abs){av=Math.abs(av);bv=Math.abs(bv);}return sortAsc?(bv-av):(av-bv);});rows.forEach(r=>tb.appendChild(r));sortAsc=!sortAsc;if(activeScoreFilter>0)filterByScore(activeScoreFilter);else applyFilters();}
 function toggleLive(){if(document.getElementById('autoRefresh').checked){refreshData();liveTimer=setInterval(()=>{if(document.getElementById('entryModal').style.display!=='block')refreshData();},300000);}else clearInterval(liveTimer);}
 async function refreshData(){try{setConnStatus("loading");const data=await apiGet("getData",{mode:currentMode});if(data&&data.ok){updateUI(data);setConnStatus("ok");}else setConnStatus("err");}catch(e){setConnStatus("err");}}
 // ── SCREENER CACHE ──
@@ -3007,7 +3007,8 @@ function checkExitSignalsClient() {
     if (_exitParams.stopLossPct > 0 && entryNotional > 0) {
       lossThreshold = entryNotional * (_exitParams.stopLossPct / 100);
     } else if (scrInfo && scrInfo.p75Mae > 0) {
-      lossThreshold = parseFloat(scrInfo.p75Mae);
+      var avgShares2 = (Math.abs(sA) + Math.abs(sB)) / 2;
+      lossThreshold = parseFloat(scrInfo.p75Mae) * avgShares2;
     } else if (stdev > 0) {
       var avgShares = (Math.abs(sA) + Math.abs(sB)) / 2;
       lossThreshold = 2 * stdev * avgShares;
@@ -3087,7 +3088,7 @@ function renderExitSignals() {
     h += '<div class="exit-banner-msg">' + s.message + '</div>';
     h += '<div class="exit-banner-meta">Z: ' + s.currentZ.toFixed(2) + '\u03C3 \u00B7 Day ' + s.daysHeld + ' \u00B7 PnL: ' + (s.unrealizedPnl >= 0 ? '+' : '') + parseFloat(s.unrealizedPnl).toFixed(2) + '$</div>';
     h += '</div>';
-    h += '<button class="exit-banner-action" onclick="openCloseModal(\'' + si + '\')">Close Trade</button>';
+    h += '<button class="exit-banner-action" onclick="openCloseModal(\'' + si + '\',null)">Close Trade</button>';
     h += '</div>';
   });
   container.innerHTML = h;
