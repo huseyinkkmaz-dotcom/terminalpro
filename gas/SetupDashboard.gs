@@ -530,6 +530,148 @@ function toYahooTicker_(ticker) {
 }
 
 /**
+ * Fetches current prices from Yahoo Finance for a list of tickers.
+ * Uses v7/finance/quote (batch, with crumb auth) as primary,
+ * falls back to v8/finance/chart (individual, no auth) for misses.
+ * Returns {TICKER_UPPER: price} map (only tickers with valid prices).
+ */
+function fetchYahooPrices_(tickers) {
+  var prices = {};
+  if (!tickers || tickers.length === 0) return prices;
+
+  // Deduplicate
+  var seen = {};
+  var unique = [];
+  for (var i = 0; i < tickers.length; i++) {
+    var key = String(tickers[i]).trim().toUpperCase();
+    if (key && !seen[key]) {
+      seen[key] = true;
+      unique.push(tickers[i]);
+    }
+  }
+
+  // Build Yahoo symbol → our ticker map
+  var tickerMap = {};
+  for (var i = 0; i < unique.length; i++) {
+    tickerMap[toYahooTicker_(unique[i]).toUpperCase()] = unique[i].toUpperCase();
+  }
+
+  // Phase 1: v7/finance/quote batch (50 tickers per request)
+  var auth = getYahooCrumb_();
+  var BATCH = 50;
+
+  if (auth.crumb) {
+    for (var b = 0; b < unique.length; b += BATCH) {
+      var batch = unique.slice(b, Math.min(b + BATCH, unique.length));
+      var symbols = batch.map(function(t) { return toYahooTicker_(t); }).join(',');
+      var url = 'https://query2.finance.yahoo.com/v7/finance/quote?symbols=' +
+                encodeURIComponent(symbols) + '&fields=regularMarketPrice&crumb=' + encodeURIComponent(auth.crumb);
+      try {
+        var resp = UrlFetchApp.fetch(url, {
+          headers: {
+            'Cookie': auth.cookies,
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+          },
+          muteHttpExceptions: true
+        });
+        if (resp.getResponseCode() === 200) {
+          var json = JSON.parse(resp.getContentText());
+          var results = (json.quoteResponse && json.quoteResponse.result) || [];
+          for (var i = 0; i < results.length; i++) {
+            var q = results[i];
+            var yahooSym = String(q.symbol).toUpperCase();
+            var ourTicker = tickerMap[yahooSym];
+            if (ourTicker && q.regularMarketPrice > 0) {
+              prices[ourTicker] = q.regularMarketPrice;
+            }
+          }
+        }
+      } catch (e) {
+        Logger.log('fetchYahooPrices_ Phase 1 batch error at offset ' + b + ': ' + e.toString());
+      }
+      if (b + BATCH < unique.length) Utilities.sleep(300);
+    }
+  }
+
+  // Phase 2: v8/finance/chart fallback for misses (no auth needed)
+  var misses = [];
+  for (var i = 0; i < unique.length; i++) {
+    var key = unique[i].toUpperCase();
+    if (!prices[key]) misses.push(unique[i]);
+  }
+
+  if (misses.length > 0) {
+    var CHART_BATCH = 20;
+    for (var b = 0; b < misses.length; b += CHART_BATCH) {
+      var batch = misses.slice(b, Math.min(b + CHART_BATCH, misses.length));
+      var requests = [];
+      for (var i = 0; i < batch.length; i++) {
+        requests.push({
+          url: 'https://query1.finance.yahoo.com/v8/finance/chart/' +
+               encodeURIComponent(toYahooTicker_(batch[i])) + '?interval=1d&range=1d',
+          muteHttpExceptions: true,
+          headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }
+        });
+      }
+      try {
+        var responses = UrlFetchApp.fetchAll(requests);
+        for (var i = 0; i < responses.length; i++) {
+          try {
+            if (responses[i].getResponseCode() !== 200) continue;
+            var json = JSON.parse(responses[i].getContentText());
+            var result = json.chart && json.chart.result && json.chart.result[0];
+            if (!result || !result.meta || !result.meta.regularMarketPrice) continue;
+            var price = result.meta.regularMarketPrice;
+            if (price > 0) {
+              prices[batch[i].toUpperCase()] = price;
+            }
+          } catch (e) { /* skip individual ticker errors */ }
+        }
+      } catch (e) {
+        Logger.log('fetchYahooPrices_ Phase 2 batch error at offset ' + b + ': ' + e.toString());
+      }
+      if (b + CHART_BATCH < misses.length) Utilities.sleep(500);
+    }
+  }
+
+  Logger.log('fetchYahooPrices_: got prices for ' + Object.keys(prices).length + '/' + unique.length + ' tickers');
+  return prices;
+}
+
+/**
+ * Compares GOOGLEFINANCE prices against Yahoo Finance prices.
+ * Returns a map of {TICKER_UPPER: yahooPrice} for tickers where the prices
+ * diverge by more than the given threshold (default 2%).
+ * Logs all corrections for audit trail.
+ */
+function detectPriceDiscrepancies_(gfPrices, yahooPrices, threshold) {
+  if (!threshold) threshold = 0.02; // 2% default
+  var corrections = {};
+  var count = 0;
+
+  for (var ticker in gfPrices) {
+    var gfPrice = gfPrices[ticker];
+    var yPrice = yahooPrices[ticker];
+    if (!yPrice || yPrice <= 0 || !gfPrice || gfPrice <= 0) continue;
+
+    var pctDiff = Math.abs(gfPrice - yPrice) / yPrice;
+    if (pctDiff > threshold) {
+      corrections[ticker] = yPrice;
+      count++;
+      Logger.log('PRICE CORRECTION: ' + ticker + ' GF=$' + gfPrice.toFixed(2) +
+                 ' → Yahoo=$' + yPrice.toFixed(2) + ' (diff=' + (pctDiff * 100).toFixed(1) + '%)');
+    }
+  }
+
+  if (count > 0) {
+    Logger.log('detectPriceDiscrepancies_: ' + count + ' corrections needed out of ' + Object.keys(gfPrices).length + ' tickers');
+  } else {
+    Logger.log('detectPriceDiscrepancies_: all prices within ' + (threshold * 100) + '% tolerance');
+  }
+  return corrections;
+}
+
+/**
  * Gets Yahoo Finance API authentication (cookies + crumb).
  * Required for v7/finance/quote and v10/finance/quoteSummary endpoints.
  */
@@ -855,6 +997,41 @@ function updateLivePrices() {
           if (parseFloat(data[r][3]) > 0) validPrices++;
         }
         if (validPrices > 0) {
+          // --- Yahoo Finance price validation failsafe ---
+          // Extract unique tickers and their GOOGLEFINANCE prices
+          var gfPrices = {};
+          var allTickers = [];
+          for (var r = 1; r < data.length; r++) {
+            var tA = String(data[r][1]).trim().toUpperCase();
+            var tB = String(data[r][2]).trim().toUpperCase();
+            var pA = parseFloat(data[r][3]) || 0;
+            var pB = parseFloat(data[r][4]) || 0;
+            if (tA && pA > 0) { gfPrices[tA] = pA; allTickers.push(data[r][1]); }
+            if (tB && pB > 0) { gfPrices[tB] = pB; allTickers.push(data[r][2]); }
+          }
+
+          var yahooPrices = fetchYahooPrices_(allTickers);
+          var corrections = detectPriceDiscrepancies_(gfPrices, yahooPrices, 0.02);
+
+          // Apply corrections to snapshot data before writing to WebCache
+          if (Object.keys(corrections).length > 0) {
+            for (var r = 1; r < data.length; r++) {
+              var tA = String(data[r][1]).trim().toUpperCase();
+              var tB = String(data[r][2]).trim().toUpperCase();
+              var changed = false;
+              if (corrections[tA]) { data[r][3] = corrections[tA]; changed = true; }
+              if (corrections[tB]) { data[r][4] = corrections[tB]; changed = true; }
+              if (changed) {
+                // Recalculate spread (col 5) and Z-score (col 12)
+                data[r][5] = data[r][3] - data[r][4];
+                var stdev = parseFloat(data[r][11]) || 0.001;
+                if (stdev > 0.001) {
+                  data[r][12] = (data[r][5] - (parseFloat(data[r][10]) || 0)) / stdev;
+                }
+              }
+            }
+          }
+
           var cache = ss.getSheetByName('WebCache');
           if (!cache) { cache = ss.insertSheet('WebCache'); } else { cache.clear(); }
           cache.getRange(1, 1, 1, data[0].length).setValues([data[0]]);
@@ -1596,6 +1773,23 @@ function computeCreditCache() {
         volAvg: Number(tdData[i][2]) || 0,
         volume: Number(tdData[i][3]) || 0
       };
+    }
+
+    // 1b. Yahoo Finance price validation failsafe
+    var gfPrices = {};
+    var allCreditTickers = [];
+    for (var t in tickerMap) {
+      if (tickerMap[t].price > 0) {
+        gfPrices[t] = tickerMap[t].price;
+        allCreditTickers.push(t);
+      }
+    }
+    var yahooPrices = fetchYahooPrices_(allCreditTickers);
+    var corrections = detectPriceDiscrepancies_(gfPrices, yahooPrices, 0.02);
+    for (var t in corrections) {
+      if (tickerMap[t]) {
+        tickerMap[t].price = corrections[t];
+      }
     }
 
     // 2. Read TickerHistory (1-year prices per ticker)
