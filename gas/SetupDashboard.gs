@@ -140,6 +140,7 @@ function setupAllBatched() {
       ensureSheet_(ss, 'DivDates', ['Ticker', 'ExDivDate', 'LastFetched']);
       ensureSheet_(ss, 'Watchlist', ['PairID', 'AddedDate', 'AddedZ', 'Mode', 'AddedExpProfit', 'AddedSpread']);
       ensureSheet_(ss, 'BasketCache', ['Key', 'Value', 'UpdatedAt']);
+      ensureSheet_(ss, 'ScreenerCache', ['PairID','TickerA','TickerB','Mode','Z','ExpProfit','WR30','WR60','WR90','AvgMAE','P75MAE','WidenProb','Triggers','EP30','EP60','UpdatedAt','WR15','EP15','EP90']);
       ensureSheet_(ss, 'TreasuryHist', ['Date', 'US2Y', 'US5Y', 'US7Y', 'US10Y', 'US30Y']);
       Logger.log('Phase 2 complete: Supporting sheets ready.');
 
@@ -432,8 +433,8 @@ function checkSetupProgress() {
   var stateJson = PropertiesService.getScriptProperties().getProperty('SETUP_STATE');
   var phaseNames = [
     '0: Intra Levels', '1: Intra Live', '2: Supporting Sheets',
-    '3: Credit Pair Generation', '4: Credit Levels', '5: Credit Live',
-    '6: Triggers', '7: DONE'
+    '3: Credit Pair Generation', '4: TickerData + TickerHistory',
+    '5: Credit Cache Computation', '6: Triggers', '7: DONE'
   ];
   if (!stateJson) {
     showMsg_('No setup in progress. Run createAutoTrigger() + setupAllBatched() to start.');
@@ -1432,8 +1433,8 @@ function snapshotZScores() {
     var ss = SpreadsheetApp.getActive();
     var now = new Date();
     var sheets = [
-      { name: 'Live', source: 'intra' },
-      { name: 'WebCacheCredit', source: 'credit' }
+      { name: 'WebCache', source: 'intra', fallback: 'Live' },
+      { name: 'WebCacheCredit', source: 'credit', fallback: null }
     ];
     var logSheet = ss.getSheetByName('AlertsLog');
     var ageSheet = ss.getSheetByName('ZScoreAge');
@@ -1450,6 +1451,9 @@ function snapshotZScores() {
     var ageUpdates = [];
     for (var s = 0; s < sheets.length; s++) {
       var liveSheet = ss.getSheetByName(sheets[s].name);
+      if ((!liveSheet || liveSheet.getLastRow() <= 1) && sheets[s].fallback) {
+        liveSheet = ss.getSheetByName(sheets[s].fallback);
+      }
       if (!liveSheet) continue;
       var data = liveSheet.getDataRange().getValues();
       if (data.length <= 1) continue;
@@ -2349,7 +2353,7 @@ function computeMacroValuationsBatch() {
           // StDev
           var sqSum = 0;
           for (var s = 0; s < calcSpreads.length; s++) sqSum += Math.pow(calcSpreads[s] - mean, 2);
-          var stdev = Math.sqrt(sqSum / calcSpreads.length);
+          var stdev = calcSpreads.length > 1 ? Math.sqrt(sqSum / (calcSpreads.length - 1)) : 0.001;
           // Current spread
           curSpread = calcSpreads[calcSpreads.length - 1];
           // Z-score

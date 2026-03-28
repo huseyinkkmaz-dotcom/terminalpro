@@ -2971,7 +2971,7 @@ function getJournalAnalytics_() {
     var avgLoss = losses > 0 ? pnls.filter(function(p){return p<=0;}).reduce(function(a,b){return a+b;},0) / losses : 0;
     var grossProfits = pnls.filter(function(p){return p>0;}).reduce(function(a,b){return a+b;},0);
     var grossLosses = Math.abs(pnls.filter(function(p){return p<=0;}).reduce(function(a,b){return a+b;},0));
-    var profitFactor = grossLosses > 0 ? parseFloat((grossProfits / grossLosses).toFixed(2)) : 0;
+    var profitFactor = grossLosses > 0 ? parseFloat((grossProfits / grossLosses).toFixed(2)) : (grossProfits > 0 ? 99.99 : 0);
 
     // Expectancy = (WinRate × AvgWin) - (LossRate × |AvgLoss|)
     var expectancy = (winRate/100 * avgWin) - ((1 - winRate/100) * Math.abs(avgLoss));
@@ -3229,7 +3229,7 @@ function runBacktest_(zThreshold, exitZ, maxHold, mode) {
         }
         var rollMean = sumSpr / WINDOW;
         var rollVar = (sumSprSq / WINDOW) - (rollMean * rollMean);
-        var rollStdev = rollVar > 0 ? Math.sqrt(rollVar) : 0.001;
+        var rollStdev = rollVar > 0 ? Math.sqrt(rollVar * WINDOW / (WINDOW - 1)) : 0.001;
         var spread = pricesA[day] - pricesB[day];
         var zScore = (spread - rollMean) / rollStdev;
 
@@ -3775,7 +3775,7 @@ function runSensitivitySweep_(maxHold, mode, pairId) {
         }
         var rollMean = sumSpr / WINDOW;
         var rollVar = (sumSprSq / WINDOW) - (rollMean * rollMean);
-        var rollStdev = rollVar > 0 ? Math.sqrt(rollVar) : 0.001;
+        var rollStdev = rollVar > 0 ? Math.sqrt(rollVar * WINDOW / (WINDOW - 1)) : 0.001;
         zArr[day] = (pA[day] - pB[day] - rollMean) / rollStdev;
       }
       zSeriesList.push({ z: zArr, pA: pA, pB: pB, len: len, start: WINDOW });
@@ -3913,7 +3913,7 @@ function runOptimalSweep_(maxHold, mode) {
         }
         var rollMean = sumSpr / WINDOW;
         var rollVar = (sumSprSq / WINDOW) - (rollMean * rollMean);
-        var rollStdev = rollVar > 0 ? Math.sqrt(rollVar) : 0.001;
+        var rollStdev = rollVar > 0 ? Math.sqrt(rollVar * WINDOW / (WINDOW - 1)) : 0.001;
         zArr[day] = (pA[day] - pB[day] - rollMean) / rollStdev;
       }
 
