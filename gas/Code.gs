@@ -2216,9 +2216,11 @@ function saveTradeToSheet(trade) {
   var curZ = 0;
   var cleanTradeId = cleanId(trade.id);
   var realId = trade.id;
+  var foundPair = false;
   // Check WebCache/Live (intra) + WebCacheCredit (credit computed cache)
   var liveSheets = ['WebCache','WebCacheCredit','Live'];
   for (var s = 0; s < liveSheets.length; s++) {
+    if (foundPair) break;
     var ls = ss.getSheetByName(liveSheets[s]);
     if (!ls || ls.getLastRow() <= 1) continue;
     var live = ls.getDataRange().getValues();
@@ -2226,10 +2228,10 @@ function saveTradeToSheet(trade) {
       if (cleanId(live[i][0]) === cleanTradeId) {
         curZ = live[i][12]; // M: Z-Score
         realId = live[i][0];
+        foundPair = true;
         break;
       }
     }
-    if (curZ !== 0) break;
   }
   // Check if position already exists — scale into it (weighted avg prices, sum sizes)
   var openData = sheet.getDataRange().getValues();
@@ -2427,8 +2429,10 @@ function saveToWatchlist(id, mode) {
   }
   // Look up current Z-score, spread, and mean from live data
   var curZ = 0, curSpread = 0, curMean = 0;
+  var foundWatch = false;
   var cacheSheets = ['WebCache', 'WebCacheCredit', 'Live'];
   for (var s = 0; s < cacheSheets.length; s++) {
+    if (foundWatch) break;
     var ls = ss.getSheetByName(cacheSheets[s]);
     if (!ls || ls.getLastRow() <= 1) continue;
     var data = ls.getDataRange().getValues();
@@ -2437,10 +2441,10 @@ function saveToWatchlist(id, mode) {
         curZ = parseFloat(data[i][12]) || 0;
         curSpread = parseFloat(data[i][5]) || 0;
         curMean = parseFloat(data[i][10]) || 0;
+        foundWatch = true;
         break;
       }
     }
-    if (curZ !== 0) break;
   }
   var expProfit = Math.abs(curSpread - curMean);
   sheet.appendRow([id, new Date(), curZ, mode, expProfit, curSpread]);
@@ -2833,7 +2837,7 @@ function runNightlyScreener() {
       if (new Date().getTime() - startTime > MAX_MS) { Logger.log('Screener: timeout after ' + i + ' pairs'); break; }
       var a = top[i];
       try {
-        var analysis = analyzeSinglePair_(a.tA, a.tB, a.pA || parseFloat(a.spr), a.pB || 0, parseFloat(a.z), [15, 30, 60, 90]);
+        var analysis = analyzeSinglePair_(a.tA, a.tB, parseFloat(a.pA) || 0, parseFloat(a.pB) || 0, parseFloat(a.z), [15, 30, 60, 90]);
         if (analysis && !analysis.error && analysis.metrics) {
           var prob = analysis.metrics.probabilities || {};
           var wr15 = (prob.winRates && prob.winRates['15d']) ? prob.winRates['15d'].rate : null;
@@ -4290,5 +4294,51 @@ function saveExitParams_(exitZ, maxHold, stopLossPct) {
   } catch (e) {
     console.error('saveExitParams_ error: ' + e);
     return false;
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// CORRELATION MONITOR — stub (planned feature)
+// ═══════════════════════════════════════════════════════════════════
+function getCorrelationMonitor_() {
+  try {
+    var ss = SpreadsheetApp.getActive();
+    var openSheet = ss.getSheetByName('OpenTrades');
+    if (!openSheet || openSheet.getLastRow() <= 1) return { pairs: 0 };
+    var openData = openSheet.getDataRange().getValues();
+    var histMap = readTickerHistMap_(ss);
+    return computePairCorrelation_(openData, histMap);
+  } catch (e) {
+    return { pairs: 0, error: e.toString() };
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// NOTIFICATION SETTINGS — stub (planned feature)
+// ═══════════════════════════════════════════════════════════════════
+function saveNotificationSettings_(chatId, botToken) {
+  var ss = SpreadsheetApp.getActive();
+  var sheet = ss.getSheetByName('NotificationSettings');
+  if (!sheet) {
+    sheet = ss.insertSheet('NotificationSettings');
+    sheet.getRange(1, 1, 1, 2).setValues([['Key', 'Value']]);
+  }
+  if (sheet.getLastRow() > 1) sheet.deleteRows(2, sheet.getLastRow() - 1);
+  sheet.getRange(2, 1, 2, 2).setValues([['chatId', chatId], ['botToken', botToken]]);
+}
+
+function getNotificationSettings_() {
+  try {
+    var ss = SpreadsheetApp.getActive();
+    var sheet = ss.getSheetByName('NotificationSettings');
+    if (!sheet || sheet.getLastRow() <= 1) return { chatId: '', botToken: '' };
+    var data = sheet.getDataRange().getValues();
+    var settings = {};
+    for (var i = 1; i < data.length; i++) {
+      settings[String(data[i][0]).trim()] = String(data[i][1] || '');
+    }
+    return settings;
+  } catch (e) {
+    return { chatId: '', botToken: '' };
   }
 }
