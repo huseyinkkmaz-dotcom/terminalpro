@@ -4414,6 +4414,7 @@ function getModelPortfolios_() {
       var r = data[i];
       if (!r[0] && r[0] !== 0) continue;
       try {
+        var m = JSON.parse(r[8] || '{}');
         portfolios.push({
           rank: parseInt(r[0]) || (i),
           pairs: JSON.parse(r[1] || '[]'),
@@ -4423,7 +4424,9 @@ function getModelPortfolios_() {
           widenProb: parseFloat(r[5]) || 0,
           sectorMix: JSON.parse(r[6] || '{}'),
           avgCorrelation: parseFloat(r[7]) || 0,
-          metrics: JSON.parse(r[8] || '{}'),
+          metrics: m,
+          profitCapture: m.profitCapture != null ? m.profitCapture : null,
+          kellySizing: m.kellySizing || null,
           updatedAt: r[9] || ''
         });
       } catch (e) { continue; }

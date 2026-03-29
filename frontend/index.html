@@ -1301,6 +1301,31 @@ function renderModelPortfolios(mp){
     h+='<div style="text-align:center"><div style="font-size:8px;font-weight:900;color:var(--subtext);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">Widen Prob</div><div style="font-family:JetBrains Mono;font-size:18px;font-weight:900;color:'+wpClr+'">'+wp.toFixed(0)+'%</div></div>';
     h+='<div style="text-align:center"><div style="font-size:8px;font-weight:900;color:var(--subtext);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">Stagnant</div><div style="font-family:JetBrains Mono;font-size:18px;font-weight:900;color:'+spClr+'">'+sp.toFixed(0)+'%</div></div>';
     h+='</div>';
+    // Row 2: Profit Capture, Kelly, Risk:Reward, Suggested Capital
+    var pc=p.profitCapture!=null?parseFloat(p.profitCapture):null;
+    var ks=p.kellySizing||null;
+    if(pc!=null||ks){
+      h+='<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:16px;padding-top:12px;border-top:1px solid var(--border)">';
+      if(pc!=null){
+        var pcClr=pc>=60?'var(--low)':pc>=35?'var(--yellow)':'var(--high)';
+        h+='<div style="text-align:center"><div style="font-size:8px;font-weight:900;color:var(--subtext);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">Profit Capture</div><div style="font-family:JetBrains Mono;font-size:18px;font-weight:900;color:'+pcClr+'">'+pc.toFixed(0)+'%</div></div>';
+      } else {
+        h+='<div></div>';
+      }
+      if(ks){
+        var hk=parseFloat(ks.halfKellyPct)||0;
+        var rr=parseFloat(ks.riskRewardRatio)||0;
+        var sc=parseInt(ks.suggestedCapital)||0;
+        var hkClr=hk>=15?'var(--low)':hk>=8?'var(--yellow)':'var(--high)';
+        var rrClr=rr>=2?'var(--low)':rr>=1.2?'var(--yellow)':'var(--high)';
+        h+='<div style="text-align:center"><div style="font-size:8px;font-weight:900;color:var(--subtext);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">&frac12; Kelly</div><div style="font-family:JetBrains Mono;font-size:18px;font-weight:900;color:'+hkClr+'">'+hk.toFixed(1)+'%</div></div>';
+        h+='<div style="text-align:center"><div style="font-size:8px;font-weight:900;color:var(--subtext);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">Risk:Reward</div><div style="font-family:JetBrains Mono;font-size:18px;font-weight:900;color:'+rrClr+'">'+rr.toFixed(1)+'x</div></div>';
+        h+='<div style="text-align:center"><div style="font-size:8px;font-weight:900;color:var(--subtext);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">Sug. Capital</div><div style="font-family:JetBrains Mono;font-size:18px;font-weight:900;color:var(--text)">$'+sc.toLocaleString()+'</div></div>';
+      } else {
+        h+='<div></div><div></div><div></div>';
+      }
+      h+='</div>';
+    }
     // Correlation badge
     h+='<div style="display:flex;align-items:center;gap:8px;margin-bottom:14px">';
     h+='<div style="font-size:9px;font-weight:900;color:var(--subtext);text-transform:uppercase">Avg Correlation:</div>';
@@ -1323,6 +1348,7 @@ function renderModelPortfolios(mp){
     h+='<th style="text-align:center;padding:6px 8px;font-size:8px;font-weight:900;color:var(--subtext);text-transform:uppercase">Sector</th>';
     h+='<th style="text-align:center;padding:6px 8px;font-size:8px;font-weight:900;color:var(--subtext);text-transform:uppercase">Z-Score</th>';
     h+='<th style="text-align:center;padding:6px 8px;font-size:8px;font-weight:900;color:var(--subtext);text-transform:uppercase">WR(30d)</th>';
+    h+='<th style="text-align:center;padding:6px 8px;font-size:8px;font-weight:900;color:var(--subtext);text-transform:uppercase">Opt Entry/Exit</th>';
     h+='<th style="text-align:center;padding:6px 8px;font-size:8px;font-weight:900;color:var(--subtext);text-transform:uppercase">Direction</th>';
     h+='</tr></thead><tbody>';
     pairs.forEach(function(pr){
@@ -1339,6 +1365,21 @@ function renderModelPortfolios(mp){
       h+='<td style="padding:8px;text-align:center;font-size:10px;color:var(--subtext)">'+(pr.sector||'—')+'</td>';
       h+='<td style="padding:8px;text-align:center;font-family:JetBrains Mono;font-weight:900;color:'+pzClr+'">'+pz.toFixed(2)+'&sigma;</td>';
       h+='<td style="padding:8px;text-align:center;font-family:JetBrains Mono;font-weight:900;color:'+pwrClr+'">'+pwr.toFixed(0)+'%</td>';
+      // Optimal entry/exit from mini-sweep
+      if(pr.optEntry){
+        var owr=parseFloat(pr.optWR)||0;
+        var owrClr=owr>=70?'var(--low)':owr>=55?'var(--yellow)':'var(--high)';
+        var opf=parseFloat(pr.optProfitFactor)||0;
+        h+='<td style="padding:8px;text-align:center;font-family:JetBrains Mono;font-size:10px">';
+        h+='<span style="color:var(--text);font-weight:700">'+parseFloat(pr.optEntry).toFixed(1)+'&sigma;</span>';
+        h+='<span style="color:var(--subtext);margin:0 2px">&rarr;</span>';
+        h+='<span style="color:var(--text);font-weight:700">'+parseFloat(pr.optExit).toFixed(2)+'&sigma;</span>';
+        h+=' <span style="color:'+owrClr+';font-size:8px;font-weight:900;margin-left:4px">'+owr.toFixed(0)+'%</span>';
+        if(opf>0) h+=' <span style="color:var(--subtext);font-size:8px">'+opf.toFixed(1)+'pf</span>';
+        h+='</td>';
+      } else {
+        h+='<td style="padding:8px;text-align:center;color:var(--subtext);font-size:9px">—</td>';
+      }
       h+='<td style="padding:8px;text-align:center;font-size:9px"><span style="color:var(--low);font-weight:900">L:'+((pz>0)?pr.tB:pr.tA)+'</span> <span style="color:var(--subtext)">/</span> <span style="color:var(--high);font-weight:900">S:'+((pz>0)?pr.tA:pr.tB)+'</span></td>';
       h+='</tr>';
     });
