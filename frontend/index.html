@@ -1141,14 +1141,18 @@ async function analyzeAlert(btn, tA, tB, pA, pB, z, rowId) {
       if (prob.toleranceWidened) h += ' <span style="font-size:8px;color:var(--yellow);font-weight:400">*Tolerance widened to 10%*</span>';
       h += '</div>';
       var wpClr = bs.wideningProb > 60 ? 'var(--high)' : bs.wideningProb > 40 ? 'var(--yellow)' : 'var(--low)';
+      var stag = (bs.stagnantRate != null) ? bs.stagnantRate : Math.max(0, 100 - (bs.wideningProb || 0) - 50);
+      var stagClr = stag > 40 ? 'var(--yellow)' : stag > 20 ? 'var(--subtext)' : 'var(--low)';
       h += '<div class="ar-metric"><span class="ar-metric-label">Avg Max Loss</span><span class="ar-metric-val" style="color:var(--high)">-$' + Math.abs(bs.avgMae).toFixed(4) + '</span></div>';
       h += '<div class="ar-metric"><span class="ar-metric-label">P75 Max Loss</span><span class="ar-metric-val" style="color:var(--high)">-$' + Math.abs(bs.p75Mae).toFixed(4) + '</span></div>';
       h += '<div class="ar-metric"><span class="ar-metric-label">Widen Prob</span><span class="ar-metric-val" style="color:' + wpClr + '">' + bs.wideningProb + '%</span></div>';
+      h += '<div class="ar-metric"><span class="ar-metric-label">Stagnant</span><span class="ar-metric-val" style="color:' + stagClr + '">' + stag.toFixed(1) + '%</span></div>';
     } else {
       h += ' (0 samples)</div>';
       h += '<div class="ar-metric"><span class="ar-metric-label">Avg Max Loss</span><span class="ar-metric-val" style="color:var(--subtext)">N/A</span></div>';
       h += '<div class="ar-metric"><span class="ar-metric-label">P75 Max Loss</span><span class="ar-metric-val" style="color:var(--subtext)">N/A</span></div>';
       h += '<div class="ar-metric"><span class="ar-metric-label">Widen Prob</span><span class="ar-metric-val" style="color:var(--subtext)">N/A</span></div>';
+      h += '<div class="ar-metric"><span class="ar-metric-label">Stagnant</span><span class="ar-metric-val" style="color:var(--subtext)">N/A</span></div>';
     }
     h += '</div>';
     h += '</div></td></tr>';
@@ -1288,11 +1292,14 @@ function renderModelPortfolios(mp){
     // Rank badge
     h+='<div style="position:absolute;top:0;right:0;background:'+rankBg+';color:white;font-size:11px;font-weight:900;padding:6px 14px;border-radius:0 12px 0 12px">#'+(idx+1)+'</div>';
     // Header metrics
-    h+='<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:16px">';
+    var sp=parseFloat(p.stagnantRate)||Math.max(0,100-wr-wp);
+    var spClr=sp>40?'var(--yellow)':sp>20?'var(--subtext)':'var(--low)';
+    h+='<div style="display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-bottom:16px">';
     h+='<div style="text-align:center"><div style="font-size:8px;font-weight:900;color:var(--subtext);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">Basket Z</div><div style="font-family:JetBrains Mono;font-size:18px;font-weight:900;color:'+bzClr+'">'+bz.toFixed(2)+'&sigma;</div></div>';
     h+='<div style="text-align:center"><div style="font-size:8px;font-weight:900;color:var(--subtext);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">Win Rate</div><div style="font-family:JetBrains Mono;font-size:18px;font-weight:900;color:'+wrClr+'">'+wr.toFixed(0)+'%</div></div>';
     h+='<div style="text-align:center"><div style="font-size:8px;font-weight:900;color:var(--subtext);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">Exp. Profit</div><div style="font-family:JetBrains Mono;font-size:18px;font-weight:900;color:var(--low)">$'+ep.toFixed(2)+'</div></div>';
     h+='<div style="text-align:center"><div style="font-size:8px;font-weight:900;color:var(--subtext);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">Widen Prob</div><div style="font-family:JetBrains Mono;font-size:18px;font-weight:900;color:'+wpClr+'">'+wp.toFixed(0)+'%</div></div>';
+    h+='<div style="text-align:center"><div style="font-size:8px;font-weight:900;color:var(--subtext);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">Stagnant</div><div style="font-family:JetBrains Mono;font-size:18px;font-weight:900;color:'+spClr+'">'+sp.toFixed(0)+'%</div></div>';
     h+='</div>';
     // Correlation badge
     h+='<div style="display:flex;align-items:center;gap:8px;margin-bottom:14px">';
@@ -1572,6 +1579,8 @@ var wpClr=wWiden>60?'var(--high)':wWiden>40?'var(--yellow)':'var(--low)';
 h+='<div class="pa-metric-row"><span class="pa-metric-label">Agg Bad (Avg)</span><span class="pa-metric-val" style="color:var(--high);font-size:14px">-$'+Math.abs(wBad).toFixed(2)+'</span></div>';
 h+='<div class="pa-metric-row"><span class="pa-metric-label">Agg Bad (P75)</span><span class="pa-metric-val" style="color:var(--high);font-size:14px">-$'+Math.abs(wBadP75).toFixed(2)+'</span></div>';
 h+='<div class="pa-metric-row"><span class="pa-metric-label">Widen Prob</span><span class="pa-metric-val" style="color:'+wpClr+';font-size:14px">'+wWiden.toFixed(0)+'%</span></div>';
+var wStag=agg.stagnantRate||Math.max(0,100-wWR-wWiden);var wStagClr=wStag>40?'var(--yellow)':wStag>20?'var(--subtext)':'var(--low)';
+h+='<div class="pa-metric-row"><span class="pa-metric-label">Stagnant</span><span class="pa-metric-val" style="color:'+wStagClr+';font-size:14px">'+wStag.toFixed(0)+'%</span></div>';
 h+='</div>';}
 h+='</div>';
 // ── Tier 3: Cross-Matrix Breakdown Table ──
@@ -1698,6 +1707,8 @@ d+='<div class="pa-bad-grid">';
 d+='<div class="pa-bad-cell"><div class="pa-bad-cell-label">Avg Max Loss</div><div class="pa-bad-cell-val" style="color:var(--high)">-$'+Math.abs(bs.avgMae).toFixed(4)+'/sh</div></div>';
 d+='<div class="pa-bad-cell"><div class="pa-bad-cell-label">P75 Max Loss</div><div class="pa-bad-cell-val" style="color:var(--high)">-$'+Math.abs(bs.p75Mae).toFixed(4)+'/sh</div></div>';
 d+='<div class="pa-bad-cell"><div class="pa-bad-cell-label">Widen Prob</div><div class="pa-bad-cell-val" style="color:'+bsWpClr+'">'+bs.wideningProb+'%</div></div>';
+var bsStag=(bs.stagnantRate!=null)?bs.stagnantRate:Math.max(0,100-(bs.wideningProb||0)-50);var bsStagClr=bsStag>40?'var(--yellow)':bsStag>20?'var(--subtext)':'var(--low)';
+d+='<div class="pa-bad-cell"><div class="pa-bad-cell-label">Stagnant</div><div class="pa-bad-cell-val" style="color:'+bsStagClr+'">'+bsStag.toFixed(1)+'%</div></div>';
 d+='</div></div>';}
 // 30/60/90 mini cards
 var rz=p.rollingZ||{};var prob=p.probabilities||{};var winRates=prob.winRates||{};
@@ -1980,7 +1991,9 @@ h+='<div class="pa-bad-grid">';
 h+='<div class="pa-bad-cell"><div class="pa-bad-cell-label">Avg Max Loss</div><div class="pa-bad-cell-val" style="color:var(--high)">-$'+Math.abs(bs.avgMae).toFixed(4)+'</div><div class="pa-bad-cell-sub">per share adverse excursion</div></div>';
 var wpClr=bs.wideningProb>60?'var(--high)':bs.wideningProb>40?'var(--yellow)':'var(--low)';
 h+='<div class="pa-bad-cell"><div class="pa-bad-cell-label">P75 Max Loss</div><div class="pa-bad-cell-val" style="color:var(--high)">-$'+Math.abs(bs.p75Mae).toFixed(4)+'</div><div class="pa-bad-cell-sub">75th percentile worst case</div></div>';
-h+='<div class="pa-bad-cell"><div class="pa-bad-cell-label">Widening Probability</div><div class="pa-bad-cell-val" style="color:'+wpClr+'">'+bs.wideningProb+'%</div><div class="pa-bad-cell-sub">chance spread widens next day</div></div>';
+h+='<div class="pa-bad-cell"><div class="pa-bad-cell-label">Widening Probability</div><div class="pa-bad-cell-val" style="color:'+wpClr+'">'+bs.wideningProb+'%</div><div class="pa-bad-cell-sub">spread worsens &gt;1&sigma; before mean touch</div></div>';
+var hStag=(bs.stagnantRate!=null)?bs.stagnantRate:Math.max(0,100-(bs.wideningProb||0)-50);var hStagClr=hStag>40?'var(--yellow)':hStag>20?'var(--subtext)':'var(--low)';
+h+='<div class="pa-bad-cell"><div class="pa-bad-cell-label">Stagnant</div><div class="pa-bad-cell-val" style="color:'+hStagClr+'">'+hStag.toFixed(1)+'%</div><div class="pa-bad-cell-sub">neither reverts nor widens in window</div></div>';
 h+='</div>';
 }else{
 h+='<div class="pa-bad-header"><span class="pa-bad-title">&#9888; Bad Scenario — Downside Risk</span><span class="pa-bad-sample">0 historical triggers</span></div>';
@@ -1988,6 +2001,7 @@ h+='<div class="pa-bad-grid">';
 h+='<div class="pa-bad-cell"><div class="pa-bad-cell-label">Avg Max Loss</div><div class="pa-bad-cell-val" style="color:var(--subtext)">N/A</div><div class="pa-bad-cell-sub">No historical matches found</div></div>';
 h+='<div class="pa-bad-cell"><div class="pa-bad-cell-label">P75 Max Loss</div><div class="pa-bad-cell-val" style="color:var(--subtext)">N/A</div><div class="pa-bad-cell-sub">No historical matches found</div></div>';
 h+='<div class="pa-bad-cell"><div class="pa-bad-cell-label">Widening Probability</div><div class="pa-bad-cell-val" style="color:var(--subtext)">N/A</div><div class="pa-bad-cell-sub">No historical matches found</div></div>';
+h+='<div class="pa-bad-cell"><div class="pa-bad-cell-label">Stagnant</div><div class="pa-bad-cell-val" style="color:var(--subtext)">N/A</div><div class="pa-bad-cell-sub">No historical matches found</div></div>';
 h+='</div>';
 }
 h+='</div>';

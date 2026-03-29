@@ -1388,13 +1388,6 @@ function computeHistoricalProbabilities_(dailyValues, refValue, rollingZ, totalW
       if (excursion > maxAdverse) maxAdverse = excursion;
     }
     maeValues.push(maxAdverse);
-    // Did the spread widen on the very next day? (immediate direction check)
-    if (lookForward >= 1) {
-      var nextDay = dailyValues[idx + 1];
-      if (isAboveMean && nextDay > triggerSpread + tolerance * 0.1) sawWidening = true;
-      else if (!isAboveMean && nextDay < triggerSpread - tolerance * 0.1) sawWidening = true;
-    }
-    if (sawWidening) widenCount++;
   }
 
   // Average and P75 MAE
@@ -1405,17 +1398,10 @@ function computeHistoricalProbabilities_(dailyValues, refValue, rollingZ, totalW
   var p75Idx = Math.floor((sortedMae.length - 1) * 0.75);
   var p75Mae = sortedMae[Math.min(p75Idx, sortedMae.length - 1)];
 
-  result.badScenario = {
-    avgMae: parseFloat(avgMae.toFixed(4)),           // avg max adverse excursion (per share)
-    avgMaeDollar: parseFloat((avgMae * totalWeight).toFixed(2)),  // total $ loss
-    p75Mae: parseFloat(p75Mae.toFixed(4)),            // 75th percentile MAE (per share)
-    p75MaeDollar: parseFloat((p75Mae * totalWeight).toFixed(2)),  // 75th percentile $ loss
-    wideningProb: parseFloat((widenCount / triggers.length * 100).toFixed(1)), // % chance of widening next day
-    sampleSize: triggers.length
-  };
-
-  // ── FEATURE 2: Mean Reversion Win Rates per Window ──
+  // ── FEATURE 2: Mean Reversion Win Rates per Window + window-matched Widen Prob ──
+  // widenProb is now: % of triggers where spread worsens by >1σ BEFORE touching mean (per window)
   var windows = (customWindows && customWindows.length > 0) ? customWindows : [30, 60, 90];
+  var widenCountByWindow = {};
   for (var w = 0; w < windows.length; w++) {
     var n = windows[w];
     var wKey = n + 'd';
@@ -1433,7 +1419,10 @@ function computeHistoricalProbabilities_(dailyValues, refValue, rollingZ, totalW
     var meanTolerance = distToMean * 0.10;
     if (meanTolerance < 0.01) meanTolerance = 0.01; // minimum floor
 
-    var wins = 0, eligible = 0;
+    // 1σ adverse threshold for widen definition
+    var oneSigma = (rollingZ && rollingZ['90d'] && !rollingZ['90d'].insufficient) ? rollingZ['90d'].std : (fullRange * 0.15);
+
+    var wins = 0, eligible = 0, widenCount = 0;
     for (var t = 0; t < triggers.length; t++) {
       var idx = triggers[t];
       var remaining = len - idx - 1;
@@ -1441,14 +1430,26 @@ function computeHistoricalProbabilities_(dailyValues, refValue, rollingZ, totalW
       eligible++;
       var lookAhead = Math.min(n, remaining);
       var touched = false;
+      var widened = false;
+      var triggerSpread = dailyValues[idx];
       for (var f = 1; f <= lookAhead; f++) {
-        if (Math.abs(dailyValues[idx + f] - wMean) <= meanTolerance) {
+        var futVal = dailyValues[idx + f];
+        // Check mean touch first
+        if (Math.abs(futVal - wMean) <= meanTolerance) {
           touched = true;
           break;
         }
+        // Check adverse >1σ from trigger (spread worsening)
+        if (!widened) {
+          var excursion = isAboveMean ? (futVal - triggerSpread) : (triggerSpread - futVal);
+          if (excursion > oneSigma) widened = true;
+        }
       }
       if (touched) wins++;
+      if (widened && !touched) widenCount++; // widened >1σ without ever touching mean in window
     }
+
+    widenCountByWindow[wKey] = { widenCount: widenCount, eligible: eligible };
 
     result.winRates[wKey] = {
       rate: eligible > 0 ? parseFloat((wins / eligible * 100).toFixed(1)) : 0,
@@ -1456,6 +1457,25 @@ function computeHistoricalProbabilities_(dailyValues, refValue, rollingZ, totalW
       eligible: eligible
     };
   }
+
+  // Compute widen prob from 60d window (or best available)
+  var bestWiden = widenCountByWindow['60d'] || widenCountByWindow['90d'] || widenCountByWindow['30d'] || { widenCount: 0, eligible: 0 };
+  var widenProbPct = bestWiden.eligible > 0 ? parseFloat((bestWiden.widenCount / bestWiden.eligible * 100).toFixed(1)) : 0;
+  // Derive primary win rate for stagnant calc (prefer 60d)
+  var primaryWR = (result.winRates['60d'] && result.winRates['60d'].eligible > 0) ? result.winRates['60d'].rate
+    : (result.winRates['90d'] && result.winRates['90d'].eligible > 0) ? result.winRates['90d'].rate
+    : (result.winRates['30d'] && result.winRates['30d'].eligible > 0) ? result.winRates['30d'].rate : 0;
+  var stagnantRate = parseFloat(Math.max(0, 100 - primaryWR - widenProbPct).toFixed(1));
+
+  result.badScenario = {
+    avgMae: parseFloat(avgMae.toFixed(4)),
+    avgMaeDollar: parseFloat((avgMae * totalWeight).toFixed(2)),
+    p75Mae: parseFloat(p75Mae.toFixed(4)),
+    p75MaeDollar: parseFloat((p75Mae * totalWeight).toFixed(2)),
+    wideningProb: widenProbPct,
+    stagnantRate: stagnantRate,
+    sampleSize: triggers.length
+  };
 
   // ── FEATURE 3: Spread-Level Analysis ──
   // Finds historical days where spread MAGNITUDE ≈ current (10% tolerance), regardless of sign.
@@ -1581,12 +1601,10 @@ function computeHistoricalProbabilitiesWide_(dailyValues, refValue, rollingZ, to
   if (triggers.length < 1) return result; // return with 0 triggers — UI handles gracefully
 
   var maeValues = [];
-  var widenCount = 0;
   for (var t = 0; t < triggers.length; t++) {
     var idx = triggers[t];
     var triggerSpread = dailyValues[idx];
     var maxAdverse = 0;
-    var sawWidening = false;
     var lookForward = Math.min(30, len - idx - 1);
     for (var f = 1; f <= lookForward; f++) {
       var futureSpread = dailyValues[idx + f];
@@ -1596,12 +1614,6 @@ function computeHistoricalProbabilitiesWide_(dailyValues, refValue, rollingZ, to
       if (excursion > maxAdverse) maxAdverse = excursion;
     }
     maeValues.push(maxAdverse);
-    if (lookForward >= 1) {
-      var nextDay = dailyValues[idx + 1];
-      if (isAboveMean && nextDay > triggerSpread + tolerance * 0.1) sawWidening = true;
-      else if (!isAboveMean && nextDay < triggerSpread - tolerance * 0.1) sawWidening = true;
-    }
-    if (sawWidening) widenCount++;
   }
 
   var maeSum = 0;
@@ -1611,16 +1623,8 @@ function computeHistoricalProbabilitiesWide_(dailyValues, refValue, rollingZ, to
   var p75Idx = Math.floor((sortedMae.length - 1) * 0.75);
   var p75Mae = sortedMae[Math.min(p75Idx, sortedMae.length - 1)];
 
-  result.badScenario = {
-    avgMae: parseFloat(avgMae.toFixed(4)),
-    avgMaeDollar: parseFloat((avgMae * totalWeight).toFixed(2)),
-    p75Mae: parseFloat(p75Mae.toFixed(4)),
-    p75MaeDollar: parseFloat((p75Mae * totalWeight).toFixed(2)),
-    wideningProb: parseFloat((widenCount / triggers.length * 100).toFixed(1)),
-    sampleSize: triggers.length
-  };
-
   var windows = (customWindows && customWindows.length > 0) ? customWindows : [30, 60, 90];
+  var widenCountByWindow = {};
   for (var w = 0; w < windows.length; w++) {
     var n = windows[w];
     var wKey = n + 'd';
@@ -1636,7 +1640,9 @@ function computeHistoricalProbabilitiesWide_(dailyValues, refValue, rollingZ, to
     var meanTolerance = distToMean * 0.10;
     if (meanTolerance < 0.01) meanTolerance = 0.01;
 
-    var wins = 0, eligible = 0;
+    var oneSigma = (rollingZ && rollingZ['90d'] && !rollingZ['90d'].insufficient) ? rollingZ['90d'].std : (fullRange * 0.15);
+
+    var wins = 0, eligible = 0, widenCount = 0;
     for (var t = 0; t < triggers.length; t++) {
       var idx = triggers[t];
       var remaining = len - idx - 1;
@@ -1644,17 +1650,43 @@ function computeHistoricalProbabilitiesWide_(dailyValues, refValue, rollingZ, to
       eligible++;
       var lookAhead = Math.min(n, remaining);
       var touched = false;
+      var widened = false;
+      var triggerSpread = dailyValues[idx];
       for (var f = 1; f <= lookAhead; f++) {
-        if (Math.abs(dailyValues[idx + f] - wMean) <= meanTolerance) { touched = true; break; }
+        var futVal = dailyValues[idx + f];
+        if (Math.abs(futVal - wMean) <= meanTolerance) { touched = true; break; }
+        if (!widened) {
+          var excursion = isAboveMean ? (futVal - triggerSpread) : (triggerSpread - futVal);
+          if (excursion > oneSigma) widened = true;
+        }
       }
       if (touched) wins++;
+      if (widened && !touched) widenCount++;
     }
+    widenCountByWindow[wKey] = { widenCount: widenCount, eligible: eligible };
     result.winRates[wKey] = {
       rate: eligible > 0 ? parseFloat((wins / eligible * 100).toFixed(1)) : 0,
       wins: wins,
       eligible: eligible
     };
   }
+
+  var bestWiden = widenCountByWindow['60d'] || widenCountByWindow['90d'] || widenCountByWindow['30d'] || { widenCount: 0, eligible: 0 };
+  var widenProbPct = bestWiden.eligible > 0 ? parseFloat((bestWiden.widenCount / bestWiden.eligible * 100).toFixed(1)) : 0;
+  var primaryWR = (result.winRates['60d'] && result.winRates['60d'].eligible > 0) ? result.winRates['60d'].rate
+    : (result.winRates['90d'] && result.winRates['90d'].eligible > 0) ? result.winRates['90d'].rate
+    : (result.winRates['30d'] && result.winRates['30d'].eligible > 0) ? result.winRates['30d'].rate : 0;
+  var stagnantRate = parseFloat(Math.max(0, 100 - primaryWR - widenProbPct).toFixed(1));
+
+  result.badScenario = {
+    avgMae: parseFloat(avgMae.toFixed(4)),
+    avgMaeDollar: parseFloat((avgMae * totalWeight).toFixed(2)),
+    p75Mae: parseFloat(p75Mae.toFixed(4)),
+    p75MaeDollar: parseFloat((p75Mae * totalWeight).toFixed(2)),
+    wideningProb: widenProbPct,
+    stagnantRate: stagnantRate,
+    sampleSize: triggers.length
+  };
 
   // ── Spread-Level Analysis (wide variant) ──
   // Matches by absolute spread magnitude (10% tolerance), captures role-reversal triggers
@@ -1931,7 +1963,7 @@ function getPortfolioAnalytics(mode, legsJson) {
       var aggZ30 = 0, aggZ60 = 0, aggZ90 = 0;
       var aggWR30 = 0, aggWR60 = 0, aggWR90 = 0;
       var aggEP30 = 0, aggEP60 = 0, aggEP90 = 0;
-      var aggBadAvg = 0, aggBadP75 = 0, aggWidenProb = 0;
+      var aggBadAvg = 0, aggBadP75 = 0, aggWidenProb = 0, aggStagnant = 0;
       var aggWeightSum = 0; // for renormalization after excluding missing-ticker pairs
       var totalGrossLong = 0, totalGrossShort = 0;
       var worstZ = null, worstZPair = '';
@@ -2038,7 +2070,8 @@ function getPortfolioAnalytics(mode, legsJson) {
         if (ep90Dollar != null) aggEP90 += ep90Dollar;
         if (badAvgDollar != null) aggBadAvg += badAvgDollar;
         if (badP75Dollar != null) aggBadP75 += badP75Dollar;
-        if (bs && bs.widenProb != null) aggWidenProb += w * bs.widenProb;
+        if (bs && bs.wideningProb != null) aggWidenProb += w * bs.wideningProb;
+        if (bs && bs.stagnantRate != null) aggStagnant += w * bs.stagnantRate;
 
         // Build result object for this cross-pair
         crossPairResults.push({
@@ -2056,7 +2089,8 @@ function getPortfolioAnalytics(mode, legsJson) {
           ep90: ep90Dollar != null ? parseFloat(ep90Dollar.toFixed(2)) : null,
           badAvg: badAvgDollar != null ? parseFloat(badAvgDollar.toFixed(2)) : null,
           badP75: badP75Dollar != null ? parseFloat(badP75Dollar.toFixed(2)) : null,
-          widenProb: bs ? bs.widenProb : null,
+          widenProb: bs ? bs.wideningProb : null,
+          stagnantRate: bs ? bs.stagnantRate : null,
           triggers: pairProb.triggers || 0,
           historyDays: pairMetrics.historyDays,
           grossLong: parseFloat(pairGrossLong.toFixed(2)),
@@ -2107,6 +2141,7 @@ function getPortfolioAnalytics(mode, legsJson) {
         badAvg: parseFloat(aggBadAvg.toFixed(2)),
         badP75: parseFloat(aggBadP75.toFixed(2)),
         widenProb: parseFloat((aggWidenProb / nw).toFixed(1)),
+        stagnantRate: parseFloat((aggStagnant / nw).toFixed(1)),
         // Diagnostics
         worstZ: worstZ,
         worstZPair: worstZPair,
@@ -2860,7 +2895,8 @@ function runNightlyScreener() {
             z: parseFloat(a.z), expProfit: parseFloat(a.expProfit),
             wr15: wr15, wr30: wr30, wr60: wr60, wr90: wr90,
             avgMae: (bs.avgMae != null) ? bs.avgMae : null, p75Mae: (bs.p75Mae != null) ? bs.p75Mae : null,
-            wideningProb: (bs.wideningProb != null) ? bs.wideningProb : null, triggers: prob.triggers || 0,
+            wideningProb: (bs.wideningProb != null) ? bs.wideningProb : null,
+            stagnantRate: (bs.stagnantRate != null) ? bs.stagnantRate : null, triggers: prob.triggers || 0,
             ep15: (analysis.metrics.rollingZ && analysis.metrics.rollingZ['15d']) ? analysis.metrics.rollingZ['15d'].expectedProfit : null,
             ep30: (analysis.metrics.rollingZ && analysis.metrics.rollingZ['30d']) ? analysis.metrics.rollingZ['30d'].expectedProfit : null,
             ep60: (analysis.metrics.rollingZ && analysis.metrics.rollingZ['60d']) ? analysis.metrics.rollingZ['60d'].expectedProfit : null,
@@ -2874,15 +2910,15 @@ function runNightlyScreener() {
     var sheet = ss.getSheetByName('ScreenerCache');
     if (!sheet) {
       sheet = ss.insertSheet('ScreenerCache');
-      sheet.getRange(1,1,1,19).setValues([['PairID','TickerA','TickerB','Mode','Z','ExpProfit','WR30','WR60','WR90','AvgMAE','P75MAE','WidenProb','Triggers','EP30','EP60','UpdatedAt','WR15','EP15','EP90']]);
+      sheet.getRange(1,1,1,20).setValues([['PairID','TickerA','TickerB','Mode','Z','ExpProfit','WR30','WR60','WR90','AvgMAE','P75MAE','WidenProb','Triggers','EP30','EP60','UpdatedAt','WR15','EP15','EP90','StagnantRate']]);
     } else {
-      if (sheet.getLastRow() > 1) sheet.getRange(2, 1, sheet.getLastRow() - 1, 19).clearContent();
+      if (sheet.getLastRow() > 1) sheet.getRange(2, 1, sheet.getLastRow() - 1, 20).clearContent();
     }
     if (results.length > 0) {
       var rows = results.map(function(r){
-        return [r.id, r.tA, r.tB, r.mode, r.z, r.expProfit, r.wr30, r.wr60, r.wr90, r.avgMae, r.p75Mae, r.wideningProb, r.triggers, r.ep30, r.ep60, r.ts, r.wr15, r.ep15, r.ep90];
+        return [r.id, r.tA, r.tB, r.mode, r.z, r.expProfit, r.wr30, r.wr60, r.wr90, r.avgMae, r.p75Mae, r.wideningProb, r.triggers, r.ep30, r.ep60, r.ts, r.wr15, r.ep15, r.ep90, r.stagnantRate];
       });
-      sheet.getRange(2, 1, rows.length, 19).setValues(rows);
+      sheet.getRange(2, 1, rows.length, 20).setValues(rows);
     }
     Logger.log('Screener: processed ' + results.length + '/' + top.length + ' pairs in ' + ((new Date().getTime()-startTime)/1000).toFixed(1) + 's');
   } catch(e) {
@@ -3718,7 +3754,8 @@ function getScreenerData_() {
         ts: r[15],
         wr15: r[16] != null ? r[16] : null,
         ep15: r[17] != null ? r[17] : null,
-        ep90: r[18] != null ? r[18] : null
+        ep90: r[18] != null ? r[18] : null,
+        stagnantRate: r[19] != null ? r[19] : null
       });
     }
     return results;
@@ -4523,6 +4560,8 @@ function buildCandidatePool_(ss, histMap) {
       var widenProb = parseFloat(r[11]) || 0;
       var ep60 = parseFloat(r[14]) || 0;
       var z = parseFloat(r[4]) || 0;
+      // Hard gate: reject candidates with wr60 < 30% (historically poor mean reversion)
+      if (wr60 < 30) continue;
       var mode = String(r[3] || 'intra');
       var sector = '';
 
@@ -4599,8 +4638,8 @@ function buildCandidatePool_(ss, histMap) {
  * Weights: WR(30%), EP(25%), low widen(20%), |Z| magnitude(15%), low MAE(10%)
  */
 function computeCandidateScore_(wr60, ep60, widenProb, z, avgMae) {
-  // Normalize win rate: 50% = 0, 100% = 30
-  var wrScore = Math.max(0, Math.min(30, (wr60 - 50) * 0.6));
+  // Normalize win rate: 50% = 0, 100% = 30, below 50% goes negative (penalty)
+  var wrScore = Math.min(30, (wr60 - 50) * 0.6);
   // Normalize expected profit: $0 = 0, $2+ = 25
   var epScore = Math.min(25, Math.abs(ep60) * 12.5);
   // Widen penalty: 0% widen = 20, 50%+ = 0
@@ -4738,7 +4777,7 @@ function buildSinglePortfolio_(candidates, corrMatrix, usedPairIds, size) {
 
   // Build portfolio result
   var pairs = [];
-  var totalWr = 0, totalEp = 0, totalWiden = 0;
+  var totalWr = 0, totalEp = 0, totalWiden = 0, totalStagnant = 0;
   var avgCorrSum = 0, corrCount = 0;
   var sectorMix = {};
 
@@ -4753,6 +4792,7 @@ function buildSinglePortfolio_(candidates, corrMatrix, usedPairIds, size) {
     totalWr += c.wr60;
     totalEp += Math.abs(c.ep60);
     totalWiden += c.widenProb;
+    totalStagnant += Math.max(0, 100 - c.wr60 - c.widenProb);
     var sec3 = c.sector || 'Other';
     sectorMix[sec3] = (sectorMix[sec3] || 0) + 1;
 
@@ -4769,6 +4809,7 @@ function buildSinglePortfolio_(candidates, corrMatrix, usedPairIds, size) {
     blendedWR: parseFloat((totalWr / n).toFixed(1)),
     expectedProfit: parseFloat((totalEp / n).toFixed(4)),
     widenProb: parseFloat((totalWiden / n).toFixed(1)),
+    stagnantRate: parseFloat((totalStagnant / n).toFixed(1)),
     avgCorrelation: corrCount > 0 ? parseFloat((avgCorrSum / corrCount).toFixed(3)) : 0,
     sectorMix: sectorMix,
     basketZ: 0, // will be overwritten by computeBasketMetrics_
