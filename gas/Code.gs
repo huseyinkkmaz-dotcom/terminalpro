@@ -4512,8 +4512,34 @@ function runModelPortfolioGenerator() {
       }
       // Clean up internal arrays before caching
       delete portfolio.basketHistory;
+
+      // ── STAGE 4: Per-pair mini-sweeps for optimal entry/exit ──
+      if (new Date().getTime() - startTime < MAX_MS) {
+        for (var mp = 0; mp < portfolio.pairs.length; mp++) {
+          if (new Date().getTime() - startTime > MAX_MS) break;
+          var mpPair = portfolio.pairs[mp];
+          var sweep = miniSweepSinglePair_(mpPair.tA, mpPair.tB, histMap, 60);
+          if (sweep) {
+            mpPair.optEntry = sweep.optEntry;
+            mpPair.optExit = sweep.optExit;
+            mpPair.optWR = sweep.optWR;
+            mpPair.optAvgPnl = sweep.optAvgPnl;
+            mpPair.optTrades = sweep.optTrades;
+            mpPair.optProfitFactor = sweep.optProfitFactor;
+          }
+        }
+      }
+
+      // ── STAGE 5: Basket-level profit capture % ──
+      portfolio.profitCapture = computeProfitCapture_(portfolio.pairs, histMap);
+
+      // ── STAGE 6: Basket-level Kelly sizing ──
+      portfolio.kellySizing = computeBasketKelly_(portfolio);
+
       portfolios.push(portfolio);
     }
+
+    Logger.log('ModelPortfolio: Stages 3-6 complete — ' + portfolios.length + ' portfolios with sweeps in ' + ((new Date().getTime() - startTime) / 1000).toFixed(1) + 's');
 
     // Sort portfolios by composite score (blended WR × expected profit, penalize widen)
     portfolios.sort(function(a, b) {
@@ -4807,7 +4833,8 @@ function buildSinglePortfolio_(candidates, corrMatrix, usedPairIds, size) {
       id: c.id, tA: c.tA, tB: c.tB,
       mode: c.mode, sector: c.sector,
       z: c.z, wr30: c.wr30, wr60: c.wr60, ep30: c.ep30, ep60: c.ep60,
-      widenProb: c.widenProb, qualityScore: c.qualityScore
+      widenProb: c.widenProb, qualityScore: c.qualityScore,
+      avgMae: c.avgMae, p75Mae: c.p75Mae
     });
     totalWr += c.wr30;
     totalEp += Math.abs(c.ep30);
@@ -4839,6 +4866,186 @@ function buildSinglePortfolio_(candidates, corrMatrix, usedPairIds, size) {
 }
 
 /**
+ * Mini parameter sweep for a single pair — lightweight version of runSensitivitySweep_.
+ * Finds the optimal entry/exit Z thresholds based on 30-day rolling Z-score history.
+ * Returns { optEntry, optExit, optWR, optAvgPnl, optTrades, optProfitFactor } or null.
+ */
+function miniSweepSinglePair_(tA, tB, histMap, maxHold) {
+  maxHold = maxHold || 60;
+  var WINDOW = 30;
+  var histA = histMap[String(tA).toUpperCase().trim()];
+  var histB = histMap[String(tB).toUpperCase().trim()];
+  if (!histA || !histB) return null;
+  var len = Math.min(histA.length, histB.length);
+  if (len < WINDOW + 5) return null;
+  var pA = histA.slice(histA.length - len);
+  var pB = histB.slice(histB.length - len);
+
+  // Compute rolling Z-score series
+  var zArr = new Array(len);
+  for (var day = WINDOW; day < len; day++) {
+    var sumSpr = 0, sumSprSq = 0;
+    for (var w = day - WINDOW; w < day; w++) {
+      var spr = pA[w] - pB[w];
+      sumSpr += spr;
+      sumSprSq += spr * spr;
+    }
+    var rollMean = sumSpr / WINDOW;
+    var rollVar = (sumSprSq / WINDOW) - (rollMean * rollMean);
+    var rollStdev = rollVar > 0 ? Math.sqrt(rollVar * WINDOW / (WINDOW - 1)) : 0.001;
+    zArr[day] = (pA[day] - pB[day] - rollMean) / rollStdev;
+  }
+
+  // Sweep entry × exit grid — same values as full heatmap
+  var entryZValues = [1.5, 1.8, 2.0, 2.2, 2.5, 2.8, 3.0];
+  var exitZValues = [0.0, 0.25, 0.5, 0.75, 1.0, 1.25, 1.5];
+  var best = null;
+
+  for (var ei = 0; ei < entryZValues.length; ei++) {
+    var zThreshold = entryZValues[ei];
+    for (var xi = 0; xi < exitZValues.length; xi++) {
+      var exitZ = exitZValues[xi];
+      if (exitZ >= zThreshold) continue;
+      var trades = 0, wins = 0, totalPnl = 0, grossWin = 0, grossLoss = 0;
+      var openEntry = null;
+
+      for (var day = WINDOW; day < len; day++) {
+        var z = zArr[day];
+        if (z === undefined) continue;
+        if (!openEntry) {
+          if (Math.abs(z) >= zThreshold) {
+            openEntry = { day: day, z: z, dirA: z > 0 ? -1 : 1, dirB: z > 0 ? 1 : -1, pA: pA[day], pB: pB[day] };
+          }
+        } else {
+          var hold = day - openEntry.day;
+          if (Math.abs(z) <= exitZ || hold >= maxHold) {
+            var pnl = ((pA[day] - openEntry.pA) * openEntry.dirA + (pB[day] - openEntry.pB) * openEntry.dirB) * 100;
+            trades++;
+            totalPnl += pnl;
+            if (pnl > 0) { wins++; grossWin += pnl; } else { grossLoss += Math.abs(pnl); }
+            openEntry = null;
+          }
+        }
+      }
+
+      // Require minimum 3 trades for statistical relevance
+      if (trades < 3) continue;
+      var wr = parseFloat((wins / trades * 100).toFixed(1));
+      var avgPnl = parseFloat((totalPnl / trades).toFixed(2));
+      var pf = grossLoss > 0 ? parseFloat((grossWin / grossLoss).toFixed(2)) : 0;
+
+      // Score: prioritize win rate, then profit factor, then avg PnL
+      var score = wr * 2 + pf * 10 + (avgPnl > 0 ? avgPnl * 0.5 : avgPnl * 2);
+      if (!best || score > best.score) {
+        best = {
+          score: score,
+          optEntry: zThreshold,
+          optExit: exitZ,
+          optWR: wr,
+          optAvgPnl: avgPnl,
+          optTrades: trades,
+          optProfitFactor: pf
+        };
+      }
+    }
+  }
+
+  if (!best) return null;
+  return {
+    optEntry: best.optEntry,
+    optExit: best.optExit,
+    optWR: best.optWR,
+    optAvgPnl: best.optAvgPnl,
+    optTrades: best.optTrades,
+    optProfitFactor: best.optProfitFactor
+  };
+}
+
+/**
+ * Compute Basket Profit Capture % for a model portfolio.
+ * Measures what % of the theoretical mean-reversion profit the basket historically captures.
+ * Theoretical profit = sum of |entryZ × stdev| per pair (full mean reversion to Z=0).
+ * Actual expected profit = sum of expected profit from 30d rolling Z.
+ * Profit Capture % = actual / theoretical × 100.
+ */
+function computeProfitCapture_(pairs, histMap) {
+  var WINDOW = 30;
+  var theoreticalTotal = 0;
+  var actualTotal = 0;
+
+  for (var i = 0; i < pairs.length; i++) {
+    var pair = pairs[i];
+    var z = Math.abs(parseFloat(pair.z) || 0);
+    var ep30 = parseFloat(pair.ep30) || 0;
+
+    // Compute the pair's current stdev from history for theoretical profit calculation
+    var histA = histMap[String(pair.tA).toUpperCase().trim()];
+    var histB = histMap[String(pair.tB).toUpperCase().trim()];
+    if (!histA || !histB || histA.length < WINDOW || histB.length < WINDOW) continue;
+    var len = Math.min(histA.length, histB.length);
+    // Use last WINDOW days for rolling stdev
+    var sumSpr = 0, sumSprSq = 0;
+    for (var d = len - WINDOW; d < len; d++) {
+      var spr = histA[d] - histB[d];
+      sumSpr += spr;
+      sumSprSq += spr * spr;
+    }
+    var rollMean = sumSpr / WINDOW;
+    var rollVar = (sumSprSq / WINDOW) - (rollMean * rollMean);
+    var rollStdev = rollVar > 0 ? Math.sqrt(rollVar * WINDOW / (WINDOW - 1)) : 0;
+    if (rollStdev <= 0) continue;
+
+    // Theoretical profit per share if spread fully reverts to mean (Z→0)
+    // Per 100 shares (matching the legs size used in basket computation)
+    var theoreticalPerShare = z * rollStdev;
+    theoreticalTotal += theoreticalPerShare * 100;
+
+    // Actual expected profit from 30d analysis (already per-share × 100 in ep30 from screener)
+    // ep30 from screener is per-share, so multiply by 100 shares to match
+    actualTotal += Math.abs(ep30) * 100;
+  }
+
+  if (theoreticalTotal <= 0) return null;
+  return parseFloat((actualTotal / theoreticalTotal * 100).toFixed(1));
+}
+
+/**
+ * Compute basket-level Kelly criterion for an entire model portfolio.
+ * Uses the blended 30d win rate and portfolio-level expected profit/loss.
+ * Returns { kellyPct, halfKellyPct, suggestedCapital, riskRewardRatio } or null.
+ */
+function computeBasketKelly_(portfolio) {
+  var wr = parseFloat(portfolio.blendedWR) || 0;
+  if (wr <= 0 || wr >= 100) return null;
+
+  var winRate = wr / 100;
+  var avgWin = Math.abs(parseFloat(portfolio.expectedProfit) || 0);
+  var bs = portfolio.badScenario || {};
+  var avgLoss = parseFloat(bs.avgMaeDollar) || parseFloat(bs.avgMae) || 0;
+  if (avgWin <= 0 || avgLoss <= 0) return null;
+
+  // Kelly fraction: f* = (p × b - q) / b where b = avgWin/avgLoss
+  var b = avgWin / avgLoss;
+  var kelly = b > 0 ? (winRate * b - (1 - winRate)) / b : 0;
+  if (kelly <= 0) return null;
+
+  var halfKelly = kelly * 0.5;
+  var pairs = (portfolio.pairs || []).length || 1;
+  // Suggested capital = (avgLoss per pair × pairs) / halfKelly
+  // This gives the total capital needed so that max expected loss = halfKelly fraction
+  var totalRisk = avgLoss * pairs;
+  var suggestedCapital = totalRisk > 0 ? parseFloat((totalRisk / halfKelly).toFixed(0)) : 0;
+  var riskRewardRatio = avgLoss > 0 ? parseFloat((avgWin / avgLoss).toFixed(1)) : 0;
+
+  return {
+    kellyPct: parseFloat((kelly * 100).toFixed(1)),
+    halfKellyPct: parseFloat((halfKelly * 100).toFixed(1)),
+    suggestedCapital: suggestedCapital,
+    riskRewardRatio: riskRewardRatio
+  };
+}
+
+/**
  * Write model portfolios to ModelPortfolioCache sheet.
  */
 function writeModelPortfolioCache_(ss, portfolios) {
@@ -4861,7 +5068,7 @@ function writeModelPortfolioCache_(ss, portfolios) {
       p.widenProb,
       JSON.stringify(p.sectorMix),
       p.avgCorrelation,
-      JSON.stringify({ rollingZ: p.rollingZ || {}, badScenario: p.badScenario || {} }),
+      JSON.stringify({ rollingZ: p.rollingZ || {}, badScenario: p.badScenario || {}, profitCapture: p.profitCapture, kellySizing: p.kellySizing || null }),
       ts
     ];
   });
