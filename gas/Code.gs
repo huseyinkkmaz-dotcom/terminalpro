@@ -4471,13 +4471,14 @@ function runModelPortfolioGenerator() {
 
     // ── STAGE 3: Greedy diversified portfolio construction ──
     var NUM_PORTFOLIOS = 5;
+    var MAX_ATTEMPTS = 12; // try more than 5 since stricter filters will reject some
     var PAIRS_PER_PORTFOLIO = 5;
     // Allow smaller portfolios if we have fewer candidates
     var actualPairsPerPortfolio = Math.min(PAIRS_PER_PORTFOLIO, candidates.length);
     var usedPairIds = {}; // track pairs used across portfolios for diversity
     var portfolios = [];
 
-    for (var p = 0; p < NUM_PORTFOLIOS; p++) {
+    for (var p = 0; p < MAX_ATTEMPTS && portfolios.length < NUM_PORTFOLIOS; p++) {
       if (new Date().getTime() - startTime > MAX_MS) break;
       var portfolio = buildSinglePortfolio_(candidates, corrMatrix, usedPairIds, actualPairsPerPortfolio);
       if (portfolio.pairs.length === 0) break;
@@ -4543,14 +4544,44 @@ function runModelPortfolioGenerator() {
       // ── STAGE 6: Basket-level Kelly sizing ──
       portfolio.kellySizing = computeBasketKelly_(portfolio);
 
-      // ── STAGE 7: Reject portfolios with negative basket EP ──
-      // After computeBasketMetrics_ overwrites expectedProfit with the real basket-level
-      // value (same formula the Sandbox uses), reject any portfolio that would show
-      // negative projected returns. This ensures Optimizer ↔ Sandbox agreement.
+      // ── STAGE 7: Reject portfolios that would show as losers in Sandbox ──
+      // Check basket-level expected profit AND win rates at all horizons (30/60/90d).
+      // The Sandbox calculator validates these same metrics, so we must match.
       if ((portfolio.expectedProfit || 0) <= 0) {
         Logger.log('ModelPortfolio: Rejected portfolio with negative basket EP: ' + (portfolio.expectedProfit || 0).toFixed(4));
-        continue; // skip this portfolio — Sandbox would show negative EV
+        continue;
       }
+      // Validate basket-level win rates from computeBasketMetrics_ probability engine
+      // If the basket WR at ANY horizon is below 50%, the Sandbox would flag it as a loser
+      var rejectHorizon = false;
+      if (basketMetrics && basketMetrics.probabilities && basketMetrics.probabilities.winRates) {
+        var bWR = basketMetrics.probabilities.winRates;
+        var horizons = ['30d', '60d', '90d'];
+        for (var hi = 0; hi < horizons.length; hi++) {
+          var hKey = horizons[hi];
+          if (bWR[hKey] && bWR[hKey].eligible >= 3) {
+            if (bWR[hKey].rate < 50) {
+              Logger.log('ModelPortfolio: Rejected portfolio — basket ' + hKey + ' WR only ' + bWR[hKey].rate + '% (need >=50%)');
+              rejectHorizon = true;
+              break;
+            }
+          }
+        }
+      }
+      // Also validate rolling Z expected profits at each horizon are positive
+      if (!rejectHorizon && portfolio.rollingZ) {
+        var rzHorizons = ['30d', '60d', '90d'];
+        for (var ri = 0; ri < rzHorizons.length; ri++) {
+          var rk = rzHorizons[ri];
+          var rz = portfolio.rollingZ[rk];
+          if (rz && rz.expectedProfit != null && !rz.insufficient && rz.expectedProfit <= 0) {
+            Logger.log('ModelPortfolio: Rejected portfolio — basket ' + rk + ' EP is ' + rz.expectedProfit.toFixed(4) + ' (need >0)');
+            rejectHorizon = true;
+            break;
+          }
+        }
+      }
+      if (rejectHorizon) continue;
 
       portfolios.push(portfolio);
     }
@@ -4604,8 +4635,10 @@ function buildCandidatePool_(ss, histMap) {
       var ep30 = parseFloat(r[13]) || 0;
       var ep60 = parseFloat(r[14]) || 0;
       var z = parseFloat(r[4]) || 0;
-      // Hard gate: reject candidates with wr30 < 30% (historically poor mean reversion)
-      if (wr30 < 30) continue;
+      // Hard gate: reject candidates with wr30 < 50% (must be more likely to win than lose)
+      if (wr30 < 50) continue;
+      // Hard gate: reject candidates with weak 60d win rate (Sandbox checks all horizons)
+      if (wr60 < 45) continue;
       // Hard gate: reject candidates with negative 30d expected profit (Sandbox would show negative EV)
       if (ep30 <= 0) continue;
       var mode = String(r[3] || 'intra');
@@ -4671,7 +4704,8 @@ function buildCandidatePool_(ss, histMap) {
                 var lWiden = (lm.badScenario) ? lm.badScenario.wideningProb : 0;
                 var lMae = (lm.badScenario) ? lm.badScenario.avgMae : 0;
                 var lp75 = (lm.badScenario) ? lm.badScenario.p75Mae : 0;
-                if (lwr30 < 30) continue; // Apply same hard gate
+                if (lwr30 < 50) continue; // Apply same hard gate — must win more than lose
+                if (lwr60 < 45) continue; // 60d horizon must also be viable
                 if (lep30 <= 0) continue; // Reject negative EP — Sandbox would show negative EV
                 var aScore = computeCandidateScore_(lwr30, lep30, lWiden, aZ, lMae);
                 candidates.push({
