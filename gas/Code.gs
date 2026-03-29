@@ -4543,10 +4543,19 @@ function runModelPortfolioGenerator() {
       // ── STAGE 6: Basket-level Kelly sizing ──
       portfolio.kellySizing = computeBasketKelly_(portfolio);
 
+      // ── STAGE 7: Reject portfolios with negative basket EP ──
+      // After computeBasketMetrics_ overwrites expectedProfit with the real basket-level
+      // value (same formula the Sandbox uses), reject any portfolio that would show
+      // negative projected returns. This ensures Optimizer ↔ Sandbox agreement.
+      if ((portfolio.expectedProfit || 0) <= 0) {
+        Logger.log('ModelPortfolio: Rejected portfolio with negative basket EP: ' + (portfolio.expectedProfit || 0).toFixed(4));
+        continue; // skip this portfolio — Sandbox would show negative EV
+      }
+
       portfolios.push(portfolio);
     }
 
-    Logger.log('ModelPortfolio: Stages 3-6 complete — ' + portfolios.length + ' portfolios with sweeps in ' + ((new Date().getTime() - startTime) / 1000).toFixed(1) + 's');
+    Logger.log('ModelPortfolio: Stages 3-7 complete — ' + portfolios.length + ' portfolios with sweeps in ' + ((new Date().getTime() - startTime) / 1000).toFixed(1) + 's');
 
     // Sort portfolios by composite score (blended WR × expected profit, penalize widen)
     portfolios.sort(function(a, b) {
@@ -4597,6 +4606,8 @@ function buildCandidatePool_(ss, histMap) {
       var z = parseFloat(r[4]) || 0;
       // Hard gate: reject candidates with wr30 < 30% (historically poor mean reversion)
       if (wr30 < 30) continue;
+      // Hard gate: reject candidates with negative 30d expected profit (Sandbox would show negative EV)
+      if (ep30 <= 0) continue;
       var mode = String(r[3] || 'intra');
       var sector = '';
 
@@ -4661,6 +4672,7 @@ function buildCandidatePool_(ss, histMap) {
                 var lMae = (lm.badScenario) ? lm.badScenario.avgMae : 0;
                 var lp75 = (lm.badScenario) ? lm.badScenario.p75Mae : 0;
                 if (lwr30 < 30) continue; // Apply same hard gate
+                if (lep30 <= 0) continue; // Reject negative EP — Sandbox would show negative EV
                 var aScore = computeCandidateScore_(lwr30, lep30, lWiden, aZ, lMae);
                 candidates.push({
                   id: alert.id, tA: alert.tA, tB: alert.tB,
@@ -4693,8 +4705,9 @@ function buildCandidatePool_(ss, histMap) {
 function computeCandidateScore_(wr30, ep30, widenProb, z, avgMae) {
   // Normalize win rate: 50% = 0, 100% = 30, below 50% goes negative (penalty)
   var wrScore = Math.min(30, (wr30 - 50) * 0.6);
-  // Normalize expected profit: $0 = 0, $2+ = 25
-  var epScore = Math.min(25, Math.abs(ep30) * 12.5);
+  // Normalize expected profit: negative EP = negative score (penalty), $0 = 0, $2+ = 25
+  // CRITICAL: Use signed ep30 — negative EP must penalize, not reward
+  var epScore = ep30 >= 0 ? Math.min(25, ep30 * 12.5) : Math.max(-25, ep30 * 12.5);
   // Widen penalty: 0% widen = 20, 50%+ = 0
   var widenScore = Math.max(0, 20 - (widenProb * 0.4));
   // Z magnitude: |Z| of 1.8 = 5, |Z| of 3.0 = 15
@@ -4844,7 +4857,7 @@ function buildSinglePortfolio_(candidates, corrMatrix, usedPairIds, size) {
       avgMae: c.avgMae, p75Mae: c.p75Mae
     });
     totalWr += c.wr30;
-    totalEp += Math.abs(c.ep30);
+    totalEp += c.ep30;
     totalWiden += c.widenProb;
     totalStagnant += Math.max(0, 100 - c.wr30 - c.widenProb);
     var sec3 = c.sector || 'Other';
