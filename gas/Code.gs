@@ -1458,13 +1458,13 @@ function computeHistoricalProbabilities_(dailyValues, refValue, rollingZ, totalW
     };
   }
 
-  // Compute widen prob from 60d window (or best available)
-  var bestWiden = widenCountByWindow['60d'] || widenCountByWindow['90d'] || widenCountByWindow['30d'] || { widenCount: 0, eligible: 0 };
+  // Compute widen prob from 30d window (or best available)
+  var bestWiden = widenCountByWindow['30d'] || widenCountByWindow['60d'] || widenCountByWindow['90d'] || { widenCount: 0, eligible: 0 };
   var widenProbPct = bestWiden.eligible > 0 ? parseFloat((bestWiden.widenCount / bestWiden.eligible * 100).toFixed(1)) : 0;
-  // Derive primary win rate for stagnant calc (prefer 60d)
-  var primaryWR = (result.winRates['60d'] && result.winRates['60d'].eligible > 0) ? result.winRates['60d'].rate
-    : (result.winRates['90d'] && result.winRates['90d'].eligible > 0) ? result.winRates['90d'].rate
-    : (result.winRates['30d'] && result.winRates['30d'].eligible > 0) ? result.winRates['30d'].rate : 0;
+  // Derive primary win rate for stagnant calc (prefer 30d)
+  var primaryWR = (result.winRates['30d'] && result.winRates['30d'].eligible > 0) ? result.winRates['30d'].rate
+    : (result.winRates['60d'] && result.winRates['60d'].eligible > 0) ? result.winRates['60d'].rate
+    : (result.winRates['90d'] && result.winRates['90d'].eligible > 0) ? result.winRates['90d'].rate : 0;
   var stagnantRate = parseFloat(Math.max(0, 100 - primaryWR - widenProbPct).toFixed(1));
 
   result.badScenario = {
@@ -1671,11 +1671,12 @@ function computeHistoricalProbabilitiesWide_(dailyValues, refValue, rollingZ, to
     };
   }
 
-  var bestWiden = widenCountByWindow['60d'] || widenCountByWindow['90d'] || widenCountByWindow['30d'] || { widenCount: 0, eligible: 0 };
+  var bestWiden = widenCountByWindow['30d'] || widenCountByWindow['60d'] || widenCountByWindow['90d'] || { widenCount: 0, eligible: 0 };
   var widenProbPct = bestWiden.eligible > 0 ? parseFloat((bestWiden.widenCount / bestWiden.eligible * 100).toFixed(1)) : 0;
-  var primaryWR = (result.winRates['60d'] && result.winRates['60d'].eligible > 0) ? result.winRates['60d'].rate
-    : (result.winRates['90d'] && result.winRates['90d'].eligible > 0) ? result.winRates['90d'].rate
-    : (result.winRates['30d'] && result.winRates['30d'].eligible > 0) ? result.winRates['30d'].rate : 0;
+  // Derive primary win rate for stagnant calc (prefer 30d)
+  var primaryWR = (result.winRates['30d'] && result.winRates['30d'].eligible > 0) ? result.winRates['30d'].rate
+    : (result.winRates['60d'] && result.winRates['60d'].eligible > 0) ? result.winRates['60d'].rate
+    : (result.winRates['90d'] && result.winRates['90d'].eligible > 0) ? result.winRates['90d'].rate : 0;
   var stagnantRate = parseFloat(Math.max(0, 100 - primaryWR - widenProbPct).toFixed(1));
 
   result.badScenario = {
@@ -4496,8 +4497,8 @@ function runModelPortfolioGenerator() {
         var rz30 = (basketMetrics.rollingZ && basketMetrics.rollingZ['30d']) ? basketMetrics.rollingZ['30d'] : {};
         var rz60 = (basketMetrics.rollingZ && basketMetrics.rollingZ['60d']) ? basketMetrics.rollingZ['60d'] : {};
         var rz90 = (basketMetrics.rollingZ && basketMetrics.rollingZ['90d']) ? basketMetrics.rollingZ['90d'] : {};
-        portfolio.basketZ = rz60.z || rz30.z || 0;
-        portfolio.expectedProfit = rz60.expectedProfit || rz30.expectedProfit || 0;
+        portfolio.basketZ = rz30.z || rz60.z || 0;
+        portfolio.expectedProfit = rz30.expectedProfit || rz60.expectedProfit || 0;
         portfolio.basketHistory = basketMetrics.dailyValues || [];
         portfolio.rollingZ = { '30d': rz30, '60d': rz60, '90d': rz90 };
         // Extract bad scenario from probability engine
@@ -4505,8 +4506,8 @@ function runModelPortfolioGenerator() {
           portfolio.badScenario = basketMetrics.probabilities.badScenario;
         }
         if (basketMetrics.probabilities && basketMetrics.probabilities.winRates) {
-          var wr60 = basketMetrics.probabilities.winRates['60d'];
-          if (wr60 && wr60.rate != null) portfolio.blendedWR = wr60.rate;
+          var wr30 = basketMetrics.probabilities.winRates['30d'];
+          if (wr30 && wr30.rate != null) portfolio.blendedWR = wr30.rate;
         }
       }
       // Clean up internal arrays before caching
@@ -4558,10 +4559,11 @@ function buildCandidatePool_(ss, histMap) {
       var avgMae = parseFloat(r[9]) || 0;
       var p75Mae = parseFloat(r[10]) || 0;
       var widenProb = parseFloat(r[11]) || 0;
+      var ep30 = parseFloat(r[13]) || 0;
       var ep60 = parseFloat(r[14]) || 0;
       var z = parseFloat(r[4]) || 0;
-      // Hard gate: reject candidates with wr60 < 30% (historically poor mean reversion)
-      if (wr60 < 30) continue;
+      // Hard gate: reject candidates with wr30 < 30% (historically poor mean reversion)
+      if (wr30 < 30) continue;
       var mode = String(r[3] || 'intra');
       var sector = '';
 
@@ -4578,13 +4580,13 @@ function buildCandidatePool_(ss, histMap) {
         }
       }
 
-      // Composite quality score for ranking
-      var qualityScore = computeCandidateScore_(wr60, ep60, widenProb, z, avgMae);
+      // Composite quality score for ranking (uses 30d win rate and expected profit)
+      var qualityScore = computeCandidateScore_(wr30, ep30, widenProb, z, avgMae);
 
       candidates.push({
         id: id, tA: tA, tB: tB, mode: mode, sector: sector,
         z: z, wr30: wr30, wr60: wr60, wr90: wr90,
-        ep60: ep60, widenProb: widenProb,
+        ep30: ep30, ep60: ep60, widenProb: widenProb,
         avgMae: avgMae, p75Mae: p75Mae,
         qualityScore: qualityScore
       });
@@ -4609,18 +4611,35 @@ function buildCandidatePool_(ss, histMap) {
           seen[aid] = true;
           var aZ = parseFloat(alert.z) || 0;
           var aEp = parseFloat(alert.expProfit) || 0;
-          // No screener data → estimate quality from available fields
-          var estWr = Math.min(80, 50 + Math.abs(aZ) * 5); // rough estimate
-          var estWiden = 30; // default assumption
-          var aScore = computeCandidateScore_(estWr, aEp, estWiden, aZ, 0);
-          candidates.push({
-            id: alert.id, tA: alert.tA, tB: alert.tB,
-            mode: modes[m], sector: alert.sec || '',
-            z: aZ, wr30: estWr, wr60: estWr, wr90: estWr,
-            ep60: aEp, widenProb: estWiden,
-            avgMae: 0, p75Mae: 0,
-            qualityScore: aScore
-          });
+          // No screener data → run live analysis instead of fabricating estimates
+          var pA = parseFloat(alert.pA) || 0;
+          var pB = parseFloat(alert.pB) || 0;
+          if (pA > 0 && pB > 0) {
+            try {
+              var liveAnalysis = analyzeSinglePair_(alert.tA, alert.tB, pA, pB, aZ);
+              if (liveAnalysis && liveAnalysis.metrics) {
+                var lm = liveAnalysis.metrics;
+                var lwr30 = (lm.winRates && lm.winRates['30d']) ? lm.winRates['30d'].rate : 0;
+                var lwr60 = (lm.winRates && lm.winRates['60d']) ? lm.winRates['60d'].rate : 0;
+                var lwr90 = (lm.winRates && lm.winRates['90d']) ? lm.winRates['90d'].rate : 0;
+                var lep30 = (lm.rollingZ && lm.rollingZ['30d']) ? lm.rollingZ['30d'].expectedProfit : 0;
+                var lep60 = (lm.rollingZ && lm.rollingZ['60d']) ? lm.rollingZ['60d'].expectedProfit : 0;
+                var lWiden = (lm.badScenario) ? lm.badScenario.wideningProb : 0;
+                var lMae = (lm.badScenario) ? lm.badScenario.avgMae : 0;
+                var lp75 = (lm.badScenario) ? lm.badScenario.p75Mae : 0;
+                if (lwr30 < 30) continue; // Apply same hard gate
+                var aScore = computeCandidateScore_(lwr30, lep30, lWiden, aZ, lMae);
+                candidates.push({
+                  id: alert.id, tA: alert.tA, tB: alert.tB,
+                  mode: modes[m], sector: alert.sec || '',
+                  z: aZ, wr30: lwr30, wr60: lwr60, wr90: lwr90,
+                  ep30: lep30 || 0, ep60: lep60 || 0, widenProb: lWiden,
+                  avgMae: lMae, p75Mae: lp75,
+                  qualityScore: aScore
+                });
+              }
+            } catch (e) { /* skip pair if analysis fails */ }
+          }
           if (candidates.length >= 15) break;
         }
       } catch (e) { /* skip mode if error */ }
@@ -4635,13 +4654,14 @@ function buildCandidatePool_(ss, histMap) {
 
 /**
  * Compute a 0-100 candidate quality score.
- * Weights: WR(30%), EP(25%), low widen(20%), |Z| magnitude(15%), low MAE(10%)
+ * Weights: WR30(30%), EP30(25%), low widen(20%), |Z| magnitude(15%), low MAE(10%)
+ * Uses 30-day win rate and expected profit as primary metrics.
  */
-function computeCandidateScore_(wr60, ep60, widenProb, z, avgMae) {
+function computeCandidateScore_(wr30, ep30, widenProb, z, avgMae) {
   // Normalize win rate: 50% = 0, 100% = 30, below 50% goes negative (penalty)
-  var wrScore = Math.min(30, (wr60 - 50) * 0.6);
+  var wrScore = Math.min(30, (wr30 - 50) * 0.6);
   // Normalize expected profit: $0 = 0, $2+ = 25
-  var epScore = Math.min(25, Math.abs(ep60) * 12.5);
+  var epScore = Math.min(25, Math.abs(ep30) * 12.5);
   // Widen penalty: 0% widen = 20, 50%+ = 0
   var widenScore = Math.max(0, 20 - (widenProb * 0.4));
   // Z magnitude: |Z| of 1.8 = 5, |Z| of 3.0 = 15
@@ -4786,13 +4806,13 @@ function buildSinglePortfolio_(candidates, corrMatrix, usedPairIds, size) {
     pairs.push({
       id: c.id, tA: c.tA, tB: c.tB,
       mode: c.mode, sector: c.sector,
-      z: c.z, wr60: c.wr60, ep60: c.ep60,
+      z: c.z, wr30: c.wr30, wr60: c.wr60, ep30: c.ep30, ep60: c.ep60,
       widenProb: c.widenProb, qualityScore: c.qualityScore
     });
-    totalWr += c.wr60;
-    totalEp += Math.abs(c.ep60);
+    totalWr += c.wr30;
+    totalEp += Math.abs(c.ep30);
     totalWiden += c.widenProb;
-    totalStagnant += Math.max(0, 100 - c.wr60 - c.widenProb);
+    totalStagnant += Math.max(0, 100 - c.wr30 - c.widenProb);
     var sec3 = c.sector || 'Other';
     sectorMix[sec3] = (sectorMix[sec3] || 0) + 1;
 

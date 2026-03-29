@@ -1296,7 +1296,7 @@ function renderModelPortfolios(mp){
     var spClr=sp>40?'var(--yellow)':sp>20?'var(--subtext)':'var(--low)';
     h+='<div style="display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-bottom:16px">';
     h+='<div style="text-align:center"><div style="font-size:8px;font-weight:900;color:var(--subtext);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">Basket Z</div><div style="font-family:JetBrains Mono;font-size:18px;font-weight:900;color:'+bzClr+'">'+bz.toFixed(2)+'&sigma;</div></div>';
-    h+='<div style="text-align:center"><div style="font-size:8px;font-weight:900;color:var(--subtext);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">Win Rate</div><div style="font-family:JetBrains Mono;font-size:18px;font-weight:900;color:'+wrClr+'">'+wr.toFixed(0)+'%</div></div>';
+    h+='<div style="text-align:center"><div style="font-size:8px;font-weight:900;color:var(--subtext);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">WR (30d)</div><div style="font-family:JetBrains Mono;font-size:18px;font-weight:900;color:'+wrClr+'">'+wr.toFixed(0)+'%</div></div>';
     h+='<div style="text-align:center"><div style="font-size:8px;font-weight:900;color:var(--subtext);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">Exp. Profit</div><div style="font-family:JetBrains Mono;font-size:18px;font-weight:900;color:var(--low)">$'+ep.toFixed(2)+'</div></div>';
     h+='<div style="text-align:center"><div style="font-size:8px;font-weight:900;color:var(--subtext);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">Widen Prob</div><div style="font-family:JetBrains Mono;font-size:18px;font-weight:900;color:'+wpClr+'">'+wp.toFixed(0)+'%</div></div>';
     h+='<div style="text-align:center"><div style="font-size:8px;font-weight:900;color:var(--subtext);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">Stagnant</div><div style="font-family:JetBrains Mono;font-size:18px;font-weight:900;color:'+spClr+'">'+sp.toFixed(0)+'%</div></div>';
@@ -1322,13 +1322,13 @@ function renderModelPortfolios(mp){
     h+='<th style="text-align:center;padding:6px 8px;font-size:8px;font-weight:900;color:var(--subtext);text-transform:uppercase">Mode</th>';
     h+='<th style="text-align:center;padding:6px 8px;font-size:8px;font-weight:900;color:var(--subtext);text-transform:uppercase">Sector</th>';
     h+='<th style="text-align:center;padding:6px 8px;font-size:8px;font-weight:900;color:var(--subtext);text-transform:uppercase">Z-Score</th>';
-    h+='<th style="text-align:center;padding:6px 8px;font-size:8px;font-weight:900;color:var(--subtext);text-transform:uppercase">WR(60d)</th>';
+    h+='<th style="text-align:center;padding:6px 8px;font-size:8px;font-weight:900;color:var(--subtext);text-transform:uppercase">WR(30d)</th>';
     h+='<th style="text-align:center;padding:6px 8px;font-size:8px;font-weight:900;color:var(--subtext);text-transform:uppercase">Direction</th>';
     h+='</tr></thead><tbody>';
     pairs.forEach(function(pr){
       var pz=parseFloat(pr.z)||0;
       var pzClr=pz>0?'var(--high)':'var(--low)';
-      var pwr=parseFloat(pr.wr60)||0;
+      var pwr=parseFloat(pr.wr30)||parseFloat(pr.wr60)||0;
       var pwrClr=pwr>=70?'var(--low)':pwr>=55?'var(--yellow)':'var(--high)';
       var dirA=pz>0?'SHORT':'LONG';
       var dirB=pz>0?'LONG':'SHORT';
@@ -1593,9 +1593,10 @@ h+='</div>';
 h+='<div id="'+cmDetailId+'" style="display:block">';
 // Sort controls
 h+='<div class="cm-sort-bar" id="cmSortBar">';
-h+='<span class="cm-sort-pill active" onclick="cmSort(\'z90\',this)">|Z-90| &#9660;</span>';
+h+='<span class="cm-sort-pill" onclick="cmSort(\'z90\',this)">|Z-90|</span>';
+h+='<span class="cm-sort-pill active" onclick="cmSort(\'wr30\',this)">WR-30 &#9660;</span>';
 h+='<span class="cm-sort-pill" onclick="cmSort(\'wr90\',this)">WR-90</span>';
-h+='<span class="cm-sort-pill" onclick="cmSort(\'ep90\',this)">EP$</span>';
+h+='<span class="cm-sort-pill" onclick="cmSort(\'ep30\',this)">EP$ 30</span>';
 h+='<span class="cm-sort-pill" onclick="cmSort(\'weight\',this)">Weight</span>';
 h+='</div>';
 // Table
@@ -1608,8 +1609,8 @@ h+='<th>EP$ 30</th><th>EP$ 60</th><th>EP$ 90</th>';
 h+='<th>Bad$</th><th>Triggers</th>';
 h+='</tr></thead>';
 h+='<tbody>';
-// Sort pairs by |z90| desc by default
-var sortedPairs=pairs.slice().sort(function(a,b){return Math.abs(b.z90||0)-Math.abs(a.z90||0);});
+// Sort pairs by WR-30 desc by default
+var sortedPairs=pairs.slice().sort(function(a,b){return (b.wr30||0)-(a.wr30||0);});
 for(var pi=0;pi<sortedPairs.length;pi++){
 var p=sortedPairs[pi];
 if(p.error){
@@ -1620,10 +1621,10 @@ continue;}
 var pz90=p.z90!=null?p.z90:0;var pzClr=healthZColor(pz90);
 var pwr30=p.wr30!=null?p.wr30:0;var pwr60=p.wr60!=null?p.wr60:0;var pwr90=p.wr90!=null?p.wr90:0;
 var pep30=p.ep30!=null?p.ep30:0;var pep60=p.ep60!=null?p.ep60:0;var pep90=p.ep90!=null?p.ep90:0;
-// Row quality class
-var rowQ=Math.abs(pz90)>=1.5&&pwr90>=70?'cm-row-strong':Math.abs(pz90)<1.0||pwr90<50?'cm-row-weak':'';
+// Row quality class (based on 30d win rate)
+var rowQ=Math.abs(pz90)>=1.5&&pwr30>=70?'cm-row-strong':Math.abs(pz90)<1.0||pwr30<50?'cm-row-weak':'';
 var rowDetailId='cmPair_'+pi+'_'+Math.random().toString(36).substr(2,4);
-h+='<tr class="cm-row '+rowQ+'" data-z90="'+Math.abs(pz90).toFixed(4)+'" data-wr90="'+pwr90.toFixed(2)+'" data-ep90="'+pep90.toFixed(2)+'" data-weight="'+p.weight.toFixed(4)+'" onclick="var d=document.getElementById(\''+rowDetailId+'\');d.style.display=d.style.display===\'none\'?\'table-row\':\'none\'">';
+h+='<tr class="cm-row '+rowQ+'" data-z90="'+Math.abs(pz90).toFixed(4)+'" data-wr30="'+pwr30.toFixed(2)+'" data-wr90="'+pwr90.toFixed(2)+'" data-ep30="'+pep30.toFixed(2)+'" data-ep90="'+pep90.toFixed(2)+'" data-weight="'+p.weight.toFixed(4)+'" onclick="var d=document.getElementById(\''+rowDetailId+'\');d.style.display=d.style.display===\'none\'?\'table-row\':\'none\'">';
 h+='<td class="cm-pair-cell"><span class="cm-expand-arrow">&#9656;</span>'+p.longTicker+' <span style="color:var(--low);font-size:8px">L</span> <span style="color:var(--subtext);font-weight:400">x</span> '+p.shortTicker+' <span style="color:var(--high);font-size:8px">S</span></td>';
 h+='<td>'+p.weight.toFixed(1)+'%</td>';
 h+='<td style="color:'+(p.z30!=null?healthZColor(p.z30).c:'var(--subtext)')+'">'+cmFmtZ(p.z30)+'</td>';
