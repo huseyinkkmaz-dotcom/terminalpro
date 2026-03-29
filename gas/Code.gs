@@ -1966,6 +1966,10 @@ function getPortfolioAnalytics(mode, legsJson) {
       var aggEP30 = 0, aggEP60 = 0, aggEP90 = 0;
       var aggBadAvg = 0, aggBadP75 = 0, aggWidenProb = 0, aggStagnant = 0;
       var aggWeightSum = 0; // for renormalization after excluding missing-ticker pairs
+      // Per-metric weight sums to avoid denominator inflation when some pairs have null values
+      var wrWeightSum30 = 0, wrWeightSum60 = 0, wrWeightSum90 = 0;
+      var zWeightSum30 = 0, zWeightSum60 = 0, zWeightSum90 = 0;
+      var widenWeightSum = 0, stagnantWeightSum = 0;
       var totalGrossLong = 0, totalGrossShort = 0;
       var worstZ = null, worstZPair = '';
 
@@ -2057,22 +2061,22 @@ function getPortfolioAnalytics(mode, legsJson) {
           worstZPair = lTk + ' (L) x ' + sTk + ' (S)';
         }
 
-        // Accumulate weighted aggregates
+        // Accumulate weighted aggregates (only add weight to denominator when metric is valid)
         var w = def.weight;
         aggWeightSum += w;
-        if (z30 != null) aggZ30 += w * z30;
-        if (z60 != null) aggZ60 += w * z60;
-        if (z90 != null) aggZ90 += w * z90;
-        if (wr30 != null) aggWR30 += w * wr30;
-        if (wr60 != null) aggWR60 += w * wr60;
-        if (wr90 != null) aggWR90 += w * wr90;
+        if (z30 != null) { aggZ30 += w * z30; zWeightSum30 += w; }
+        if (z60 != null) { aggZ60 += w * z60; zWeightSum60 += w; }
+        if (z90 != null) { aggZ90 += w * z90; zWeightSum90 += w; }
+        if (wr30 != null) { aggWR30 += w * wr30; wrWeightSum30 += w; }
+        if (wr60 != null) { aggWR60 += w * wr60; wrWeightSum60 += w; }
+        if (wr90 != null) { aggWR90 += w * wr90; wrWeightSum90 += w; }
         if (ep30Dollar != null) aggEP30 += ep30Dollar;
         if (ep60Dollar != null) aggEP60 += ep60Dollar;
         if (ep90Dollar != null) aggEP90 += ep90Dollar;
         if (badAvgDollar != null) aggBadAvg += badAvgDollar;
         if (badP75Dollar != null) aggBadP75 += badP75Dollar;
-        if (bs && bs.wideningProb != null) aggWidenProb += w * bs.wideningProb;
-        if (bs && bs.stagnantRate != null) aggStagnant += w * bs.stagnantRate;
+        if (bs && bs.wideningProb != null) { aggWidenProb += w * bs.wideningProb; widenWeightSum += w; }
+        if (bs && bs.stagnantRate != null) { aggStagnant += w * bs.stagnantRate; stagnantWeightSum += w; }
 
         // Build result object for this cross-pair
         crossPairResults.push({
@@ -2126,14 +2130,14 @@ function getPortfolioAnalytics(mode, legsJson) {
         grossLong: parseFloat(totalGrossLong.toFixed(2)),
         grossShort: parseFloat(totalGrossShort.toFixed(2)),
         grossExposure: parseFloat((totalGrossLong + totalGrossShort).toFixed(2)),
-        // Weighted average Z-scores
-        z30: parseFloat((aggZ30 / nw).toFixed(2)),
-        z60: parseFloat((aggZ60 / nw).toFixed(2)),
-        z90: parseFloat((aggZ90 / nw).toFixed(2)),
-        // Weighted average win rates
-        wr30: parseFloat((aggWR30 / nw).toFixed(1)),
-        wr60: parseFloat((aggWR60 / nw).toFixed(1)),
-        wr90: parseFloat((aggWR90 / nw).toFixed(1)),
+        // Weighted average Z-scores (denominator = only pairs with valid Z data)
+        z30: parseFloat((aggZ30 / (zWeightSum30 || 1)).toFixed(2)),
+        z60: parseFloat((aggZ60 / (zWeightSum60 || 1)).toFixed(2)),
+        z90: parseFloat((aggZ90 / (zWeightSum90 || 1)).toFixed(2)),
+        // Weighted average win rates (denominator = only pairs with valid WR data)
+        wr30: parseFloat((aggWR30 / (wrWeightSum30 || 1)).toFixed(1)),
+        wr60: parseFloat((aggWR60 / (wrWeightSum60 || 1)).toFixed(1)),
+        wr90: parseFloat((aggWR90 / (wrWeightSum90 || 1)).toFixed(1)),
         // Summed dollar amounts (no double counting via proportional allocation)
         ep30: parseFloat(aggEP30.toFixed(2)),
         ep60: parseFloat(aggEP60.toFixed(2)),
@@ -2141,8 +2145,8 @@ function getPortfolioAnalytics(mode, legsJson) {
         // Summed bad scenario
         badAvg: parseFloat(aggBadAvg.toFixed(2)),
         badP75: parseFloat(aggBadP75.toFixed(2)),
-        widenProb: parseFloat((aggWidenProb / nw).toFixed(1)),
-        stagnantRate: parseFloat((aggStagnant / nw).toFixed(1)),
+        widenProb: parseFloat((aggWidenProb / (widenWeightSum || 1)).toFixed(1)),
+        stagnantRate: parseFloat((aggStagnant / (stagnantWeightSum || 1)).toFixed(1)),
         // Diagnostics
         worstZ: worstZ,
         worstZPair: worstZPair,
