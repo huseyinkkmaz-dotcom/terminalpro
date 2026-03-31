@@ -4435,11 +4435,52 @@ function getModelPortfolios_() {
         });
       } catch (e) { continue; }
     }
+    // Enrich pairs with live prices from WebCache if pA/pB are missing or zero.
+    // This fixes stale cached portfolios that were generated before the price fix.
+    if (portfolios.length > 0) {
+      var priceMap = buildWebCachePriceMap_(ss);
+      for (var pi = 0; pi < portfolios.length; pi++) {
+        var pp = portfolios[pi].pairs;
+        if (!pp) continue;
+        for (var qi = 0; qi < pp.length; qi++) {
+          var pair = pp[qi];
+          if ((!pair.pA || pair.pA === 0) && priceMap[String(pair.tA).toUpperCase()]) {
+            pair.pA = priceMap[String(pair.tA).toUpperCase()];
+          }
+          if ((!pair.pB || pair.pB === 0) && priceMap[String(pair.tB).toUpperCase()]) {
+            pair.pB = priceMap[String(pair.tB).toUpperCase()];
+          }
+        }
+      }
+    }
     var ts = portfolios.length > 0 ? portfolios[0].updatedAt : null;
     return { portfolios: portfolios, updatedAt: ts };
   } catch (e) {
     return { portfolios: [], updatedAt: null, error: e.toString() };
   }
+}
+
+/**
+ * Build a ticker→price map from WebCache + WebCacheCredit sheets.
+ * Used by getModelPortfolios_() to enrich pairs with live prices.
+ */
+function buildWebCachePriceMap_(ss) {
+  var priceMap = {};
+  var cacheNames = ['WebCache', 'WebCacheCredit'];
+  for (var ci = 0; ci < cacheNames.length; ci++) {
+    var sheet = ss.getSheetByName(cacheNames[ci]);
+    if (!sheet || sheet.getLastRow() <= 1) continue;
+    var data = sheet.getDataRange().getValues();
+    for (var i = 1; i < data.length; i++) {
+      var tA = String(data[i][1] || '').trim().toUpperCase(); // TickerA col B
+      var tB = String(data[i][2] || '').trim().toUpperCase(); // TickerB col C
+      var pA = parseFloat(data[i][3]) || 0; // PriceA col D
+      var pB = parseFloat(data[i][4]) || 0; // PriceB col E
+      if (tA && pA > 0 && !priceMap[tA]) priceMap[tA] = pA;
+      if (tB && pB > 0 && !priceMap[tB]) priceMap[tB] = pB;
+    }
+  }
+  return priceMap;
 }
 
 /**
@@ -4455,9 +4496,14 @@ function runModelPortfolioGenerator() {
 
     // ── STAGE 1: Candidate selection ──
     // Pull from ScreenerCache (pre-analyzed pairs with win rates + MAE)
-    var candidates = buildCandidatePool_(ss, histMap);
+    var candidates = buildCandidatePool_(ss, histMap, startTime, MAX_MS);
     if (candidates.length < 3) {
-      Logger.log('ModelPortfolio: Only ' + candidates.length + ' candidates, need at least 3. Aborting.');
+      // Retry with relaxed gates before aborting
+      Logger.log('ModelPortfolio: Only ' + candidates.length + ' candidates with strict gates, retrying with relaxed gates...');
+      candidates = buildCandidatePool_(ss, histMap, startTime, MAX_MS, true);
+    }
+    if (candidates.length < 2) {
+      Logger.log('ModelPortfolio: Only ' + candidates.length + ' candidates even with relaxed gates. Aborting.');
       return;
     }
 
@@ -4470,6 +4516,9 @@ function runModelPortfolioGenerator() {
     Logger.log('ModelPortfolio: Stage 2 complete — correlation matrix built in ' + ((new Date().getTime() - startTime) / 1000).toFixed(1) + 's');
 
     // ── STAGE 3: Greedy diversified portfolio construction ──
+    // Reserve 30s for mini-sweeps (Stage 4) — they must not be starved
+    var SWEEP_RESERVE_MS = 30000;
+    var STAGE3_DEADLINE = MAX_MS - SWEEP_RESERVE_MS;
     var NUM_PORTFOLIOS = 5;
     var MAX_ATTEMPTS = 12; // try more than 5 since stricter filters will reject some
     var PAIRS_PER_PORTFOLIO = 5;
@@ -4479,7 +4528,7 @@ function runModelPortfolioGenerator() {
     var portfolios = [];
 
     for (var p = 0; p < MAX_ATTEMPTS && portfolios.length < NUM_PORTFOLIOS; p++) {
-      if (new Date().getTime() - startTime > MAX_MS) break;
+      if (new Date().getTime() - startTime > STAGE3_DEADLINE) break;
       var portfolio = buildSinglePortfolio_(candidates, corrMatrix, usedPairIds, actualPairsPerPortfolio);
       if (portfolio.pairs.length === 0) break;
 
@@ -4597,19 +4646,27 @@ function runModelPortfolioGenerator() {
       portfolio.crossMatrixEP = { ep30: cmEP30, ep60: cmEP60, ep90: cmEP90 };
 
       // ── STAGE 4: Per-pair mini-sweeps for optimal entry/exit ──
-      if (new Date().getTime() - startTime < MAX_MS) {
-        for (var mp = 0; mp < portfolio.pairs.length; mp++) {
-          if (new Date().getTime() - startTime > MAX_MS) break;
-          var mpPair = portfolio.pairs[mp];
-          var sweep = miniSweepSinglePair_(mpPair.tA, mpPair.tB, histMap, 60);
-          if (sweep) {
-            mpPair.optEntry = sweep.optEntry;
-            mpPair.optExit = sweep.optExit;
-            mpPair.optWR = sweep.optWR;
-            mpPair.optAvgPnl = sweep.optAvgPnl;
-            mpPair.optTrades = sweep.optTrades;
-            mpPair.optProfitFactor = sweep.optProfitFactor;
-          }
+      // Uses reserved time budget (SWEEP_RESERVE_MS) so this stage always runs
+      for (var mp = 0; mp < portfolio.pairs.length; mp++) {
+        if (new Date().getTime() - startTime > MAX_MS) break;
+        var mpPair = portfolio.pairs[mp];
+        var sweep = miniSweepSinglePair_(mpPair.tA, mpPair.tB, histMap, 60);
+        if (sweep) {
+          mpPair.optEntry = sweep.optEntry;
+          mpPair.optExit = sweep.optExit;
+          mpPair.optWR = sweep.optWR;
+          mpPair.optAvgPnl = sweep.optAvgPnl;
+          mpPair.optTrades = sweep.optTrades;
+          mpPair.optProfitFactor = sweep.optProfitFactor;
+        } else {
+          // Fallback: use current Z magnitude as entry, 0.5σ as exit
+          var absZ = Math.abs(parseFloat(mpPair.z) || 2.0);
+          mpPair.optEntry = Math.max(1.5, Math.round(absZ * 10) / 10);
+          mpPair.optExit = 0.5;
+          mpPair.optWR = parseFloat(mpPair.wr30) || 0;
+          mpPair.optAvgPnl = 0;
+          mpPair.optTrades = 0;
+          mpPair.optProfitFactor = 0;
         }
       }
 
@@ -4662,9 +4719,14 @@ function runModelPortfolioGenerator() {
       return scoreB - scoreA;
     });
 
-    // Write to ModelPortfolioCache
-    writeModelPortfolioCache_(ss, portfolios);
-    Logger.log('ModelPortfolio: Complete — ' + portfolios.length + ' portfolios generated in ' + ((new Date().getTime() - startTime) / 1000).toFixed(1) + 's');
+    // Write to ModelPortfolioCache (even if 0 portfolios, to clear stale data)
+    if (portfolios.length > 0) {
+      writeModelPortfolioCache_(ss, portfolios);
+      Logger.log('ModelPortfolio: Complete — ' + portfolios.length + ' portfolios generated in ' + ((new Date().getTime() - startTime) / 1000).toFixed(1) + 's');
+    } else {
+      // Don't clear the cache if we have 0 results — keep stale data with a staleness marker
+      Logger.log('ModelPortfolio: WARNING — 0 portfolios passed filters after ' + MAX_ATTEMPTS + ' attempts in ' + ((new Date().getTime() - startTime) / 1000).toFixed(1) + 's. Keeping existing cache.');
+    }
   } catch (e) {
     Logger.log('ModelPortfolio error: ' + e);
   }
@@ -4674,9 +4736,10 @@ function runModelPortfolioGenerator() {
  * Stage 1: Build candidate pool from ScreenerCache + live alerts.
  * Returns up to 15 candidates sorted by composite quality score.
  */
-function buildCandidatePool_(ss, histMap) {
+function buildCandidatePool_(ss, histMap, startTime, maxMs, relaxed) {
   var candidates = [];
   var seen = {};
+  var CANDIDATE_TIME_BUDGET = maxMs * 0.4; // Use at most 40% of total budget for candidates
 
   // Source 1: ScreenerCache (pre-analyzed with win rates + MAE)
   var scrSheet = ss.getSheetByName('ScreenerCache');
@@ -4702,10 +4765,12 @@ function buildCandidatePool_(ss, histMap) {
       var ep30 = parseFloat(r[13]) || 0;
       var ep60 = parseFloat(r[14]) || 0;
       var z = parseFloat(r[4]) || 0;
-      // Hard gate: reject candidates with wr30 < 30% (historically poor mean reversion)
-      if (wr30 < 30) continue;
-      // Hard gate: reject candidates with negative 30d expected profit (Sandbox would show negative EV)
-      if (ep30 <= 0) continue;
+      // Hard gate: reject candidates with poor win rates (relaxed mode lowers threshold)
+      var wrGate = relaxed ? 15 : 30;
+      if (wr30 < wrGate) continue;
+      // Hard gate: reject candidates with negative 30d expected profit (relaxed allows ~zero)
+      if (!relaxed && ep30 <= 0) continue;
+      if (relaxed && ep30 < -0.5) continue;
       var mode = String(r[3] || 'intra');
       var sector = '';
 
@@ -4736,14 +4801,22 @@ function buildCandidatePool_(ss, histMap) {
   }
 
   // Source 2: Live alerts (fill up to 15 if screener didn't have enough)
+  // IMPORTANT: analyzeSinglePair_ is expensive (~2-5s each), so enforce time budget
   if (candidates.length < 15) {
     var modes = ['intra', 'credit'];
+    var wrGate2 = relaxed ? 15 : 30;
     for (var m = 0; m < modes.length; m++) {
+      if (new Date().getTime() - startTime > CANDIDATE_TIME_BUDGET) {
+        Logger.log('ModelPortfolio: Candidate pool hit time budget at ' + candidates.length + ' candidates (Source 2, mode=' + modes[m] + ')');
+        break;
+      }
       try {
         var alerts = getAlertData(modes[m]);
         delete alerts._diag;
         delete alerts._allPairs;
         for (var a = 0; a < alerts.length; a++) {
+          // Check time budget before each expensive analyzeSinglePair_ call
+          if (new Date().getTime() - startTime > CANDIDATE_TIME_BUDGET) break;
           var alert = alerts[a];
           var aid = cleanId(alert.id);
           if (seen[aid]) continue;
@@ -4769,8 +4842,9 @@ function buildCandidatePool_(ss, histMap) {
                 var lWiden = (lm.badScenario) ? lm.badScenario.wideningProb : 0;
                 var lMae = (lm.badScenario) ? lm.badScenario.avgMae : 0;
                 var lp75 = (lm.badScenario) ? lm.badScenario.p75Mae : 0;
-                if (lwr30 < 30) continue; // Apply same hard gate
-                if (lep30 <= 0) continue; // Reject negative EP — Sandbox would show negative EV
+                if (lwr30 < wrGate2) continue; // Apply hard gate (relaxed-aware)
+                if (!relaxed && lep30 <= 0) continue; // Reject negative EP
+                if (relaxed && lep30 < -0.5) continue;
                 var aScore = computeCandidateScore_(lwr30, lep30, lWiden, aZ, lMae);
                 candidates.push({
                   id: alert.id, tA: alert.tA, tB: alert.tB,
@@ -5052,8 +5126,8 @@ function miniSweepSinglePair_(tA, tB, histMap, maxHold) {
         }
       }
 
-      // Require minimum 3 trades for statistical relevance
-      if (trades < 3) continue;
+      // Require minimum 2 trades for statistical relevance (lowered from 3 to avoid blank results)
+      if (trades < 2) continue;
       var wr = parseFloat((wins / trades * 100).toFixed(1));
       var avgPnl = parseFloat((totalPnl / trades).toFixed(2));
       var pf = grossLoss > 0 ? parseFloat((grossWin / grossLoss).toFixed(2)) : 0;

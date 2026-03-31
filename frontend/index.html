@@ -1261,7 +1261,11 @@ function renderModelPortfolios(mp){
   var ageEl=document.getElementById('mpAge');
   if(ageEl&&updatedAt){
     var hrs=Math.round((Date.now()-new Date(updatedAt).getTime())/3600000);
-    ageEl.innerText='Last generated '+(hrs>0?hrs+'h ago':'just now')+' · '+portfolios.length+' portfolios';
+    var ageText='Last generated '+(hrs>0?hrs+'h ago':'just now')+' · '+portfolios.length+' portfolios';
+    if(hrs>=48) ageText+=' ⚠ STALE — data may be outdated';
+    ageEl.innerText=ageText;
+    if(hrs>=48) ageEl.style.color='var(--high)';
+    else ageEl.style.color='';
   }
   if(!portfolios||portfolios.length===0){
     document.getElementById('mpEmpty').style.display='';
