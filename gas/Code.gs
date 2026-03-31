@@ -4597,6 +4597,11 @@ function buildCandidatePool_(ss, histMap, startTime, maxMs, relaxed) {
   var seen = {};
   var CANDIDATE_TIME_BUDGET = maxMs * 0.4; // Use at most 40% of total budget for candidates
 
+  // ── Anti-overfitting constants for candidate screening ──
+  var SUSPICIOUS_WR_THRESHOLD = 95; // WR above this gets dampened (likely overfit)
+  var SUSPICIOUS_WR_MULT = 0.6;     // dampening multiplier for suspicious WR
+  var MIN_TRIGGERS = 3;             // minimum historical trigger signals required
+
   // Source 1: ScreenerCache (pre-analyzed with win rates + MAE)
   var scrSheet = ss.getSheetByName('ScreenerCache');
   if (scrSheet && scrSheet.getLastRow() > 1) {
@@ -4621,6 +4626,9 @@ function buildCandidatePool_(ss, histMap, startTime, maxMs, relaxed) {
       var ep30 = parseFloat(r[13]) || 0;
       var ep60 = parseFloat(r[14]) || 0;
       var z = parseFloat(r[4]) || 0;
+      var triggers = parseInt(r[12]) || 0;
+      // Anti-overfitting: reject candidates with too few historical trigger signals
+      if (triggers < MIN_TRIGGERS) continue;
       // Hard gate: reject candidates with poor win rates (relaxed mode lowers threshold)
       var wrGate = relaxed ? 15 : 30;
       if (wr30 < wrGate) continue;
@@ -4645,6 +4653,8 @@ function buildCandidatePool_(ss, histMap, startTime, maxMs, relaxed) {
 
       // Composite quality score for ranking (uses 30d win rate and expected profit)
       var qualityScore = computeCandidateScore_(wr30, ep30, widenProb, z, avgMae, p75Mae);
+      // Anti-overfitting: dampen suspiciously high win rates (likely curve-fitted)
+      if (wr30 > SUSPICIOUS_WR_THRESHOLD) qualityScore *= SUSPICIOUS_WR_MULT;
 
       candidates.push({
         id: id, tA: tA, tB: tB, mode: mode, sector: sector,
@@ -4702,6 +4712,8 @@ function buildCandidatePool_(ss, histMap, startTime, maxMs, relaxed) {
                 if (!relaxed && lep30 <= 0) continue; // Reject negative EP
                 if (relaxed && lep30 < -0.5) continue;
                 var aScore = computeCandidateScore_(lwr30, lep30, lWiden, aZ, lMae, lp75);
+                // Anti-overfitting: dampen suspiciously high win rates
+                if (lwr30 > SUSPICIOUS_WR_THRESHOLD) aScore *= SUSPICIOUS_WR_MULT;
                 candidates.push({
                   id: alert.id, tA: alert.tA, tB: alert.tB,
                   mode: modes[m], sector: alert.sec || '',
@@ -4941,6 +4953,10 @@ function exhaustivePortfolioSearch_(candidates, crossMetrics, corrMatrix, k, sta
   var results = [];
   var evalCount = 0;
 
+  // ── Tunable constants ──
+  var MAX_TICKER_EXPOSURE = 2;  // max times a single ticker can appear in one portfolio
+  var PORTFOLIO_WR_CEILING = 90; // blended WR above this gets skepticism discount
+
   // Generate all C(n, k) combinations iteratively using an index array
   var combo = [];
   for (var i = 0; i < k; i++) combo[i] = i;
@@ -4950,6 +4966,21 @@ function exhaustivePortfolioSearch_(candidates, crossMetrics, corrMatrix, k, sta
     if (evalCount % 500 === 0 && evalCount > 0 && new Date().getTime() - startTime > deadlineMs) break;
     evalCount++;
 
+    // ── Ticker exposure gate: skip combos where any ticker appears > MAX_TICKER_EXPOSURE times ──
+    var tickerFreq = {};
+    var exposureViolation = false;
+    for (var te = 0; te < k; te++) {
+      var cTa = String(candidates[combo[te]].tA).toUpperCase();
+      var cTb = String(candidates[combo[te]].tB).toUpperCase();
+      tickerFreq[cTa] = (tickerFreq[cTa] || 0) + 1;
+      tickerFreq[cTb] = (tickerFreq[cTb] || 0) + 1;
+      if (tickerFreq[cTa] > MAX_TICKER_EXPOSURE || tickerFreq[cTb] > MAX_TICKER_EXPOSURE) {
+        exposureViolation = true;
+        break;
+      }
+    }
+
+    if (!exposureViolation) {
     // ── Score this combination using pre-computed cross-metrics ──
     // Each pair contributes a long leg and a short leg. The cross-matrix evaluates
     // every longLeg[i] × shortLeg[j] combination with equal weight (uniform 100 shares each).
@@ -5028,6 +5059,9 @@ function exhaustivePortfolioSearch_(candidates, crossMetrics, corrMatrix, k, sta
       var corrBonus = Math.max(0, 5 * (1 - avgCorr));
       var score = wrPts + epPts + badAvgPts + badP75Pts + widenPts + corrBonus;
 
+      // ── Anti-overfitting: penalize suspiciously high blended win rates ──
+      if (cmWR30 > PORTFOLIO_WR_CEILING) score *= 0.85;
+
       results.push({
         indices: combo.slice(), // copy
         score: parseFloat(score.toFixed(2)),
@@ -5040,6 +5074,7 @@ function exhaustivePortfolioSearch_(candidates, crossMetrics, corrMatrix, k, sta
         }
       });
     }
+    } // end if (!exposureViolation)
 
     // ── Advance to next combination (lexicographic order) ──
     var pos = k - 1;
@@ -5176,6 +5211,11 @@ function miniSweepSinglePair_(tA, tB, histMap, maxHold) {
     zArr[day] = (pA[day] - pB[day] - rollMean) / rollStdev;
   }
 
+  // ── Anti-overfitting constants ──
+  var MAX_PROFIT_FACTOR = 4.0;   // cap PF to prevent curve-fitted outliers from dominating
+  var MIN_SWEEP_TRADES = 3;      // minimum trades for statistical relevance
+  var LOW_SAMPLE_THRESHOLD = 5;  // below this, apply shrinkage penalty
+
   // Sweep entry × exit grid — same values as full heatmap
   var entryZValues = [1.5, 1.8, 2.0, 2.2, 2.5, 2.8, 3.0];
   var exitZValues = [0.0, 0.25, 0.5, 0.75, 1.0, 1.25, 1.5];
@@ -5208,14 +5248,19 @@ function miniSweepSinglePair_(tA, tB, histMap, maxHold) {
         }
       }
 
-      // Require minimum 2 trades for statistical relevance (lowered from 3 to avoid blank results)
-      if (trades < 2) continue;
+      // Require minimum trades for statistical relevance
+      if (trades < MIN_SWEEP_TRADES) continue;
       var wr = parseFloat((wins / trades * 100).toFixed(1));
       var avgPnl = parseFloat((totalPnl / trades).toFixed(2));
       var pf = grossLoss > 0 ? parseFloat((grossWin / grossLoss).toFixed(2)) : 0;
 
-      // Score: prioritize win rate, then profit factor, then avg PnL
-      var score = wr * 2 + pf * 10 + (avgPnl > 0 ? avgPnl * 0.5 : avgPnl * 2);
+      // Anti-overfitting: cap profit factor to prevent curve-fitted outliers
+      var pfCapped = Math.min(pf, MAX_PROFIT_FACTOR);
+
+      // Score: prioritize win rate, then capped profit factor, then avg PnL
+      // Low sample shrinkage: scale score toward zero when trades < LOW_SAMPLE_THRESHOLD
+      var score = wr * 2 + pfCapped * 10 + (avgPnl > 0 ? avgPnl * 0.5 : avgPnl * 2);
+      if (trades < LOW_SAMPLE_THRESHOLD) score *= (trades / LOW_SAMPLE_THRESHOLD);
       if (!best || score > best.score) {
         best = {
           score: score,
