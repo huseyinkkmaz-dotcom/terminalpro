@@ -4495,10 +4495,8 @@ function runModelPortfolioGenerator() {
     var histMap = readTickerHistMap_(ss);
 
     // ── STAGE 1: Candidate selection ──
-    // Pull from ScreenerCache (pre-analyzed pairs with win rates + MAE)
     var candidates = buildCandidatePool_(ss, histMap, startTime, MAX_MS);
     if (candidates.length < 3) {
-      // Retry with relaxed gates before aborting
       Logger.log('ModelPortfolio: Only ' + candidates.length + ' candidates with strict gates, retrying with relaxed gates...');
       candidates = buildCandidatePool_(ss, histMap, startTime, MAX_MS, true);
     }
@@ -4506,166 +4504,40 @@ function runModelPortfolioGenerator() {
       Logger.log('ModelPortfolio: Only ' + candidates.length + ' candidates even with relaxed gates. Aborting.');
       return;
     }
-
-    // Cap at 15 candidates to keep C(15,5) tractable for correlation
+    // Cap at 15 candidates — C(15,5) = 3003 combos, tractable with pre-computed metrics
     if (candidates.length > 15) candidates = candidates.slice(0, 15);
     Logger.log('ModelPortfolio: Stage 1 complete — ' + candidates.length + ' candidates in ' + ((new Date().getTime() - startTime) / 1000).toFixed(1) + 's');
 
-    // ── STAGE 2: Correlation matrix ──
+    // ── STAGE 2a: Correlation matrix ──
     var corrMatrix = buildCorrelationMatrix_(candidates, histMap);
-    Logger.log('ModelPortfolio: Stage 2 complete — correlation matrix built in ' + ((new Date().getTime() - startTime) / 1000).toFixed(1) + 's');
+    Logger.log('ModelPortfolio: Stage 2a complete — correlation matrix in ' + ((new Date().getTime() - startTime) / 1000).toFixed(1) + 's');
 
-    // ── STAGE 3: Greedy diversified portfolio construction ──
-    // Reserve 30s for mini-sweeps (Stage 4) — they must not be starved
+    // ── STAGE 2b: Pre-compute cross-pair metrics for all N×N long×short combinations ──
+    // This is the expensive step — O(N²) calls to computeBasketMetrics_ + probability engine.
+    // But it's done ONCE, and all C(n,k) combo evaluations then use O(1) lookups.
+    var crossMetrics = precomputeCrossPairMetrics_(candidates, histMap);
+    Logger.log('ModelPortfolio: Stage 2b complete — ' + candidates.length + '×' + candidates.length + ' cross-pair metrics pre-computed in ' + ((new Date().getTime() - startTime) / 1000).toFixed(1) + 's');
+
+    // ── STAGE 3: Exhaustive combinatorial search ──
+    // Reserve 30s for mini-sweeps (Stage 4)
     var SWEEP_RESERVE_MS = 30000;
-    var STAGE3_DEADLINE = MAX_MS - SWEEP_RESERVE_MS;
+    var SEARCH_DEADLINE = MAX_MS - SWEEP_RESERVE_MS;
+    var PAIRS_PER_PORTFOLIO = Math.min(5, candidates.length);
     var NUM_PORTFOLIOS = 5;
-    var MAX_ATTEMPTS = 12; // try more than 5 since stricter filters will reject some
-    var PAIRS_PER_PORTFOLIO = 5;
-    // Allow smaller portfolios if we have fewer candidates
-    var actualPairsPerPortfolio = Math.min(PAIRS_PER_PORTFOLIO, candidates.length);
-    var usedPairIds = {}; // track pairs used across portfolios for diversity
+
+    var scoredCombos = exhaustivePortfolioSearch_(candidates, crossMetrics, corrMatrix, PAIRS_PER_PORTFOLIO, startTime, SEARCH_DEADLINE);
+    Logger.log('ModelPortfolio: Stage 3 complete — ' + scoredCombos.length + ' valid combos from C(' + candidates.length + ',' + PAIRS_PER_PORTFOLIO + ') in ' + ((new Date().getTime() - startTime) / 1000).toFixed(1) + 's');
+
+    // ── STAGE 3b: Select diverse top-K portfolios ──
+    var topCombos = diverseTopK_(scoredCombos, NUM_PORTFOLIOS, 2);
+    Logger.log('ModelPortfolio: Stage 3b complete — ' + topCombos.length + ' diverse portfolios selected');
+
+    // ── Build portfolio objects + STAGE 4-6: mini-sweeps, profit capture, Kelly ──
     var portfolios = [];
+    for (var p = 0; p < topCombos.length; p++) {
+      var portfolio = buildPortfolioFromCombo_(topCombos[p], candidates, corrMatrix, histMap);
 
-    for (var p = 0; p < MAX_ATTEMPTS && portfolios.length < NUM_PORTFOLIOS; p++) {
-      if (new Date().getTime() - startTime > STAGE3_DEADLINE) break;
-      var portfolio = buildSinglePortfolio_(candidates, corrMatrix, usedPairIds, actualPairsPerPortfolio);
-      if (portfolio.pairs.length === 0) break;
-
-      // Mark pairs as used (soft penalty, not hard exclusion)
-      for (var pp = 0; pp < portfolio.pairs.length; pp++) {
-        var usedId = portfolio.pairs[pp].id;
-        usedPairIds[usedId] = (usedPairIds[usedId] || 0) + 1;
-      }
-
-      // ── Cross-pair validation (mirrors Sandbox methodology) ──
-      // The Sandbox decomposes N pairs into N² cross-pairs (every long × every short).
-      // We must validate using the SAME method to ensure Optimizer ↔ Sandbox agreement.
-      var longLegs = [], shortLegs = [];
-      for (var lp = 0; lp < portfolio.pairs.length; lp++) {
-        var pair = portfolio.pairs[lp];
-        var z = parseFloat(pair.z) || 0;
-        var longTk = z > 0 ? pair.tB : pair.tA;
-        var shortTk = z > 0 ? pair.tA : pair.tB;
-        var longPrice = z > 0 ? pair.pB : pair.pA;
-        var shortPrice = z > 0 ? pair.pA : pair.pB;
-        longLegs.push({ ticker: longTk, size: 100, direction: 1, entryPrice: longPrice || 0 });
-        shortLegs.push({ ticker: shortTk, size: 100, direction: -1, entryPrice: shortPrice || 0 });
-      }
-
-      // Build cross-pairs with proportional weights (same as Sandbox getPortfolioAnalytics)
-      var totalLongShares = 0, totalShortShares = 0;
-      for (var li = 0; li < longLegs.length; li++) totalLongShares += longLegs[li].size;
-      for (var si = 0; si < shortLegs.length; si++) totalShortShares += shortLegs[si].size;
-
-      var aggWR30 = 0, aggWR60 = 0, aggWR90 = 0;
-      var aggEP30 = 0, aggEP60 = 0, aggEP90 = 0;
-      var wrWS30 = 0, wrWS60 = 0, wrWS90 = 0;
-      var aggWeightSum = 0;
-      var crossBestZ = 0;
-      // Bad scenario accumulators (weighted by cross-pair weight)
-      var aggBadAvg = 0, aggBadP75 = 0, aggWidenProb = 0;
-      var badWeightSum = 0, widenWeightSum = 0;
-
-      for (var li = 0; li < longLegs.length; li++) {
-        for (var si = 0; si < shortLegs.length; si++) {
-          var w = (longLegs[li].size / totalLongShares) * (shortLegs[si].size / totalShortShares);
-          var lTk = longLegs[li].ticker;
-          var sTk = shortLegs[si].ticker;
-          if (!histMap[String(lTk).toUpperCase()] || !histMap[String(sTk).toUpperCase()]) continue;
-
-          var pairLegs = [
-            { ticker: lTk, size: 100, direction: 1 },
-            { ticker: sTk, size: 100, direction: -1 }
-          ];
-          var pm = computeBasketMetrics_(pairLegs, histMap);
-          if (!pm || pm.error) continue;
-
-          // Use current market spread as entry (matches what Sandbox does with real entry prices)
-          var entrySpread = (longLegs[li].entryPrice || 0) - (shortLegs[si].entryPrice || 0);
-          // If entry prices not available, use current market spread
-          if (entrySpread === 0 && pm.netSpread != null) entrySpread = pm.netSpread;
-
-          // Override EP with entry-anchored values (same as Sandbox line 2004-2007)
-          var pairRZ = pm.rollingZ || {};
-          for (var wKey in pairRZ) {
-            if (pairRZ[wKey] && !pairRZ[wKey].insufficient) {
-              pairRZ[wKey].expectedProfit = parseFloat((pairRZ[wKey].mean - entrySpread).toFixed(4));
-            }
-          }
-
-          // Run probability engine anchored to entry spread (same as Sandbox line 2013)
-          var pairProb = { triggers: 0, winRates: {} };
-          if (pm.dailyValuesFull_ && pm.dailyValuesFull_.length >= 20) {
-            pairProb = computeHistoricalProbabilities_(pm.dailyValuesFull_, entrySpread, pairRZ, pm.totalWeight);
-            if (pairProb.triggers < 3) {
-              var widePairProb = computeHistoricalProbabilitiesWide_(pm.dailyValuesFull_, entrySpread, pairRZ, pm.totalWeight);
-              if (widePairProb.triggers > pairProb.triggers) pairProb = widePairProb;
-            }
-          }
-
-          // Accumulate weighted cross-pair metrics (same as Sandbox line 2064-2079)
-          aggWeightSum += w;
-          var effShares = 200; // 100 long + 100 short per cross-pair
-          var wr30 = (pairProb.winRates && pairProb.winRates['30d'] && pairProb.winRates['30d'].eligible >= 2) ? pairProb.winRates['30d'].rate : null;
-          var wr60 = (pairProb.winRates && pairProb.winRates['60d'] && pairProb.winRates['60d'].eligible >= 2) ? pairProb.winRates['60d'].rate : null;
-          var wr90 = (pairProb.winRates && pairProb.winRates['90d'] && pairProb.winRates['90d'].eligible >= 2) ? pairProb.winRates['90d'].rate : null;
-          if (wr30 != null) { aggWR30 += w * wr30; wrWS30 += w; }
-          if (wr60 != null) { aggWR60 += w * wr60; wrWS60 += w; }
-          if (wr90 != null) { aggWR90 += w * wr90; wrWS90 += w; }
-          var ep30 = (pairRZ['30d'] && !pairRZ['30d'].insufficient) ? pairRZ['30d'].expectedProfit * effShares : null;
-          var ep60 = (pairRZ['60d'] && !pairRZ['60d'].insufficient) ? pairRZ['60d'].expectedProfit * effShares : null;
-          var ep90 = (pairRZ['90d'] && !pairRZ['90d'].insufficient) ? pairRZ['90d'].expectedProfit * effShares : null;
-          if (ep30 != null) aggEP30 += ep30;
-          if (ep60 != null) aggEP60 += ep60;
-          if (ep90 != null) aggEP90 += ep90;
-
-          // Track basket Z from 30d
-          if (pairRZ['30d'] && !pairRZ['30d'].insufficient) {
-            crossBestZ += w * pairRZ['30d'].z;
-          }
-
-          // Accumulate bad scenario metrics (Avg MAE, P75 MAE, Widen Prob)
-          var cpBs = pairProb.badScenario;
-          if (cpBs) {
-            var cpEffShares = effShares; // 200 shares per cross-pair
-            if (cpBs.avgMae != null) { aggBadAvg += w * cpBs.avgMae * cpEffShares; badWeightSum += w; }
-            if (cpBs.p75Mae != null) { aggBadP75 += w * cpBs.p75Mae * cpEffShares; }
-            if (cpBs.wideningProb != null) { aggWidenProb += w * cpBs.wideningProb; widenWeightSum += w; }
-          }
-        }
-      }
-
-      // Compute final cross-matrix aggregate metrics
-      var cmWR30 = wrWS30 > 0 ? parseFloat((aggWR30 / wrWS30).toFixed(1)) : 0;
-      var cmWR60 = wrWS60 > 0 ? parseFloat((aggWR60 / wrWS60).toFixed(1)) : 0;
-      var cmWR90 = wrWS90 > 0 ? parseFloat((aggWR90 / wrWS90).toFixed(1)) : 0;
-      var cmEP30 = parseFloat(aggEP30.toFixed(2));
-      var cmEP60 = parseFloat(aggEP60.toFixed(2));
-      var cmEP90 = parseFloat(aggEP90.toFixed(2));
-
-      // Set portfolio metrics from cross-matrix (this is what Sandbox will show)
-      portfolio.basketZ = aggWeightSum > 0 ? parseFloat((crossBestZ / aggWeightSum).toFixed(2)) : 0;
-      portfolio.expectedProfit = cmEP30 / (portfolio.pairs.length * 200); // normalize to per-share
-      portfolio.blendedWR = cmWR30;
-      portfolio.rollingZ = {
-        '30d': { z: portfolio.basketZ, expectedProfit: portfolio.expectedProfit },
-        '60d': { z: 0, expectedProfit: cmEP60 / (portfolio.pairs.length * 200) },
-        '90d': { z: 0, expectedProfit: cmEP90 / (portfolio.pairs.length * 200) }
-      };
-      // Store cross-matrix WRs for display
-      portfolio.crossMatrixWR = { wr30: cmWR30, wr60: cmWR60, wr90: cmWR90 };
-      portfolio.crossMatrixEP = { ep30: cmEP30, ep60: cmEP60, ep90: cmEP90 };
-
-      // Store cross-matrix bad scenario metrics (used for final ranking)
-      var cmBadAvg = badWeightSum > 0 ? parseFloat((aggBadAvg / badWeightSum).toFixed(2)) : 0;
-      var cmBadP75 = badWeightSum > 0 ? parseFloat((aggBadP75 / badWeightSum).toFixed(2)) : 0;
-      var cmWidenProb = widenWeightSum > 0 ? parseFloat((aggWidenProb / widenWeightSum).toFixed(1)) : (portfolio.widenProb || 0);
-      portfolio.badScenario = { avgMaeDollar: cmBadAvg, p75MaeDollar: cmBadP75 };
-      portfolio.widenProb = cmWidenProb; // overwrite with cross-matrix value (more accurate than simple avg)
-
-      // ── STAGE 4: Per-pair mini-sweeps for optimal entry/exit ──
-      // Uses reserved time budget (SWEEP_RESERVE_MS) so this stage always runs
+      // STAGE 4: Per-pair mini-sweeps for optimal entry/exit
       for (var mp = 0; mp < portfolio.pairs.length; mp++) {
         if (new Date().getTime() - startTime > MAX_MS) break;
         var mpPair = portfolio.pairs[mp];
@@ -4678,7 +4550,6 @@ function runModelPortfolioGenerator() {
           mpPair.optTrades = sweep.optTrades;
           mpPair.optProfitFactor = sweep.optProfitFactor;
         } else {
-          // Fallback: use current Z magnitude as entry, 0.5σ as exit
           var absZ = Math.abs(parseFloat(mpPair.z) || 2.0);
           mpPair.optEntry = Math.max(1.5, Math.round(absZ * 10) / 10);
           mpPair.optExit = 0.5;
@@ -4689,80 +4560,23 @@ function runModelPortfolioGenerator() {
         }
       }
 
-      // ── STAGE 5: Basket-level profit capture % ──
+      // STAGE 5: Basket-level profit capture %
       portfolio.profitCapture = computeProfitCapture_(portfolio.pairs, histMap);
 
-      // ── STAGE 6: Basket-level Kelly sizing ──
+      // STAGE 6: Basket-level Kelly sizing
       portfolio.kellySizing = computeBasketKelly_(portfolio);
-
-      // ── STAGE 7: Reject portfolios where cross-matrix shows losers at ANY horizon ──
-      // This matches exactly what the Sandbox calculator will display.
-      var rejectHorizon = false;
-      // Check cross-matrix win rates — must be >= 50% at all horizons
-      if (cmWR30 > 0 && cmWR30 < 50) {
-        Logger.log('ModelPortfolio: Rejected — cross-matrix 30d WR=' + cmWR30 + '% (need >=50%)');
-        rejectHorizon = true;
-      }
-      if (!rejectHorizon && cmWR60 > 0 && cmWR60 < 50) {
-        Logger.log('ModelPortfolio: Rejected — cross-matrix 60d WR=' + cmWR60 + '% (need >=50%)');
-        rejectHorizon = true;
-      }
-      if (!rejectHorizon && cmWR90 > 0 && cmWR90 < 50) {
-        Logger.log('ModelPortfolio: Rejected — cross-matrix 90d WR=' + cmWR90 + '% (need >=50%)');
-        rejectHorizon = true;
-      }
-      // Check cross-matrix expected profits — must be positive at all horizons
-      if (!rejectHorizon && cmEP30 <= 0) {
-        Logger.log('ModelPortfolio: Rejected — cross-matrix 30d EP=$' + cmEP30 + ' (need >0)');
-        rejectHorizon = true;
-      }
-      if (!rejectHorizon && cmEP60 <= 0) {
-        Logger.log('ModelPortfolio: Rejected — cross-matrix 60d EP=$' + cmEP60 + ' (need >0)');
-        rejectHorizon = true;
-      }
-      if (!rejectHorizon && cmEP90 <= 0) {
-        Logger.log('ModelPortfolio: Rejected — cross-matrix 90d EP=$' + cmEP90 + ' (need >0)');
-        rejectHorizon = true;
-      }
-      if (rejectHorizon) continue;
 
       portfolios.push(portfolio);
     }
 
-    Logger.log('ModelPortfolio: Stages 3-7 complete — ' + portfolios.length + ' portfolios with sweeps in ' + ((new Date().getTime() - startTime) / 1000).toFixed(1) + 's');
+    Logger.log('ModelPortfolio: Stages 3-6 complete — ' + portfolios.length + ' portfolios with sweeps in ' + ((new Date().getTime() - startTime) / 1000).toFixed(1) + 's');
 
-    // Sort portfolios by risk-adjusted composite score using ALL 5 target metrics:
-    // 1. Win Rate (25%) — cross-matrix blended 30d WR
-    // 2. Expected Profit (25%) — cross-matrix total EP, normalized
-    // 3. Bad Scenario Avg MAE (15%) — lower is better (cross-matrix weighted)
-    // 4. Bad Scenario P75 MAE (20%) — lower is better, tail risk (cross-matrix weighted)
-    // 5. Widen Probability (15%) — proxy for holding period risk (cross-matrix weighted)
-    portfolios.sort(function(a, b) {
-      function riskAdjScore(p) {
-        // Win Rate component: 50% = 0pts, 100% = 25pts, <50% goes negative
-        var wrPts = Math.min(25, ((p.blendedWR || 0) - 50) * 0.5);
-        // Expected Profit component: $0 = 0pts, cap at 25pts
-        var epPts = Math.min(25, Math.max(-25, (p.expectedProfit || 0) * 20));
-        // Bad Avg MAE penalty: $0 = 15pts, $300+ = 0pts (lower drawdown = better)
-        var badAvg = (p.badScenario && p.badScenario.avgMaeDollar) ? p.badScenario.avgMaeDollar : 0;
-        var badAvgPts = badAvg > 0 ? Math.max(0, 15 - badAvg * 0.05) : 7.5;
-        // Bad P75 MAE penalty (tail risk): $0 = 20pts, $400+ = 0pts (lower worst-case = better)
-        var badP75 = (p.badScenario && p.badScenario.p75MaeDollar) ? p.badScenario.p75MaeDollar : 0;
-        var badP75Pts = badP75 > 0 ? Math.max(0, 20 - badP75 * 0.05) : 10;
-        // Widen Probability penalty: 0% = 15pts, 50%+ = 0pts (lower stagnation = better)
-        var widenPts = Math.max(0, 15 - ((p.widenProb || 0) * 0.3));
-        return wrPts + epPts + badAvgPts + badP75Pts + widenPts;
-      }
-      return riskAdjScore(b) - riskAdjScore(a);
-    });
-
-    // Write to ModelPortfolioCache (even if 0 portfolios, to clear stale data)
+    // Write to ModelPortfolioCache (portfolios are already sorted by exhaustive search score)
     if (portfolios.length > 0) {
       writeModelPortfolioCache_(ss, portfolios);
       Logger.log('ModelPortfolio: Complete — ' + portfolios.length + ' portfolios generated in ' + ((new Date().getTime() - startTime) / 1000).toFixed(1) + 's');
     } else {
-      // Don't clear the cache if we have 0 results — keep stale data with a staleness marker
-      Logger.log('ModelPortfolio: WARNING — 0 portfolios passed filters after ' + MAX_ATTEMPTS + ' attempts in ' + ((new Date().getTime() - startTime) / 1000).toFixed(1) + 's. Keeping existing cache.');
+      Logger.log('ModelPortfolio: WARNING — 0 portfolios passed filters in ' + ((new Date().getTime() - startTime) / 1000).toFixed(1) + 's. Keeping existing cache.');
     }
   } catch (e) {
     Logger.log('ModelPortfolio error: ' + e);
@@ -4994,76 +4808,273 @@ function pearsonCorrelation_(a, b) {
 }
 
 /**
- * Stage 3: Build a single diversified portfolio using greedy best-first with diversity penalty.
- * @param {Array} candidates - sorted candidate pool
- * @param {Array} corrMatrix - 2D correlation matrix
- * @param {Object} usedPairIds - pairs already used in previous portfolios {id: count}
- * @param {number} size - number of pairs to include
+ * Stage 2b: Pre-compute cross-pair metrics for all N×N long×short ticker combinations.
+ * For each candidate pair (i), Z-sign determines long/short legs. We then compute metrics
+ * for every combination of longLeg[i] × shortLeg[j] across all candidates.
+ * Returns a 2D map: crossMetrics[i][j] = { wr30, wr60, wr90, ep30, ep60, ep90, badAvg, badP75, widenProb }
+ * where i is the long-leg source candidate and j is the short-leg source candidate.
+ * Self-pairs (i===j) are included since they represent the original pair's own cross-pair.
  */
-function buildSinglePortfolio_(candidates, corrMatrix, usedPairIds, size) {
-  var selected = []; // indices into candidates array
-  var selectedIds = {};
-  var sectorCounts = {};
+function precomputeCrossPairMetrics_(candidates, histMap) {
+  var n = candidates.length;
+  // Decompose each candidate into its long and short tickers based on Z-sign
+  var legs = [];
+  for (var i = 0; i < n; i++) {
+    var c = candidates[i];
+    var z = parseFloat(c.z) || 0;
+    var longTk = z > 0 ? c.tB : c.tA;
+    var shortTk = z > 0 ? c.tA : c.tB;
+    var histL = histMap[String(longTk).toUpperCase().trim()];
+    var histS = histMap[String(shortTk).toUpperCase().trim()];
+    var longPrice = (histL && histL.length > 0) ? histL[histL.length - 1] : 0;
+    var shortPrice = (histS && histS.length > 0) ? histS[histS.length - 1] : 0;
+    legs.push({ longTk: longTk, shortTk: shortTk, longPrice: longPrice, shortPrice: shortPrice });
+  }
 
-  for (var slot = 0; slot < size; slot++) {
-    var bestIdx = -1;
-    var bestScore = -Infinity;
+  // Pre-compute metrics for every long[i] × short[j] cross-pair
+  var crossMetrics = [];
+  for (var i = 0; i < n; i++) {
+    crossMetrics[i] = [];
+    for (var j = 0; j < n; j++) {
+      var lTk = legs[i].longTk;
+      var sTk = legs[j].shortTk;
+      if (!histMap[String(lTk).toUpperCase()] || !histMap[String(sTk).toUpperCase()]) {
+        crossMetrics[i][j] = null;
+        continue;
+      }
 
-    for (var ci = 0; ci < candidates.length; ci++) {
-      if (selectedIds[ci] !== undefined) continue; // already in this portfolio
-      var c = candidates[ci];
+      var pairLegs = [
+        { ticker: lTk, size: 100, direction: 1 },
+        { ticker: sTk, size: 100, direction: -1 }
+      ];
+      var pm = computeBasketMetrics_(pairLegs, histMap);
+      if (!pm || pm.error) { crossMetrics[i][j] = null; continue; }
 
-      // Base quality score
-      var score = c.qualityScore;
+      // Entry spread from current market prices (matches Sandbox methodology)
+      var entrySpread = (legs[i].longPrice || 0) - (legs[j].shortPrice || 0);
+      if (entrySpread === 0 && pm.netSpread != null) entrySpread = pm.netSpread;
 
-      // Diversity penalty 1: correlation with existing legs
-      if (selected.length > 0) {
-        var maxCorr = 0;
-        for (var si = 0; si < selected.length; si++) {
-          var corr = Math.abs(corrMatrix[ci][selected[si]]);
-          if (corr > maxCorr) maxCorr = corr;
+      // Override EP with entry-anchored values
+      var pairRZ = pm.rollingZ || {};
+      for (var wKey in pairRZ) {
+        if (pairRZ[wKey] && !pairRZ[wKey].insufficient) {
+          pairRZ[wKey].expectedProfit = parseFloat((pairRZ[wKey].mean - entrySpread).toFixed(4));
         }
-        // Heavy penalty for high correlation (0.7 weight)
-        score *= (1 - 0.7 * maxCorr);
       }
 
-      // Diversity penalty 2: sector concentration
-      var sec = c.sector || 'Other';
-      var curSectorCount = sectorCounts[sec] || 0;
-      if (curSectorCount >= 2) {
-        score *= 0.3; // strong penalty for 3+ in same sector
-      } else if (curSectorCount >= 1) {
-        score *= 0.7; // mild penalty for 2 in same sector
+      // Run probability engine anchored to entry spread
+      var pairProb = { triggers: 0, winRates: {}, badScenario: null };
+      if (pm.dailyValuesFull_ && pm.dailyValuesFull_.length >= 20) {
+        pairProb = computeHistoricalProbabilities_(pm.dailyValuesFull_, entrySpread, pairRZ, pm.totalWeight);
+        if (pairProb.triggers < 3) {
+          var widePairProb = computeHistoricalProbabilitiesWide_(pm.dailyValuesFull_, entrySpread, pairRZ, pm.totalWeight);
+          if (widePairProb.triggers > pairProb.triggers) pairProb = widePairProb;
+        }
       }
 
-      // Diversity penalty 3: reuse across portfolios
-      var useCount = usedPairIds[c.id] || 0;
-      if (useCount > 0) {
-        score *= Math.pow(0.5, useCount); // halve score for each reuse
+      var wr30 = (pairProb.winRates && pairProb.winRates['30d'] && pairProb.winRates['30d'].eligible >= 2) ? pairProb.winRates['30d'].rate : null;
+      var wr60 = (pairProb.winRates && pairProb.winRates['60d'] && pairProb.winRates['60d'].eligible >= 2) ? pairProb.winRates['60d'].rate : null;
+      var wr90 = (pairProb.winRates && pairProb.winRates['90d'] && pairProb.winRates['90d'].eligible >= 2) ? pairProb.winRates['90d'].rate : null;
+
+      var ep30 = (pairRZ['30d'] && !pairRZ['30d'].insufficient) ? pairRZ['30d'].expectedProfit * 200 : null;
+      var ep60 = (pairRZ['60d'] && !pairRZ['60d'].insufficient) ? pairRZ['60d'].expectedProfit * 200 : null;
+      var ep90 = (pairRZ['90d'] && !pairRZ['90d'].insufficient) ? pairRZ['90d'].expectedProfit * 200 : null;
+
+      var z30 = (pairRZ['30d'] && !pairRZ['30d'].insufficient) ? pairRZ['30d'].z : 0;
+
+      var badAvg = 0, badP75 = 0, widenProb = 0;
+      var cpBs = pairProb.badScenario;
+      if (cpBs) {
+        badAvg = (cpBs.avgMae != null) ? cpBs.avgMae * 200 : 0;
+        badP75 = (cpBs.p75Mae != null) ? cpBs.p75Mae * 200 : 0;
+        widenProb = (cpBs.wideningProb != null) ? cpBs.wideningProb : 0;
       }
 
-      if (score > bestScore) {
-        bestScore = score;
-        bestIdx = ci;
+      crossMetrics[i][j] = {
+        wr30: wr30, wr60: wr60, wr90: wr90,
+        ep30: ep30, ep60: ep60, ep90: ep90,
+        z30: z30, badAvg: badAvg, badP75: badP75, widenProb: widenProb
+      };
+    }
+  }
+  return crossMetrics;
+}
+
+/**
+ * Stage 3: Exhaustive portfolio search — enumerates all C(n, k) combinations of candidates,
+ * scores each using pre-computed cross-pair metrics, and returns all scored combos sorted by score.
+ *
+ * For each combo, the portfolio score is computed from the weighted-average cross-matrix of its
+ * constituent pairs (same methodology as Sandbox getPortfolioAnalytics). This is O(C(n,k) × k²)
+ * since cross-pair lookups are O(1) from pre-computed metrics.
+ *
+ * @param {Array} candidates - candidate pool (max ~15)
+ * @param {Array} crossMetrics - pre-computed N×N cross-pair metrics from precomputeCrossPairMetrics_
+ * @param {Array} corrMatrix - pairwise correlation matrix
+ * @param {number} k - pairs per portfolio (typically 5)
+ * @param {number} startTime - for timeout checking
+ * @param {number} deadlineMs - max elapsed ms before aborting
+ * @returns {Array} scored combos [{indices: [], score, metrics: {wr30, wr60, wr90, ep30, ep60, ep90, basketZ, badAvg, badP75, widenProb, avgCorr}}] sorted by score desc
+ */
+function exhaustivePortfolioSearch_(candidates, crossMetrics, corrMatrix, k, startTime, deadlineMs) {
+  var n = candidates.length;
+  k = Math.min(k, n);
+  var results = [];
+
+  // Generate all C(n, k) combinations iteratively using an index array
+  var combo = [];
+  for (var i = 0; i < k; i++) combo[i] = i;
+
+  while (true) {
+    // Check timeout every 500 combos
+    if (results.length % 500 === 0 && new Date().getTime() - startTime > deadlineMs) break;
+
+    // ── Score this combination using pre-computed cross-metrics ──
+    // Each pair contributes a long leg and a short leg. The cross-matrix evaluates
+    // every longLeg[i] × shortLeg[j] combination with equal weight (uniform 100 shares each).
+    var totalWeight = 0;
+    var aggWR30 = 0, aggWR60 = 0, aggWR90 = 0;
+    var wrWS30 = 0, wrWS60 = 0, wrWS90 = 0;
+    var aggEP30 = 0, aggEP60 = 0, aggEP90 = 0;
+    var aggZ30 = 0, zWeightSum = 0;
+    var aggBadAvg = 0, aggBadP75 = 0, aggWidenProb = 0;
+    var badWS = 0, widenWS = 0;
+
+    var kk = combo.length;
+    var w = 1.0 / (kk * kk); // equal weight for each cross-pair
+
+    for (var li = 0; li < kk; li++) {
+      for (var si = 0; si < kk; si++) {
+        var cm = crossMetrics[combo[li]][combo[si]];
+        if (!cm) continue;
+        totalWeight += w;
+
+        if (cm.wr30 != null) { aggWR30 += w * cm.wr30; wrWS30 += w; }
+        if (cm.wr60 != null) { aggWR60 += w * cm.wr60; wrWS60 += w; }
+        if (cm.wr90 != null) { aggWR90 += w * cm.wr90; wrWS90 += w; }
+        if (cm.ep30 != null) aggEP30 += cm.ep30;
+        if (cm.ep60 != null) aggEP60 += cm.ep60;
+        if (cm.ep90 != null) aggEP90 += cm.ep90;
+        if (cm.z30 !== 0) { aggZ30 += w * cm.z30; zWeightSum += w; }
+        if (cm.badAvg > 0) { aggBadAvg += w * cm.badAvg; badWS += w; }
+        if (cm.badP75 > 0) { aggBadP75 += w * cm.badP75; }
+        if (cm.widenProb > 0) { aggWidenProb += w * cm.widenProb; widenWS += w; }
       }
     }
 
-    if (bestIdx < 0) break;
-    selected.push(bestIdx);
-    selectedIds[bestIdx] = true;
-    var sec2 = candidates[bestIdx].sector || 'Other';
-    sectorCounts[sec2] = (sectorCounts[sec2] || 0) + 1;
+    var cmWR30 = wrWS30 > 0 ? parseFloat((aggWR30 / wrWS30).toFixed(1)) : 0;
+    var cmWR60 = wrWS60 > 0 ? parseFloat((aggWR60 / wrWS60).toFixed(1)) : 0;
+    var cmWR90 = wrWS90 > 0 ? parseFloat((aggWR90 / wrWS90).toFixed(1)) : 0;
+    var cmEP30 = parseFloat(aggEP30.toFixed(2));
+    var cmEP60 = parseFloat(aggEP60.toFixed(2));
+    var cmEP90 = parseFloat(aggEP90.toFixed(2));
+    var basketZ = zWeightSum > 0 ? parseFloat((aggZ30 / zWeightSum).toFixed(2)) : 0;
+    var cmBadAvg = badWS > 0 ? parseFloat((aggBadAvg / badWS).toFixed(2)) : 0;
+    var cmBadP75 = badWS > 0 ? parseFloat((aggBadP75 / badWS).toFixed(2)) : 0;
+    var cmWidenProb = widenWS > 0 ? parseFloat((aggWidenProb / widenWS).toFixed(1)) : 0;
+
+    // Hard gates: reject combos that fail at any horizon
+    var reject = false;
+    if ((cmWR30 > 0 && cmWR30 < 50) || (cmWR60 > 0 && cmWR60 < 50) || (cmWR90 > 0 && cmWR90 < 50)) reject = true;
+    if (!reject && (cmEP30 <= 0 || cmEP60 <= 0 || cmEP90 <= 0)) reject = true;
+
+    if (!reject) {
+      // Avg pairwise correlation within the combo
+      var avgCorrSum = 0, corrCount = 0;
+      for (var ci = 0; ci < kk; ci++) {
+        for (var cj = ci + 1; cj < kk; cj++) {
+          avgCorrSum += Math.abs(corrMatrix[combo[ci]][combo[cj]]);
+          corrCount++;
+        }
+      }
+      var avgCorr = corrCount > 0 ? parseFloat((avgCorrSum / corrCount).toFixed(3)) : 0;
+
+      // Risk-adjusted composite score (same formula as final ranking)
+      var wrPts = Math.min(25, (cmWR30 - 50) * 0.5);
+      var epNorm = cmEP30 / (kk * 200); // normalize to per-share
+      var epPts = Math.min(25, Math.max(-25, epNorm * 20));
+      var badAvgPts = cmBadAvg > 0 ? Math.max(0, 15 - cmBadAvg * 0.05) : 7.5;
+      var badP75Pts = cmBadP75 > 0 ? Math.max(0, 20 - cmBadP75 * 0.05) : 10;
+      var widenPts = Math.max(0, 15 - (cmWidenProb * 0.3));
+      // Bonus for low correlation (diversification reward, up to 5 pts)
+      var corrBonus = Math.max(0, 5 * (1 - avgCorr));
+      var score = wrPts + epPts + badAvgPts + badP75Pts + widenPts + corrBonus;
+
+      results.push({
+        indices: combo.slice(), // copy
+        score: parseFloat(score.toFixed(2)),
+        metrics: {
+          wr30: cmWR30, wr60: cmWR60, wr90: cmWR90,
+          ep30: cmEP30, ep60: cmEP60, ep90: cmEP90,
+          basketZ: basketZ,
+          badAvg: cmBadAvg, badP75: cmBadP75, widenProb: cmWidenProb,
+          avgCorr: avgCorr
+        }
+      });
+    }
+
+    // ── Advance to next combination (lexicographic order) ──
+    var pos = k - 1;
+    while (pos >= 0 && combo[pos] === n - k + pos) pos--;
+    if (pos < 0) break; // all combinations exhausted
+    combo[pos]++;
+    for (var fill = pos + 1; fill < k; fill++) combo[fill] = combo[fill - 1] + 1;
   }
 
-  // Build portfolio result
-  var pairs = [];
-  var totalWr = 0, totalEp = 0, totalWiden = 0, totalStagnant = 0;
-  var avgCorrSum = 0, corrCount = 0;
-  var sectorMix = {};
+  // Sort by score descending
+  results.sort(function(a, b) { return b.score - a.score; });
+  return results;
+}
 
-  for (var i = 0; i < selected.length; i++) {
-    var c = candidates[selected[i]];
-    // Include current market prices from histMap so Sandbox gets real entry prices
+/**
+ * Stage 3b: Select top-K diverse portfolios from scored combinations.
+ * Avoids picking overlapping portfolios by penalizing pair reuse.
+ * Uses a greedy pass over the score-sorted results, skipping combos that share
+ * too many pairs with already-selected portfolios.
+ *
+ * @param {Array} scoredCombos - from exhaustivePortfolioSearch_, sorted by score desc
+ * @param {number} topK - number of portfolios to select
+ * @param {number} maxOverlap - max shared pairs between any two selected portfolios (default: 2)
+ * @returns {Array} top-K diverse combos (same shape as input elements)
+ */
+function diverseTopK_(scoredCombos, topK, maxOverlap) {
+  maxOverlap = maxOverlap || 2;
+  var selected = [];
+
+  for (var i = 0; i < scoredCombos.length && selected.length < topK; i++) {
+    var combo = scoredCombos[i];
+    var tooSimilar = false;
+
+    for (var s = 0; s < selected.length; s++) {
+      // Count shared indices between this combo and an already-selected one
+      var overlap = 0;
+      var selIndices = selected[s].indices;
+      for (var a = 0; a < combo.indices.length; a++) {
+        for (var b = 0; b < selIndices.length; b++) {
+          if (combo.indices[a] === selIndices[b]) { overlap++; break; }
+        }
+      }
+      if (overlap > maxOverlap) { tooSimilar = true; break; }
+    }
+
+    if (!tooSimilar) selected.push(combo);
+  }
+
+  return selected;
+}
+
+/**
+ * Build a portfolio object from a scored combo and candidate pool.
+ * Assembles the pair list, sector mix, correlation stats, and cross-matrix metrics
+ * into the same shape expected by downstream stages (mini-sweep, profit capture, Kelly, cache writer).
+ */
+function buildPortfolioFromCombo_(combo, candidates, corrMatrix, histMap) {
+  var pairs = [];
+  var sectorMix = {};
+  var totalWr = 0, totalEp = 0, totalWiden = 0, totalStagnant = 0;
+
+  for (var i = 0; i < combo.indices.length; i++) {
+    var c = candidates[combo.indices[i]];
     var histA = histMap[String(c.tA).toUpperCase().trim()];
     var histB = histMap[String(c.tB).toUpperCase().trim()];
     var priceA = (histA && histA.length > 0) ? histA[histA.length - 1] : 0;
@@ -5080,28 +5091,29 @@ function buildSinglePortfolio_(candidates, corrMatrix, usedPairIds, size) {
     totalEp += c.ep30;
     totalWiden += c.widenProb;
     totalStagnant += Math.max(0, 100 - c.wr30 - c.widenProb);
-    var sec3 = c.sector || 'Other';
-    sectorMix[sec3] = (sectorMix[sec3] || 0) + 1;
-
-    // Accumulate pairwise correlations for avg
-    for (var j = i + 1; j < selected.length; j++) {
-      avgCorrSum += Math.abs(corrMatrix[selected[i]][selected[j]]);
-      corrCount++;
-    }
+    var sec = c.sector || 'Other';
+    sectorMix[sec] = (sectorMix[sec] || 0) + 1;
   }
 
-  var n = pairs.length || 1;
+  var m = combo.metrics;
+  var nn = pairs.length || 1;
   return {
     pairs: pairs,
-    blendedWR: parseFloat((totalWr / n).toFixed(1)),
-    expectedProfit: parseFloat((totalEp / n).toFixed(4)),
-    widenProb: parseFloat((totalWiden / n).toFixed(1)),
-    stagnantRate: parseFloat((totalStagnant / n).toFixed(1)),
-    avgCorrelation: corrCount > 0 ? parseFloat((avgCorrSum / corrCount).toFixed(3)) : 0,
+    blendedWR: m.wr30,
+    expectedProfit: parseFloat((m.ep30 / (nn * 200)).toFixed(4)),
+    widenProb: m.widenProb,
+    stagnantRate: parseFloat((totalStagnant / nn).toFixed(1)),
+    avgCorrelation: m.avgCorr,
     sectorMix: sectorMix,
-    basketZ: 0, // will be overwritten by computeBasketMetrics_
-    rollingZ: {},
-    badScenario: {}
+    basketZ: m.basketZ,
+    rollingZ: {
+      '30d': { z: m.basketZ, expectedProfit: parseFloat((m.ep30 / (nn * 200)).toFixed(4)) },
+      '60d': { z: 0, expectedProfit: parseFloat((m.ep60 / (nn * 200)).toFixed(4)) },
+      '90d': { z: 0, expectedProfit: parseFloat((m.ep90 / (nn * 200)).toFixed(4)) }
+    },
+    crossMatrixWR: { wr30: m.wr30, wr60: m.wr60, wr90: m.wr90 },
+    crossMatrixEP: { ep30: m.ep30, ep60: m.ep60, ep90: m.ep90 },
+    badScenario: { avgMaeDollar: m.badAvg, p75MaeDollar: m.badP75 }
   };
 }
 
