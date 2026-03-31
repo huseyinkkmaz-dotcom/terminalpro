@@ -4563,6 +4563,9 @@ function runModelPortfolioGenerator() {
       var wrWS30 = 0, wrWS60 = 0, wrWS90 = 0;
       var aggWeightSum = 0;
       var crossBestZ = 0;
+      // Bad scenario accumulators (weighted by cross-pair weight)
+      var aggBadAvg = 0, aggBadP75 = 0, aggWidenProb = 0;
+      var badWeightSum = 0, widenWeightSum = 0;
 
       for (var li = 0; li < longLegs.length; li++) {
         for (var si = 0; si < shortLegs.length; si++) {
@@ -4621,6 +4624,15 @@ function runModelPortfolioGenerator() {
           if (pairRZ['30d'] && !pairRZ['30d'].insufficient) {
             crossBestZ += w * pairRZ['30d'].z;
           }
+
+          // Accumulate bad scenario metrics (Avg MAE, P75 MAE, Widen Prob)
+          var cpBs = pairProb.badScenario;
+          if (cpBs) {
+            var cpEffShares = effShares; // 200 shares per cross-pair
+            if (cpBs.avgMae != null) { aggBadAvg += w * cpBs.avgMae * cpEffShares; badWeightSum += w; }
+            if (cpBs.p75Mae != null) { aggBadP75 += w * cpBs.p75Mae * cpEffShares; }
+            if (cpBs.wideningProb != null) { aggWidenProb += w * cpBs.wideningProb; widenWeightSum += w; }
+          }
         }
       }
 
@@ -4644,6 +4656,13 @@ function runModelPortfolioGenerator() {
       // Store cross-matrix WRs for display
       portfolio.crossMatrixWR = { wr30: cmWR30, wr60: cmWR60, wr90: cmWR90 };
       portfolio.crossMatrixEP = { ep30: cmEP30, ep60: cmEP60, ep90: cmEP90 };
+
+      // Store cross-matrix bad scenario metrics (used for final ranking)
+      var cmBadAvg = badWeightSum > 0 ? parseFloat((aggBadAvg / badWeightSum).toFixed(2)) : 0;
+      var cmBadP75 = badWeightSum > 0 ? parseFloat((aggBadP75 / badWeightSum).toFixed(2)) : 0;
+      var cmWidenProb = widenWeightSum > 0 ? parseFloat((aggWidenProb / widenWeightSum).toFixed(1)) : (portfolio.widenProb || 0);
+      portfolio.badScenario = { avgMaeDollar: cmBadAvg, p75MaeDollar: cmBadP75 };
+      portfolio.widenProb = cmWidenProb; // overwrite with cross-matrix value (more accurate than simple avg)
 
       // ── STAGE 4: Per-pair mini-sweeps for optimal entry/exit ──
       // Uses reserved time budget (SWEEP_RESERVE_MS) so this stage always runs
@@ -4712,11 +4731,29 @@ function runModelPortfolioGenerator() {
 
     Logger.log('ModelPortfolio: Stages 3-7 complete — ' + portfolios.length + ' portfolios with sweeps in ' + ((new Date().getTime() - startTime) / 1000).toFixed(1) + 's');
 
-    // Sort portfolios by composite score (blended WR × expected profit, penalize widen)
+    // Sort portfolios by risk-adjusted composite score using ALL 5 target metrics:
+    // 1. Win Rate (25%) — cross-matrix blended 30d WR
+    // 2. Expected Profit (25%) — cross-matrix total EP, normalized
+    // 3. Bad Scenario Avg MAE (15%) — lower is better (cross-matrix weighted)
+    // 4. Bad Scenario P75 MAE (20%) — lower is better, tail risk (cross-matrix weighted)
+    // 5. Widen Probability (15%) — proxy for holding period risk (cross-matrix weighted)
     portfolios.sort(function(a, b) {
-      var scoreA = (a.blendedWR || 0) * 0.4 + Math.min((a.expectedProfit || 0) * 20, 30) + (1 - (a.widenProb || 0) / 100) * 15 + (1 - Math.abs(a.avgCorrelation || 0)) * 15;
-      var scoreB = (b.blendedWR || 0) * 0.4 + Math.min((b.expectedProfit || 0) * 20, 30) + (1 - (b.widenProb || 0) / 100) * 15 + (1 - Math.abs(b.avgCorrelation || 0)) * 15;
-      return scoreB - scoreA;
+      function riskAdjScore(p) {
+        // Win Rate component: 50% = 0pts, 100% = 25pts, <50% goes negative
+        var wrPts = Math.min(25, ((p.blendedWR || 0) - 50) * 0.5);
+        // Expected Profit component: $0 = 0pts, cap at 25pts
+        var epPts = Math.min(25, Math.max(-25, (p.expectedProfit || 0) * 20));
+        // Bad Avg MAE penalty: $0 = 15pts, $300+ = 0pts (lower drawdown = better)
+        var badAvg = (p.badScenario && p.badScenario.avgMaeDollar) ? p.badScenario.avgMaeDollar : 0;
+        var badAvgPts = badAvg > 0 ? Math.max(0, 15 - badAvg * 0.05) : 7.5;
+        // Bad P75 MAE penalty (tail risk): $0 = 20pts, $400+ = 0pts (lower worst-case = better)
+        var badP75 = (p.badScenario && p.badScenario.p75MaeDollar) ? p.badScenario.p75MaeDollar : 0;
+        var badP75Pts = badP75 > 0 ? Math.max(0, 20 - badP75 * 0.05) : 10;
+        // Widen Probability penalty: 0% = 15pts, 50%+ = 0pts (lower stagnation = better)
+        var widenPts = Math.max(0, 15 - ((p.widenProb || 0) * 0.3));
+        return wrPts + epPts + badAvgPts + badP75Pts + widenPts;
+      }
+      return riskAdjScore(b) - riskAdjScore(a);
     });
 
     // Write to ModelPortfolioCache (even if 0 portfolios, to clear stale data)
@@ -4788,7 +4825,7 @@ function buildCandidatePool_(ss, histMap, startTime, maxMs, relaxed) {
       }
 
       // Composite quality score for ranking (uses 30d win rate and expected profit)
-      var qualityScore = computeCandidateScore_(wr30, ep30, widenProb, z, avgMae);
+      var qualityScore = computeCandidateScore_(wr30, ep30, widenProb, z, avgMae, p75Mae);
 
       candidates.push({
         id: id, tA: tA, tB: tB, mode: mode, sector: sector,
@@ -4845,7 +4882,7 @@ function buildCandidatePool_(ss, histMap, startTime, maxMs, relaxed) {
                 if (lwr30 < wrGate2) continue; // Apply hard gate (relaxed-aware)
                 if (!relaxed && lep30 <= 0) continue; // Reject negative EP
                 if (relaxed && lep30 < -0.5) continue;
-                var aScore = computeCandidateScore_(lwr30, lep30, lWiden, aZ, lMae);
+                var aScore = computeCandidateScore_(lwr30, lep30, lWiden, aZ, lMae, lp75);
                 candidates.push({
                   id: alert.id, tA: alert.tA, tB: alert.tB,
                   mode: modes[m], sector: alert.sec || '',
@@ -4871,22 +4908,27 @@ function buildCandidatePool_(ss, histMap, startTime, maxMs, relaxed) {
 
 /**
  * Compute a 0-100 candidate quality score.
- * Weights: WR30(30%), EP30(25%), low widen(20%), |Z| magnitude(15%), low MAE(10%)
- * Uses 30-day win rate and expected profit as primary metrics.
+ * Weights: WR30(25%), EP30(25%), low widen(15%), |Z| magnitude(10%), low AvgMAE(10%), low P75MAE(15%)
+ * All 5 target metrics are used: Win Rate, Expected Profit, Widen Prob (holding proxy), Avg MAE, P75 MAE.
+ * P75 MAE (tail risk) is weighted heavily because it represents the worst-case drawdown scenario.
  */
-function computeCandidateScore_(wr30, ep30, widenProb, z, avgMae) {
-  // Normalize win rate: 50% = 0, 100% = 30, below 50% goes negative (penalty)
-  var wrScore = Math.min(30, (wr30 - 50) * 0.6);
+function computeCandidateScore_(wr30, ep30, widenProb, z, avgMae, p75Mae) {
+  // Normalize win rate: 50% = 0, 100% = 25, below 50% goes negative (penalty)
+  var wrScore = Math.min(25, (wr30 - 50) * 0.5);
   // Normalize expected profit: negative EP = negative score (penalty), $0 = 0, $2+ = 25
   // CRITICAL: Use signed ep30 — negative EP must penalize, not reward
   var epScore = ep30 >= 0 ? Math.min(25, ep30 * 12.5) : Math.max(-25, ep30 * 12.5);
-  // Widen penalty: 0% widen = 20, 50%+ = 0
-  var widenScore = Math.max(0, 20 - (widenProb * 0.4));
-  // Z magnitude: |Z| of 1.8 = 5, |Z| of 3.0 = 15
-  var zScore = Math.min(15, Math.max(0, (Math.abs(z) - 1.5) * 10));
-  // MAE bonus: lower is better. 0 = 10, 2+ = 0
+  // Widen penalty: 0% widen = 15, 50%+ = 0 (proxy for holding period / stagnation risk)
+  var widenScore = Math.max(0, 15 - (widenProb * 0.3));
+  // Z magnitude: |Z| of 1.8 = 3, |Z| of 3.0 = 10 (reduced weight — extreme Z can be structural)
+  var zScore = Math.min(10, Math.max(0, (Math.abs(z) - 1.5) * 6.67));
+  // Avg MAE bonus: lower is better. 0 = 10, 2+ = 0
   var maeScore = avgMae > 0 ? Math.max(0, 10 - avgMae * 5) : 5;
-  return wrScore + epScore + widenScore + zScore + maeScore;
+  // P75 MAE penalty (tail risk): lower is better. 0 = 15, 3+ = 0
+  // This is the 75th percentile worst drawdown — critical for risk management
+  var p75 = parseFloat(p75Mae) || 0;
+  var p75Score = p75 > 0 ? Math.max(0, 15 - p75 * 5) : 7.5;
+  return wrScore + epScore + widenScore + zScore + maeScore + p75Score;
 }
 
 /**
@@ -5266,7 +5308,7 @@ function writeModelPortfolioCache_(ss, portfolios) {
       p.widenProb,
       JSON.stringify(p.sectorMix),
       p.avgCorrelation,
-      JSON.stringify({ rollingZ: p.rollingZ || {}, badScenario: p.badScenario || {}, profitCapture: p.profitCapture, kellySizing: p.kellySizing || null }),
+      JSON.stringify({ rollingZ: p.rollingZ || {}, badScenario: p.badScenario || {}, profitCapture: p.profitCapture, kellySizing: p.kellySizing || null, crossMatrixWR: p.crossMatrixWR || {}, crossMatrixEP: p.crossMatrixEP || {} }),
       ts
     ];
   });
