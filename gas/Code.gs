@@ -4880,20 +4880,23 @@ function precomputeCrossPairMetrics_(candidates, histMap) {
       var ep60 = (pairRZ['60d'] && !pairRZ['60d'].insufficient) ? pairRZ['60d'].expectedProfit * 200 : null;
       var ep90 = (pairRZ['90d'] && !pairRZ['90d'].insufficient) ? pairRZ['90d'].expectedProfit * 200 : null;
 
-      var z30 = (pairRZ['30d'] && !pairRZ['30d'].insufficient) ? pairRZ['30d'].z : 0;
+      var z30 = (pairRZ['30d'] && !pairRZ['30d'].insufficient) ? pairRZ['30d'].z : null;
+      var z60 = (pairRZ['60d'] && !pairRZ['60d'].insufficient) ? pairRZ['60d'].z : null;
+      var z90 = (pairRZ['90d'] && !pairRZ['90d'].insufficient) ? pairRZ['90d'].z : null;
 
-      var badAvg = 0, badP75 = 0, widenProb = 0;
+      var badAvg = null, badP75 = null, widenProb = null;
       var cpBs = pairProb.badScenario;
       if (cpBs) {
-        badAvg = (cpBs.avgMae != null) ? cpBs.avgMae * 200 : 0;
-        badP75 = (cpBs.p75Mae != null) ? cpBs.p75Mae * 200 : 0;
-        widenProb = (cpBs.wideningProb != null) ? cpBs.wideningProb : 0;
+        badAvg = (cpBs.avgMae != null) ? cpBs.avgMae * 200 : null;
+        badP75 = (cpBs.p75Mae != null) ? cpBs.p75Mae * 200 : null;
+        widenProb = (cpBs.wideningProb != null) ? cpBs.wideningProb : null;
       }
 
       crossMetrics[i][j] = {
         wr30: wr30, wr60: wr60, wr90: wr90,
         ep30: ep30, ep60: ep60, ep90: ep90,
-        z30: z30, badAvg: badAvg, badP75: badP75, widenProb: widenProb
+        z30: z30, z60: z60, z90: z90,
+        badAvg: badAvg, badP75: badP75, widenProb: widenProb
       };
     }
   }
@@ -4920,14 +4923,16 @@ function exhaustivePortfolioSearch_(candidates, crossMetrics, corrMatrix, k, sta
   var n = candidates.length;
   k = Math.min(k, n);
   var results = [];
+  var evalCount = 0;
 
   // Generate all C(n, k) combinations iteratively using an index array
   var combo = [];
   for (var i = 0; i < k; i++) combo[i] = i;
 
   while (true) {
-    // Check timeout every 500 combos
-    if (results.length % 500 === 0 && new Date().getTime() - startTime > deadlineMs) break;
+    // Check timeout every 500 evaluated combos (not just accepted ones)
+    if (evalCount % 500 === 0 && evalCount > 0 && new Date().getTime() - startTime > deadlineMs) break;
+    evalCount++;
 
     // ── Score this combination using pre-computed cross-metrics ──
     // Each pair contributes a long leg and a short leg. The cross-matrix evaluates
@@ -4937,8 +4942,10 @@ function exhaustivePortfolioSearch_(candidates, crossMetrics, corrMatrix, k, sta
     var wrWS30 = 0, wrWS60 = 0, wrWS90 = 0;
     var aggEP30 = 0, aggEP60 = 0, aggEP90 = 0;
     var aggZ30 = 0, zWeightSum = 0;
+    var aggZ60 = 0, z60WeightSum = 0;
+    var aggZ90 = 0, z90WeightSum = 0;
     var aggBadAvg = 0, aggBadP75 = 0, aggWidenProb = 0;
-    var badWS = 0, widenWS = 0;
+    var badAvgWS = 0, badP75WS = 0, widenWS = 0;
 
     var kk = combo.length;
     var w = 1.0 / (kk * kk); // equal weight for each cross-pair
@@ -4955,22 +4962,27 @@ function exhaustivePortfolioSearch_(candidates, crossMetrics, corrMatrix, k, sta
         if (cm.ep30 != null) aggEP30 += cm.ep30;
         if (cm.ep60 != null) aggEP60 += cm.ep60;
         if (cm.ep90 != null) aggEP90 += cm.ep90;
-        if (cm.z30 !== 0) { aggZ30 += w * cm.z30; zWeightSum += w; }
-        if (cm.badAvg > 0) { aggBadAvg += w * cm.badAvg; badWS += w; }
-        if (cm.badP75 > 0) { aggBadP75 += w * cm.badP75; }
-        if (cm.widenProb > 0) { aggWidenProb += w * cm.widenProb; widenWS += w; }
+        if (cm.z30 != null) { aggZ30 += w * cm.z30; zWeightSum += w; }
+        if (cm.z60 != null) { aggZ60 += w * cm.z60; z60WeightSum += w; }
+        if (cm.z90 != null) { aggZ90 += w * cm.z90; z90WeightSum += w; }
+        if (cm.badAvg != null) { aggBadAvg += w * cm.badAvg; badAvgWS += w; }
+        if (cm.badP75 != null) { aggBadP75 += w * cm.badP75; badP75WS += w; }
+        if (cm.widenProb != null) { aggWidenProb += w * cm.widenProb; widenWS += w; }
       }
     }
 
     var cmWR30 = wrWS30 > 0 ? parseFloat((aggWR30 / wrWS30).toFixed(1)) : 0;
     var cmWR60 = wrWS60 > 0 ? parseFloat((aggWR60 / wrWS60).toFixed(1)) : 0;
     var cmWR90 = wrWS90 > 0 ? parseFloat((aggWR90 / wrWS90).toFixed(1)) : 0;
+    // EP is additive (total dollars across all k² cross-pairs, each scaled to 200 shares)
     var cmEP30 = parseFloat(aggEP30.toFixed(2));
     var cmEP60 = parseFloat(aggEP60.toFixed(2));
     var cmEP90 = parseFloat(aggEP90.toFixed(2));
     var basketZ = zWeightSum > 0 ? parseFloat((aggZ30 / zWeightSum).toFixed(2)) : 0;
-    var cmBadAvg = badWS > 0 ? parseFloat((aggBadAvg / badWS).toFixed(2)) : 0;
-    var cmBadP75 = badWS > 0 ? parseFloat((aggBadP75 / badWS).toFixed(2)) : 0;
+    var basketZ60 = z60WeightSum > 0 ? parseFloat((aggZ60 / z60WeightSum).toFixed(2)) : 0;
+    var basketZ90 = z90WeightSum > 0 ? parseFloat((aggZ90 / z90WeightSum).toFixed(2)) : 0;
+    var cmBadAvg = badAvgWS > 0 ? parseFloat((aggBadAvg / badAvgWS).toFixed(2)) : 0;
+    var cmBadP75 = badP75WS > 0 ? parseFloat((aggBadP75 / badP75WS).toFixed(2)) : 0;
     var cmWidenProb = widenWS > 0 ? parseFloat((aggWidenProb / widenWS).toFixed(1)) : 0;
 
     // Hard gates: reject combos that fail at any horizon
@@ -4991,7 +5003,7 @@ function exhaustivePortfolioSearch_(candidates, crossMetrics, corrMatrix, k, sta
 
       // Risk-adjusted composite score (same formula as final ranking)
       var wrPts = Math.min(25, (cmWR30 - 50) * 0.5);
-      var epNorm = cmEP30 / (kk * 200); // normalize to per-share
+      var epNorm = cmEP30 / (kk * kk * 200); // normalize to per-share across k² cross-pairs
       var epPts = Math.min(25, Math.max(-25, epNorm * 20));
       var badAvgPts = cmBadAvg > 0 ? Math.max(0, 15 - cmBadAvg * 0.05) : 7.5;
       var badP75Pts = cmBadP75 > 0 ? Math.max(0, 20 - cmBadP75 * 0.05) : 10;
@@ -5006,7 +5018,7 @@ function exhaustivePortfolioSearch_(candidates, crossMetrics, corrMatrix, k, sta
         metrics: {
           wr30: cmWR30, wr60: cmWR60, wr90: cmWR90,
           ep30: cmEP30, ep60: cmEP60, ep90: cmEP90,
-          basketZ: basketZ,
+          basketZ: basketZ, basketZ60: basketZ60, basketZ90: basketZ90,
           badAvg: cmBadAvg, badP75: cmBadP75, widenProb: cmWidenProb,
           avgCorr: avgCorr
         }
@@ -5100,16 +5112,16 @@ function buildPortfolioFromCombo_(combo, candidates, corrMatrix, histMap) {
   return {
     pairs: pairs,
     blendedWR: m.wr30,
-    expectedProfit: parseFloat((m.ep30 / (nn * 200)).toFixed(4)),
+    expectedProfit: parseFloat((m.ep30 / (nn * nn * 200)).toFixed(4)),
     widenProb: m.widenProb,
     stagnantRate: parseFloat((totalStagnant / nn).toFixed(1)),
     avgCorrelation: m.avgCorr,
     sectorMix: sectorMix,
     basketZ: m.basketZ,
     rollingZ: {
-      '30d': { z: m.basketZ, expectedProfit: parseFloat((m.ep30 / (nn * 200)).toFixed(4)) },
-      '60d': { z: 0, expectedProfit: parseFloat((m.ep60 / (nn * 200)).toFixed(4)) },
-      '90d': { z: 0, expectedProfit: parseFloat((m.ep90 / (nn * 200)).toFixed(4)) }
+      '30d': { z: m.basketZ, expectedProfit: parseFloat((m.ep30 / (nn * nn * 200)).toFixed(4)) },
+      '60d': { z: m.basketZ60 || 0, expectedProfit: parseFloat((m.ep60 / (nn * nn * 200)).toFixed(4)) },
+      '90d': { z: m.basketZ90 || 0, expectedProfit: parseFloat((m.ep90 / (nn * nn * 200)).toFixed(4)) }
     },
     crossMatrixWR: { wr30: m.wr30, wr60: m.wr60, wr90: m.wr90 },
     crossMatrixEP: { ep30: m.ep30, ep60: m.ep60, ep90: m.ep90 },
