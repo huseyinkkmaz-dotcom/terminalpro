@@ -1243,6 +1243,10 @@ async function runModelPortfolioGen(){
   try{
     var data=await apiGet('runModelPortfolios',{},300000);
     if(data&&data.ok&&data.modelPortfolios){
+      if(data.modelPortfolios.generationError){
+        console.warn('[TerminalPro] Generation error:',data.modelPortfolios.generationError);
+        alert('Generator encountered an error: '+data.modelPortfolios.generationError+'\n\nShowing cached results.');
+      }
       renderModelPortfolios(data.modelPortfolios);
     }else{
       document.getElementById('mpEmpty').style.display='';

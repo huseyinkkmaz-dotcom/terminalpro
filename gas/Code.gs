@@ -201,8 +201,11 @@ function doGet(e) {
       result = { ok: true, modelPortfolios: getModelPortfolios_() };
     }
     else if (action === 'runModelPortfolios') {
-      runModelPortfolioGenerator();
-      result = { ok: true, modelPortfolios: getModelPortfolios_() };
+      var genError = null;
+      try { runModelPortfolioGenerator(); } catch (genErr) { genError = genErr.toString(); }
+      var mpResult = getModelPortfolios_();
+      mpResult.generationError = genError;
+      result = { ok: true, modelPortfolios: mpResult };
     }
     else {
       result = { ok: false, message: "Unknown action: " + action };
@@ -4515,7 +4518,9 @@ function runModelPortfolioGenerator() {
     // ── STAGE 2b: Pre-compute cross-pair metrics for all N×N long×short combinations ──
     // This is the expensive step — O(N²) calls to computeBasketMetrics_ + probability engine.
     // But it's done ONCE, and all C(n,k) combo evaluations then use O(1) lookups.
-    var crossMetrics = precomputeCrossPairMetrics_(candidates, histMap);
+    // Budget: up to 50% of MAX_MS for Stage 2b, leaving the rest for Stage 3+ sweeps
+    var STAGE2B_DEADLINE = MAX_MS * 0.5;
+    var crossMetrics = precomputeCrossPairMetrics_(candidates, histMap, startTime, STAGE2B_DEADLINE);
     Logger.log('ModelPortfolio: Stage 2b complete — ' + candidates.length + '×' + candidates.length + ' cross-pair metrics pre-computed in ' + ((new Date().getTime() - startTime) / 1000).toFixed(1) + 's');
 
     // ── STAGE 3: Exhaustive combinatorial search ──
@@ -4815,7 +4820,7 @@ function pearsonCorrelation_(a, b) {
  * where i is the long-leg source candidate and j is the short-leg source candidate.
  * Self-pairs (i===j) are included since they represent the original pair's own cross-pair.
  */
-function precomputeCrossPairMetrics_(candidates, histMap) {
+function precomputeCrossPairMetrics_(candidates, histMap, startTime, deadlineMs) {
   var n = candidates.length;
   // Decompose each candidate into its long and short tickers based on Z-sign
   var legs = [];
@@ -4833,9 +4838,16 @@ function precomputeCrossPairMetrics_(candidates, histMap) {
 
   // Pre-compute metrics for every long[i] × short[j] cross-pair
   var crossMetrics = [];
+  var computed = 0, skippedTimeout = 0;
   for (var i = 0; i < n; i++) {
     crossMetrics[i] = [];
     for (var j = 0; j < n; j++) {
+      // Timeout check — leave at least 90s for Stage 3+ (exhaustive search + sweeps)
+      if (deadlineMs && new Date().getTime() - startTime > deadlineMs) {
+        crossMetrics[i][j] = null;
+        skippedTimeout++;
+        continue;
+      }
       var lTk = legs[i].longTk;
       var sTk = legs[j].shortTk;
       if (!histMap[String(lTk).toUpperCase()] || !histMap[String(sTk).toUpperCase()]) {
@@ -4898,7 +4910,11 @@ function precomputeCrossPairMetrics_(candidates, histMap) {
         z30: z30, z60: z60, z90: z90,
         badAvg: badAvg, badP75: badP75, widenProb: widenProb
       };
+      computed++;
     }
+  }
+  if (skippedTimeout > 0) {
+    Logger.log('ModelPortfolio: Stage 2b computed ' + computed + '/' + (n * n) + ' cross-pairs (' + skippedTimeout + ' skipped due to timeout)');
   }
   return crossMetrics;
 }
