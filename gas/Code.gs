@@ -4489,37 +4489,112 @@ function runModelPortfolioGenerator() {
         usedPairIds[usedId] = (usedPairIds[usedId] || 0) + 1;
       }
 
-      // Run computeBasketMetrics_ on the final basket for real Z-scores
-      var legs = [];
+      // ── Cross-pair validation (mirrors Sandbox methodology) ──
+      // The Sandbox decomposes N pairs into N² cross-pairs (every long × every short).
+      // We must validate using the SAME method to ensure Optimizer ↔ Sandbox agreement.
+      var longLegs = [], shortLegs = [];
       for (var lp = 0; lp < portfolio.pairs.length; lp++) {
         var pair = portfolio.pairs[lp];
         var z = parseFloat(pair.z) || 0;
-        // Z > 0 → spread above mean → short A / long B
-        var dirA = z > 0 ? -1 : 1;
-        var dirB = z > 0 ? 1 : -1;
-        legs.push({ ticker: pair.tA, size: 100, direction: dirA });
-        legs.push({ ticker: pair.tB, size: 100, direction: dirB });
+        var longTk = z > 0 ? pair.tB : pair.tA;
+        var shortTk = z > 0 ? pair.tA : pair.tB;
+        var longPrice = z > 0 ? pair.pB : pair.pA;
+        var shortPrice = z > 0 ? pair.pA : pair.pB;
+        longLegs.push({ ticker: longTk, size: 100, direction: 1, entryPrice: longPrice || 0 });
+        shortLegs.push({ ticker: shortTk, size: 100, direction: -1, entryPrice: shortPrice || 0 });
       }
-      var basketMetrics = computeBasketMetrics_(legs, histMap);
-      if (basketMetrics && !basketMetrics.error) {
-        var rz30 = (basketMetrics.rollingZ && basketMetrics.rollingZ['30d']) ? basketMetrics.rollingZ['30d'] : {};
-        var rz60 = (basketMetrics.rollingZ && basketMetrics.rollingZ['60d']) ? basketMetrics.rollingZ['60d'] : {};
-        var rz90 = (basketMetrics.rollingZ && basketMetrics.rollingZ['90d']) ? basketMetrics.rollingZ['90d'] : {};
-        portfolio.basketZ = rz30.z || rz60.z || 0;
-        portfolio.expectedProfit = rz30.expectedProfit || rz60.expectedProfit || 0;
-        portfolio.basketHistory = basketMetrics.dailyValues || [];
-        portfolio.rollingZ = { '30d': rz30, '60d': rz60, '90d': rz90 };
-        // Extract bad scenario from probability engine
-        if (basketMetrics.probabilities && basketMetrics.probabilities.badScenario) {
-          portfolio.badScenario = basketMetrics.probabilities.badScenario;
-        }
-        if (basketMetrics.probabilities && basketMetrics.probabilities.winRates) {
-          var wr30 = basketMetrics.probabilities.winRates['30d'];
-          if (wr30 && wr30.rate != null) portfolio.blendedWR = wr30.rate;
+
+      // Build cross-pairs with proportional weights (same as Sandbox getPortfolioAnalytics)
+      var totalLongShares = 0, totalShortShares = 0;
+      for (var li = 0; li < longLegs.length; li++) totalLongShares += longLegs[li].size;
+      for (var si = 0; si < shortLegs.length; si++) totalShortShares += shortLegs[si].size;
+
+      var aggWR30 = 0, aggWR60 = 0, aggWR90 = 0;
+      var aggEP30 = 0, aggEP60 = 0, aggEP90 = 0;
+      var wrWS30 = 0, wrWS60 = 0, wrWS90 = 0;
+      var aggWeightSum = 0;
+      var crossBestZ = 0;
+
+      for (var li = 0; li < longLegs.length; li++) {
+        for (var si = 0; si < shortLegs.length; si++) {
+          var w = (longLegs[li].size / totalLongShares) * (shortLegs[si].size / totalShortShares);
+          var lTk = longLegs[li].ticker;
+          var sTk = shortLegs[si].ticker;
+          if (!histMap[String(lTk).toUpperCase()] || !histMap[String(sTk).toUpperCase()]) continue;
+
+          var pairLegs = [
+            { ticker: lTk, size: 100, direction: 1 },
+            { ticker: sTk, size: 100, direction: -1 }
+          ];
+          var pm = computeBasketMetrics_(pairLegs, histMap);
+          if (!pm || pm.error) continue;
+
+          // Use current market spread as entry (matches what Sandbox does with real entry prices)
+          var entrySpread = (longLegs[li].entryPrice || 0) - (shortLegs[si].entryPrice || 0);
+          // If entry prices not available, use current market spread
+          if (entrySpread === 0 && pm.netSpread != null) entrySpread = pm.netSpread;
+
+          // Override EP with entry-anchored values (same as Sandbox line 2004-2007)
+          var pairRZ = pm.rollingZ || {};
+          for (var wKey in pairRZ) {
+            if (pairRZ[wKey] && !pairRZ[wKey].insufficient) {
+              pairRZ[wKey].expectedProfit = parseFloat((pairRZ[wKey].mean - entrySpread).toFixed(4));
+            }
+          }
+
+          // Run probability engine anchored to entry spread (same as Sandbox line 2013)
+          var pairProb = { triggers: 0, winRates: {} };
+          if (pm.dailyValuesFull_ && pm.dailyValuesFull_.length >= 20) {
+            pairProb = computeHistoricalProbabilities_(pm.dailyValuesFull_, entrySpread, pairRZ, pm.totalWeight);
+            if (pairProb.triggers < 3) {
+              var widePairProb = computeHistoricalProbabilitiesWide_(pm.dailyValuesFull_, entrySpread, pairRZ, pm.totalWeight);
+              if (widePairProb.triggers > pairProb.triggers) pairProb = widePairProb;
+            }
+          }
+
+          // Accumulate weighted cross-pair metrics (same as Sandbox line 2064-2079)
+          aggWeightSum += w;
+          var effShares = 200; // 100 long + 100 short per cross-pair
+          var wr30 = (pairProb.winRates && pairProb.winRates['30d'] && pairProb.winRates['30d'].eligible >= 2) ? pairProb.winRates['30d'].rate : null;
+          var wr60 = (pairProb.winRates && pairProb.winRates['60d'] && pairProb.winRates['60d'].eligible >= 2) ? pairProb.winRates['60d'].rate : null;
+          var wr90 = (pairProb.winRates && pairProb.winRates['90d'] && pairProb.winRates['90d'].eligible >= 2) ? pairProb.winRates['90d'].rate : null;
+          if (wr30 != null) { aggWR30 += w * wr30; wrWS30 += w; }
+          if (wr60 != null) { aggWR60 += w * wr60; wrWS60 += w; }
+          if (wr90 != null) { aggWR90 += w * wr90; wrWS90 += w; }
+          var ep30 = (pairRZ['30d'] && !pairRZ['30d'].insufficient) ? pairRZ['30d'].expectedProfit * effShares : null;
+          var ep60 = (pairRZ['60d'] && !pairRZ['60d'].insufficient) ? pairRZ['60d'].expectedProfit * effShares : null;
+          var ep90 = (pairRZ['90d'] && !pairRZ['90d'].insufficient) ? pairRZ['90d'].expectedProfit * effShares : null;
+          if (ep30 != null) aggEP30 += ep30;
+          if (ep60 != null) aggEP60 += ep60;
+          if (ep90 != null) aggEP90 += ep90;
+
+          // Track basket Z from 30d
+          if (pairRZ['30d'] && !pairRZ['30d'].insufficient) {
+            crossBestZ += w * pairRZ['30d'].z;
+          }
         }
       }
-      // Clean up internal arrays before caching
-      delete portfolio.basketHistory;
+
+      // Compute final cross-matrix aggregate metrics
+      var cmWR30 = wrWS30 > 0 ? parseFloat((aggWR30 / wrWS30).toFixed(1)) : 0;
+      var cmWR60 = wrWS60 > 0 ? parseFloat((aggWR60 / wrWS60).toFixed(1)) : 0;
+      var cmWR90 = wrWS90 > 0 ? parseFloat((aggWR90 / wrWS90).toFixed(1)) : 0;
+      var cmEP30 = parseFloat(aggEP30.toFixed(2));
+      var cmEP60 = parseFloat(aggEP60.toFixed(2));
+      var cmEP90 = parseFloat(aggEP90.toFixed(2));
+
+      // Set portfolio metrics from cross-matrix (this is what Sandbox will show)
+      portfolio.basketZ = aggWeightSum > 0 ? parseFloat((crossBestZ / aggWeightSum).toFixed(2)) : 0;
+      portfolio.expectedProfit = cmEP30 / (portfolio.pairs.length * 200); // normalize to per-share
+      portfolio.blendedWR = cmWR30;
+      portfolio.rollingZ = {
+        '30d': { z: portfolio.basketZ, expectedProfit: portfolio.expectedProfit },
+        '60d': { z: 0, expectedProfit: cmEP60 / (portfolio.pairs.length * 200) },
+        '90d': { z: 0, expectedProfit: cmEP90 / (portfolio.pairs.length * 200) }
+      };
+      // Store cross-matrix WRs for display
+      portfolio.crossMatrixWR = { wr30: cmWR30, wr60: cmWR60, wr90: cmWR90 };
+      portfolio.crossMatrixEP = { ep30: cmEP30, ep60: cmEP60, ep90: cmEP90 };
 
       // ── STAGE 4: Per-pair mini-sweeps for optimal entry/exit ──
       if (new Date().getTime() - startTime < MAX_MS) {
@@ -4544,42 +4619,34 @@ function runModelPortfolioGenerator() {
       // ── STAGE 6: Basket-level Kelly sizing ──
       portfolio.kellySizing = computeBasketKelly_(portfolio);
 
-      // ── STAGE 7: Reject portfolios that would show as losers in Sandbox ──
-      // Check basket-level expected profit AND win rates at all horizons (30/60/90d).
-      // The Sandbox calculator validates these same metrics, so we must match.
-      if ((portfolio.expectedProfit || 0) <= 0) {
-        Logger.log('ModelPortfolio: Rejected portfolio with negative basket EP: ' + (portfolio.expectedProfit || 0).toFixed(4));
-        continue;
-      }
-      // Validate basket-level win rates from computeBasketMetrics_ probability engine
-      // If the basket WR at ANY horizon is below 50%, the Sandbox would flag it as a loser
+      // ── STAGE 7: Reject portfolios where cross-matrix shows losers at ANY horizon ──
+      // This matches exactly what the Sandbox calculator will display.
       var rejectHorizon = false;
-      if (basketMetrics && basketMetrics.probabilities && basketMetrics.probabilities.winRates) {
-        var bWR = basketMetrics.probabilities.winRates;
-        var horizons = ['30d', '60d', '90d'];
-        for (var hi = 0; hi < horizons.length; hi++) {
-          var hKey = horizons[hi];
-          if (bWR[hKey] && bWR[hKey].eligible >= 3) {
-            if (bWR[hKey].rate < 50) {
-              Logger.log('ModelPortfolio: Rejected portfolio — basket ' + hKey + ' WR only ' + bWR[hKey].rate + '% (need >=50%)');
-              rejectHorizon = true;
-              break;
-            }
-          }
-        }
+      // Check cross-matrix win rates — must be >= 50% at all horizons
+      if (cmWR30 > 0 && cmWR30 < 50) {
+        Logger.log('ModelPortfolio: Rejected — cross-matrix 30d WR=' + cmWR30 + '% (need >=50%)');
+        rejectHorizon = true;
       }
-      // Also validate rolling Z expected profits at each horizon are positive
-      if (!rejectHorizon && portfolio.rollingZ) {
-        var rzHorizons = ['30d', '60d', '90d'];
-        for (var ri = 0; ri < rzHorizons.length; ri++) {
-          var rk = rzHorizons[ri];
-          var rz = portfolio.rollingZ[rk];
-          if (rz && rz.expectedProfit != null && !rz.insufficient && rz.expectedProfit <= 0) {
-            Logger.log('ModelPortfolio: Rejected portfolio — basket ' + rk + ' EP is ' + rz.expectedProfit.toFixed(4) + ' (need >0)');
-            rejectHorizon = true;
-            break;
-          }
-        }
+      if (!rejectHorizon && cmWR60 > 0 && cmWR60 < 50) {
+        Logger.log('ModelPortfolio: Rejected — cross-matrix 60d WR=' + cmWR60 + '% (need >=50%)');
+        rejectHorizon = true;
+      }
+      if (!rejectHorizon && cmWR90 > 0 && cmWR90 < 50) {
+        Logger.log('ModelPortfolio: Rejected — cross-matrix 90d WR=' + cmWR90 + '% (need >=50%)');
+        rejectHorizon = true;
+      }
+      // Check cross-matrix expected profits — must be positive at all horizons
+      if (!rejectHorizon && cmEP30 <= 0) {
+        Logger.log('ModelPortfolio: Rejected — cross-matrix 30d EP=$' + cmEP30 + ' (need >0)');
+        rejectHorizon = true;
+      }
+      if (!rejectHorizon && cmEP60 <= 0) {
+        Logger.log('ModelPortfolio: Rejected — cross-matrix 60d EP=$' + cmEP60 + ' (need >0)');
+        rejectHorizon = true;
+      }
+      if (!rejectHorizon && cmEP90 <= 0) {
+        Logger.log('ModelPortfolio: Rejected — cross-matrix 90d EP=$' + cmEP90 + ' (need >0)');
+        rejectHorizon = true;
       }
       if (rejectHorizon) continue;
 
@@ -4635,10 +4702,8 @@ function buildCandidatePool_(ss, histMap) {
       var ep30 = parseFloat(r[13]) || 0;
       var ep60 = parseFloat(r[14]) || 0;
       var z = parseFloat(r[4]) || 0;
-      // Hard gate: reject candidates with wr30 < 50% (must be more likely to win than lose)
-      if (wr30 < 50) continue;
-      // Hard gate: reject candidates with weak 60d win rate (Sandbox checks all horizons)
-      if (wr60 < 45) continue;
+      // Hard gate: reject candidates with wr30 < 30% (historically poor mean reversion)
+      if (wr30 < 30) continue;
       // Hard gate: reject candidates with negative 30d expected profit (Sandbox would show negative EV)
       if (ep30 <= 0) continue;
       var mode = String(r[3] || 'intra');
@@ -4704,8 +4769,7 @@ function buildCandidatePool_(ss, histMap) {
                 var lWiden = (lm.badScenario) ? lm.badScenario.wideningProb : 0;
                 var lMae = (lm.badScenario) ? lm.badScenario.avgMae : 0;
                 var lp75 = (lm.badScenario) ? lm.badScenario.p75Mae : 0;
-                if (lwr30 < 50) continue; // Apply same hard gate — must win more than lose
-                if (lwr60 < 45) continue; // 60d horizon must also be viable
+                if (lwr30 < 30) continue; // Apply same hard gate
                 if (lep30 <= 0) continue; // Reject negative EP — Sandbox would show negative EV
                 var aScore = computeCandidateScore_(lwr30, lep30, lWiden, aZ, lMae);
                 candidates.push({
@@ -4883,12 +4947,18 @@ function buildSinglePortfolio_(candidates, corrMatrix, usedPairIds, size) {
 
   for (var i = 0; i < selected.length; i++) {
     var c = candidates[selected[i]];
+    // Include current market prices from histMap so Sandbox gets real entry prices
+    var histA = histMap[String(c.tA).toUpperCase().trim()];
+    var histB = histMap[String(c.tB).toUpperCase().trim()];
+    var priceA = (histA && histA.length > 0) ? histA[histA.length - 1] : 0;
+    var priceB = (histB && histB.length > 0) ? histB[histB.length - 1] : 0;
     pairs.push({
       id: c.id, tA: c.tA, tB: c.tB,
       mode: c.mode, sector: c.sector,
       z: c.z, wr30: c.wr30, wr60: c.wr60, ep30: c.ep30, ep60: c.ep60,
       widenProb: c.widenProb, qualityScore: c.qualityScore,
-      avgMae: c.avgMae, p75Mae: c.p75Mae
+      avgMae: c.avgMae, p75Mae: c.p75Mae,
+      pA: parseFloat(priceA.toFixed(2)), pB: parseFloat(priceB.toFixed(2))
     });
     totalWr += c.wr30;
     totalEp += c.ep30;

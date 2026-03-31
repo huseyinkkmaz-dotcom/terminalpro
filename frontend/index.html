@@ -1403,7 +1403,7 @@ function mpLoadToSandbox(idx){
     var z=parseFloat(pr.z)||0;
     var longTk=z>0?pr.tB:pr.tA;
     var shortTk=z>0?pr.tA:pr.tB;
-    sandboxQueue.push({id:pr.id,tA:pr.tA,tB:pr.tB,longTicker:longTk,shortTicker:shortTk,pA:0,pB:0,z:z,mode:pr.mode||'intra'});
+    sandboxQueue.push({id:pr.id,tA:pr.tA,tB:pr.tB,longTicker:longTk,shortTicker:shortTk,pA:parseFloat(pr.pA)||0,pB:parseFloat(pr.pB)||0,z:z,mode:pr.mode||'intra'});
   });
   sqSave();sqRender();
   // Switch to Analytics → Sandbox tab
