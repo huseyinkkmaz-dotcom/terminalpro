@@ -5630,26 +5630,23 @@ function computeProfitCapture_(pairs, histMap) {
     var z = Math.abs(parseFloat(pair.z) || 0);
     var ep30 = parseFloat(pair.ep30) || 0;
 
-    // Compute the pair's current stdev from history for theoretical profit calculation
+    // Compute theoretical profit from actual spread distance to 30-day mean
     var histA = histMap[String(pair.tA).toUpperCase().trim()];
     var histB = histMap[String(pair.tB).toUpperCase().trim()];
     if (!histA || !histB || histA.length < WINDOW || histB.length < WINDOW) continue;
     var len = Math.min(histA.length, histB.length);
-    // Use last WINDOW days for rolling stdev
-    var sumSpr = 0, sumSprSq = 0;
+    // Use last WINDOW days for rolling mean
+    var sumSpr = 0;
     for (var d = len - WINDOW; d < len; d++) {
-      var spr = histA[d] - histB[d];
-      sumSpr += spr;
-      sumSprSq += spr * spr;
+      sumSpr += histA[d] - histB[d];
     }
     var rollMean = sumSpr / WINDOW;
-    var rollVar = (sumSprSq / WINDOW) - (rollMean * rollMean);
-    var rollStdev = rollVar > 0 ? Math.sqrt(rollVar * WINDOW / (WINDOW - 1)) : 0;
-    if (rollStdev <= 0) continue;
+    var currentSpread = histA[len - 1] - histB[len - 1];
+    var theoreticalPerShare = Math.abs(currentSpread - rollMean);
+    if (theoreticalPerShare <= 0.0001) continue;
 
-    // Theoretical profit per share if spread fully reverts to mean (Z→0)
+    // Theoretical profit per share if spread fully reverts to mean
     // Per 100 shares (matching the legs size used in basket computation)
-    var theoreticalPerShare = z * rollStdev;
     theoreticalTotal += theoreticalPerShare * 100;
 
     // Actual expected profit from 30d analysis (already per-share × 100 in ep30 from screener)
@@ -5658,7 +5655,9 @@ function computeProfitCapture_(pairs, histMap) {
   }
 
   if (theoreticalTotal <= 0) return null;
-  return parseFloat((actualTotal / theoreticalTotal * 100).toFixed(1));
+  var pct = actualTotal / theoreticalTotal * 100;
+  // Cap at 200% — values above that indicate data anomalies, not real capture
+  return parseFloat(Math.min(pct, 200).toFixed(1));
 }
 
 /**
