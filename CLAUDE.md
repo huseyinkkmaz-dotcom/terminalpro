@@ -209,7 +209,7 @@ Pre-computed probability analysis for top 20 alert pairs. Updated daily at 9 AM 
 8. **ZScoreAge tracking** — The hourly trigger manages this. If |z| >= 1.8 and no timestamp exists → creates one. If |z| < 1.8 and timestamp exists → deletes it. Age = days since first crossing.
 9. **DivDates fetch** — Yahoo Finance has rate limits. The 20-hour cache in LastFetched prevents hammering. Phase 1 (batch API) handles most tickers; Phase 2 (chart fallback) catches the rest.
 
-## OpenTrades Sheet Column Map (9 columns, 0-indexed)
+## OpenTrades Sheet Column Map (15 columns, 0-indexed)
 
 | Index | Col | Name | Description |
 |-------|-----|------|-------------|
@@ -222,8 +222,16 @@ Pre-computed probability analysis for top 20 alert pairs. Updated daily at 9 AM 
 | 6 | G | Timestamp | Trade open date |
 | 7 | H | PaidDiv | Accumulated dividends paid (short leg) |
 | 8 | I | ReceivedDiv | Accumulated dividends received (long leg) |
+| 9 | J | TargetExitZ | Optimal exit Z-score from model portfolio sweep |
+| 10 | K | ProfitCapturePct | Portfolio profit capture % (e.g., 60) |
+| 11 | L | TargetPnL | Dollar profit target = theoretical max x capture% |
+| 12 | M | PartialAtPct | % of TargetPnL for first partial (e.g., 50) |
+| 13 | N | SourcePortfolio | Which model portfolio (e.g., "MP#1", "backtest") |
+| 14 | O | MaxHoldDays | Expected avg hold days from sweep |
 
-## ClosedTrades Sheet Column Map (16 columns, 0-indexed)
+**Exit target columns (J-O)** are stamped at trade entry when entering from a model portfolio or backtest signal. Empty for manually entered trades. Per-trade targets override global exit params in `checkExitSignals_`.
+
+## ClosedTrades Sheet Column Map (19 columns, 0-indexed)
 
 | Index | Col | Name | Description |
 |-------|-----|------|-------------|
@@ -237,6 +245,9 @@ Pre-computed probability analysis for top 20 alert pairs. Updated daily at 9 AM 
 | 13 | N | PaidDiv | Total dividends paid |
 | 14 | O | ReceivedDiv | Total dividends received |
 | 15 | P | Notes | Trade journal notes (free text) |
+| 16 | Q | TargetExitZ | Original exit Z target (carried from OpenTrades) |
+| 17 | R | TargetPnL | Original PnL target (carried from OpenTrades) |
+| 18 | S | SourcePortfolio | Source portfolio (carried from OpenTrades) |
 
 ## Deployment
 

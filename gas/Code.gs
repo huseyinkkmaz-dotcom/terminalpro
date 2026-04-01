@@ -78,7 +78,13 @@ function doGet(e) {
         priceA: e.parameter.priceA || 0,
         priceB: e.parameter.priceB || 0,
         sizeA: e.parameter.sizeA || 0,
-        sizeB: e.parameter.sizeB || 0
+        sizeB: e.parameter.sizeB || 0,
+        targetExitZ: e.parameter.targetExitZ || '',
+        profitCapturePct: e.parameter.profitCapturePct || '',
+        targetPnL: e.parameter.targetPnL || '',
+        partialAtPct: e.parameter.partialAtPct || '',
+        sourcePortfolio: e.parameter.sourcePortfolio || '',
+        maxHoldDays: e.parameter.maxHoldDays || ''
       });
       result = { ok: true, message: "Trade saved" };
     }
@@ -635,6 +641,13 @@ function getOpenTrades() {
         var sB = parseMoney(openData[j][5]);
         var paidDiv = parseMoney(openData[j][7]);
         var rcvdDiv = parseMoney(openData[j][8]);
+        // Exit target columns (J-O, indices 9-14)
+        var targetExitZ = openData[j][9] !== undefined && openData[j][9] !== '' ? parseFloat(openData[j][9]) : null;
+        var profitCapturePct = openData[j][10] !== undefined && openData[j][10] !== '' ? parseFloat(openData[j][10]) : null;
+        var targetPnL = openData[j][11] !== undefined && openData[j][11] !== '' ? parseFloat(openData[j][11]) : null;
+        var partialAtPct = openData[j][12] !== undefined && openData[j][12] !== '' ? parseFloat(openData[j][12]) : null;
+        var sourcePortfolio = openData[j][13] !== undefined && openData[j][13] !== '' ? String(openData[j][13]) : null;
+        var maxHoldDays = openData[j][14] !== undefined && openData[j][14] !== '' ? parseInt(openData[j][14]) : null;
         var openDate = openData[j][6] instanceof Date ? openData[j][6].toISOString().split('T')[0] : String(openData[j][6] || '');
         if (pair) {
           if (pair[1] && String(pair[1]).length > 1) tA_Name = String(pair[1]);
@@ -671,7 +684,11 @@ function getOpenTrades() {
             openDate: openDate,
             exDivA: (exDivA && exDivA >= now) ? exDivA.toISOString().split('T')[0] : null,
             exDivB: (exDivB && exDivB >= now) ? exDivB.toISOString().split('T')[0] : null,
-            couponA: couponA, couponB: couponB
+            couponA: couponA, couponB: couponB,
+            targetExitZ: targetExitZ, profitCapturePct: profitCapturePct,
+            targetPnL: targetPnL, partialAtPct: partialAtPct,
+            sourcePortfolio: sourcePortfolio, maxHoldDays: maxHoldDays,
+            profitProgress: targetPnL && targetPnL > 0 ? Math.round((netPnl / targetPnL) * 100) : null
           });
         } else {
           results.push({
@@ -687,7 +704,11 @@ function getOpenTrades() {
             currentZ: 0, sector: '', strategy: strategy,
             openDate: openDate,
             exDivA: null, exDivB: null,
-            couponA: 0, couponB: 0
+            couponA: 0, couponB: 0,
+            targetExitZ: targetExitZ, profitCapturePct: profitCapturePct,
+            targetPnL: targetPnL, partialAtPct: partialAtPct,
+            sourcePortfolio: sourcePortfolio, maxHoldDays: maxHoldDays,
+            profitProgress: null
           });
         }
       } catch(err) { console.error(err); }
@@ -2311,8 +2332,17 @@ function saveTradeToSheet(trade) {
       return true;
     }
   }
-  // No existing position — create new row (cols: PairID, EntryZ, CostA, CostB, SizeA, SizeB, Timestamp, PaidDiv, ReceivedDiv)
-  sheet.appendRow([realId, curZ, trade.priceA, trade.priceB, trade.sizeA, trade.sizeB, new Date(), 0, 0]);
+  // No existing position — create new row
+  // Cols: PairID, EntryZ, CostA, CostB, SizeA, SizeB, Timestamp, PaidDiv, ReceivedDiv,
+  //       TargetExitZ(J), ProfitCapturePct(K), TargetPnL(L), PartialAtPct(M), SourcePortfolio(N), MaxHoldDays(O)
+  var targetExitZ = trade.targetExitZ !== '' ? parseFloat(trade.targetExitZ) || '' : '';
+  var profitCapturePct = trade.profitCapturePct !== '' ? parseFloat(trade.profitCapturePct) || '' : '';
+  var targetPnL = trade.targetPnL !== '' ? parseFloat(trade.targetPnL) || '' : '';
+  var partialAtPct = trade.partialAtPct !== '' ? parseFloat(trade.partialAtPct) || '' : '';
+  var sourcePortfolio = trade.sourcePortfolio !== '' ? trade.sourcePortfolio : '';
+  var maxHoldDays = trade.maxHoldDays !== '' ? parseInt(trade.maxHoldDays) || '' : '';
+  sheet.appendRow([realId, curZ, trade.priceA, trade.priceB, trade.sizeA, trade.sizeB, new Date(), 0, 0,
+                   targetExitZ, profitCapturePct, targetPnL, partialAtPct, sourcePortfolio, maxHoldDays]);
   return true;
 }
 function closeTradeInSheet(id) {
@@ -2333,6 +2363,9 @@ function closeTradeInSheet(id) {
       var openDate = data[i][6];
       var paidDiv = parseMoney(data[i][7]);
       var rcvdDiv = parseMoney(data[i][8]);
+      var targetExitZ = data[i][9] !== undefined && data[i][9] !== '' ? data[i][9] : '';
+      var targetPnL = data[i][11] !== undefined && data[i][11] !== '' ? data[i][11] : '';
+      var sourcePortfolio = data[i][13] !== undefined && data[i][13] !== '' ? data[i][13] : '';
       // Look up live exit prices
       var live = getLivePairData_(ss, pairId);
       var exitA = live ? live.priceA : costA;
@@ -2343,13 +2376,13 @@ function closeTradeInSheet(id) {
       }
       var capGains = ((exitA - costA) * sA) + ((exitB - costB) * sB);
       var pnl = capGains + rcvdDiv - paidDiv;
-      // Write to ClosedTrades
+      // Write to ClosedTrades (19 columns: original 16 + TargetExitZ, TargetPnL, SourcePortfolio)
       var closed = ss.getSheetByName('ClosedTrades');
       if (!closed) {
         closed = ss.insertSheet('ClosedTrades');
-        closed.getRange(1, 1, 1, 16).setValues([['PairID','EntryZ','CostA','CostB','SizeA','SizeB','OpenDate','CloseDate','PnL','ExitPriceA','ExitPriceB','ExitZ','CloseType','PaidDiv','ReceivedDiv','Notes']]);
+        closed.getRange(1, 1, 1, 19).setValues([['PairID','EntryZ','CostA','CostB','SizeA','SizeB','OpenDate','CloseDate','PnL','ExitPriceA','ExitPriceB','ExitZ','CloseType','PaidDiv','ReceivedDiv','Notes','TargetExitZ','TargetPnL','SourcePortfolio']]);
       }
-      closed.appendRow([pairId, entryZ, costA, costB, sA, sB, openDate, new Date(), pnl, exitA, exitB, exitZ, 'FULL', paidDiv, rcvdDiv]);
+      closed.appendRow([pairId, entryZ, costA, costB, sA, sB, openDate, new Date(), pnl, exitA, exitB, exitZ, 'FULL', paidDiv, rcvdDiv, '', targetExitZ, targetPnL, sourcePortfolio]);
       sheet.deleteRow(i + 1);
       break;
     }
@@ -2377,6 +2410,9 @@ function partialCloseTradeInSheet(id, reduceA, reduceB) {
       var openDate = data[i][6];
       var totalPaidDiv = parseMoney(data[i][7]);
       var totalRcvdDiv = parseMoney(data[i][8]);
+      var pTargetExitZ = data[i][9] !== undefined && data[i][9] !== '' ? data[i][9] : '';
+      var pTargetPnL = data[i][11] !== undefined && data[i][11] !== '' ? data[i][11] : '';
+      var pSourcePortfolio = data[i][13] !== undefined && data[i][13] !== '' ? data[i][13] : '';
       // Clamp reduce amounts to position size
       var closedA = Math.min(reduceA, Math.abs(sA));
       var closedB = Math.min(reduceB, Math.abs(sB));
@@ -2399,13 +2435,13 @@ function partialCloseTradeInSheet(id, reduceA, reduceB) {
       // For long (signA=+1): profit = (exit-cost)*shares. For short (signA=-1): profit = (cost-exit)*shares = (exit-cost)*(-shares)
       var capGains = ((exitA - costA) * (closedA * signA)) + ((exitB - costB) * (closedB * signB));
       var pnl = capGains + closedRcvdDiv - closedPaidDiv;
-      // Write closed portion to ClosedTrades
+      // Write closed portion to ClosedTrades (19 columns)
       var closed = ss.getSheetByName('ClosedTrades');
       if (!closed) {
         closed = ss.insertSheet('ClosedTrades');
-        closed.getRange(1, 1, 1, 16).setValues([['PairID','EntryZ','CostA','CostB','SizeA','SizeB','OpenDate','CloseDate','PnL','ExitPriceA','ExitPriceB','ExitZ','CloseType','PaidDiv','ReceivedDiv','Notes']]);
+        closed.getRange(1, 1, 1, 19).setValues([['PairID','EntryZ','CostA','CostB','SizeA','SizeB','OpenDate','CloseDate','PnL','ExitPriceA','ExitPriceB','ExitZ','CloseType','PaidDiv','ReceivedDiv','Notes','TargetExitZ','TargetPnL','SourcePortfolio']]);
       }
-      closed.appendRow([pairId, entryZ, costA, costB, closedA * signA, closedB * signB, openDate, new Date(), pnl, exitA, exitB, exitZ, 'PARTIAL', closedPaidDiv, closedRcvdDiv]);
+      closed.appendRow([pairId, entryZ, costA, costB, closedA * signA, closedB * signB, openDate, new Date(), pnl, exitA, exitB, exitZ, 'PARTIAL', closedPaidDiv, closedRcvdDiv, '', pTargetExitZ, pTargetPnL, pSourcePortfolio]);
       // Update remaining position — subtract proportional div amounts
       var remainA = sA - (closedA * signA);
       var remainB = sB - (closedB * signB);
@@ -2425,7 +2461,7 @@ function partialCloseTradeInSheet(id, reduceA, reduceB) {
 // ============================================================
 // DIVIDEND TRACKING
 // ============================================================
-// OpenTrades columns: A(0):PairID B(1):EntryZ C(2):CostA D(3):CostB E(4):SizeA F(5):SizeB G(6):Timestamp H(7):PaidDiv I(8):ReceivedDiv
+// OpenTrades columns: A(0):PairID B(1):EntryZ C(2):CostA D(3):CostB E(4):SizeA F(5):SizeB G(6):Timestamp H(7):PaidDiv I(8):ReceivedDiv J(9):TargetExitZ K(10):ProfitCapturePct L(11):TargetPnL M(12):PartialAtPct N(13):SourcePortfolio O(14):MaxHoldDays
 function addDividendToTrade(id, type, amount) {
   if (!id || !type || !amount || amount <= 0) throw new Error('Invalid dividend input');
   var ss = SpreadsheetApp.getActive();
@@ -4164,6 +4200,12 @@ function checkExitSignals_(params) {
       var sB = parseMoney(openData[j][5]);
       var paidDiv = parseMoney(openData[j][7]);
       var rcvdDiv = parseMoney(openData[j][8]);
+      // Per-trade exit targets (cols J-O, indices 9-14)
+      var tradeTargetExitZ = openData[j][9] !== undefined && openData[j][9] !== '' ? parseFloat(openData[j][9]) : null;
+      var tradeProfitCapturePct = openData[j][10] !== undefined && openData[j][10] !== '' ? parseFloat(openData[j][10]) : null;
+      var tradeTargetPnL = openData[j][11] !== undefined && openData[j][11] !== '' ? parseFloat(openData[j][11]) : null;
+      var tradePartialAtPct = openData[j][12] !== undefined && openData[j][12] !== '' ? parseFloat(openData[j][12]) : null;
+      var tradeMaxHold = openData[j][14] !== undefined && openData[j][14] !== '' ? parseInt(openData[j][14]) : null;
       var openDate = openData[j][6] instanceof Date ? openData[j][6] : new Date(openData[j][6]);
 
       var livePriceA = parseFloat(pair[3]) || 0;
@@ -4177,15 +4219,62 @@ function checkExitSignals_(params) {
       var daysHeld = Math.floor((now - openDate) / 86400000);
       var entryNotional = Math.abs(costA * sA) + Math.abs(costB * sB);
 
+      // Use per-trade targets if available, otherwise fall back to global params
+      var effectiveExitZ = tradeTargetExitZ != null ? tradeTargetExitZ : exitZ;
+      var effectiveMaxHold = tradeMaxHold != null ? tradeMaxHold : maxHold;
+
+      // --- Trigger 4: Profit Capture Target (PARTIAL) ---
+      if (tradeTargetPnL != null && tradeTargetPnL > 0 && tradePartialAtPct != null && tradePartialAtPct > 0) {
+        var partialThreshold = tradeTargetPnL * (tradePartialAtPct / 100);
+        if (netPnl >= partialThreshold && netPnl < tradeTargetPnL) {
+          var pctDone = Math.round((netPnl / tradeTargetPnL) * 100);
+          signals.push({
+            pairId: info.id, tA: info.tA, tB: info.tB,
+            trigger: 'PARTIAL_PROFIT', severity: 'profit',
+            message: 'PnL $' + netPnl.toFixed(2) + ' reached ' + pctDone + '% of $' + tradeTargetPnL.toFixed(2) + ' target — take partial profits',
+            currentZ: currentZ, daysHeld: daysHeld,
+            unrealizedPnl: parseFloat(netPnl.toFixed(2)),
+            targetPnL: tradeTargetPnL, profitProgress: pctDone,
+            timestamp: now.toISOString()
+          });
+        }
+      }
+
+      // --- Trigger 5: Full Profit Capture Target ---
+      if (tradeTargetPnL != null && tradeTargetPnL > 0 && netPnl >= tradeTargetPnL) {
+        signals.push({
+          pairId: info.id, tA: info.tA, tB: info.tB,
+          trigger: 'FULL_TARGET', severity: 'profit',
+          message: 'PnL $' + netPnl.toFixed(2) + ' reached target $' + tradeTargetPnL.toFixed(2) + ' (' + (tradeProfitCapturePct || 0) + '% capture) — EXIT',
+          currentZ: currentZ, daysHeld: daysHeld,
+          unrealizedPnl: parseFloat(netPnl.toFixed(2)),
+          targetPnL: tradeTargetPnL, profitProgress: 100,
+          timestamp: now.toISOString()
+        });
+      }
+
+      // --- Trigger 6: Stagnation (per-trade maxHold exceeded while losing) ---
+      if (tradeMaxHold != null && daysHeld > Math.round(tradeMaxHold * 1.5) && netPnl <= 0) {
+        signals.push({
+          pairId: info.id, tA: info.tA, tB: info.tB,
+          trigger: 'STAGNATION', severity: 'warning',
+          message: 'Day ' + daysHeld + ' exceeds 1.5× expected ' + tradeMaxHold + 'd hold — trade is stagnant, review position',
+          currentZ: currentZ, daysHeld: daysHeld,
+          unrealizedPnl: parseFloat(netPnl.toFixed(2)),
+          timestamp: now.toISOString()
+        });
+      }
+
       // --- Trigger 1: Statistical Target Reached ---
-      if (Math.abs(currentZ) <= exitZ) {
+      if (Math.abs(currentZ) <= effectiveExitZ) {
+        var zSource = tradeTargetExitZ != null ? ' (per-trade)' : '';
         signals.push({
           pairId: info.id,
           tA: info.tA,
           tB: info.tB,
           trigger: 'STATISTICAL_TARGET',
           severity: 'profit',
-          message: 'Z-score reverted to ' + currentZ.toFixed(2) + 'σ (target: ≤' + exitZ.toFixed(1) + 'σ) — take profit',
+          message: 'Z-score reverted to ' + currentZ.toFixed(2) + 'σ (target: ≤' + effectiveExitZ.toFixed(1) + 'σ' + zSource + ') — take profit',
           currentZ: currentZ,
           daysHeld: daysHeld,
           unrealizedPnl: parseFloat(netPnl.toFixed(2)),
@@ -4194,14 +4283,14 @@ function checkExitSignals_(params) {
       }
 
       // --- Trigger 2: Time Stop ---
-      if (daysHeld >= maxHold) {
+      if (daysHeld >= effectiveMaxHold) {
         signals.push({
           pairId: info.id,
           tA: info.tA,
           tB: info.tB,
           trigger: 'TIME_STOP',
           severity: 'warning',
-          message: 'Day ' + daysHeld + ' of ' + maxHold + '-day max hold — consider closing',
+          message: 'Day ' + daysHeld + ' of ' + effectiveMaxHold + '-day max hold — consider closing',
           currentZ: currentZ,
           daysHeld: daysHeld,
           unrealizedPnl: parseFloat(netPnl.toFixed(2)),

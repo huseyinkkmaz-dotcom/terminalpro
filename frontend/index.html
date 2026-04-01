@@ -473,6 +473,7 @@ th .th-hint{font-weight:400;font-size:8px;letter-spacing:0;text-transform:none;c
 <div><label style="font-size:9px;color:var(--subtext);font-weight:900;display:block;margin-bottom:8px">SIZE A</label><input type="text" id="sA" value="0" style="width:100%;background:var(--bg);border:1px solid var(--border);color:white;padding:14px;border-radius:8px;box-sizing:border-box"></div>
 <div><label style="font-size:9px;color:var(--subtext);font-weight:900;display:block;margin-bottom:8px">SIZE B</label><input type="text" id="sB" value="0" style="width:100%;background:var(--bg);border:1px solid var(--border);color:white;padding:14px;border-radius:8px;box-sizing:border-box"></div>
 </div>
+<div id="exitParamsInfo" style="display:none;background:rgba(16,185,129,.08);border:1px solid rgba(16,185,129,.3);border-radius:8px;padding:10px 14px;margin-bottom:15px;font-size:10px;color:var(--text)"></div>
 <button onclick="doSubmit()" style="background:var(--accent);color:var(--bg);border:none;padding:18px;width:100%;border-radius:8px;font-weight:900;cursor:pointer;font-size:13px">CONFIRM</button>
 <button onclick="closeModal()" style="background:none;border:none;color:var(--subtext);width:100%;margin-top:15px;cursor:pointer;font-size:12px">CANCEL</button>
 </div></div>
@@ -1272,9 +1273,9 @@ window.addEventListener("DOMContentLoaded",async()=>{
 });
 async function switchMode(mode,el){if(mode===currentMode)return;currentMode=mode;activeSector='';document.querySelectorAll('.strat-pill').forEach(p=>p.classList.remove('active'));el.classList.add('active');document.getElementById('sInput').value='';document.getElementById('excludeInput').value='';document.getElementById('alerts').setAttribute('data-mode',mode);try{setConnStatus("loading");console.log("[TerminalPro] Switching to mode:",mode);const data=await apiGet("getData",{mode:mode});if(data&&data.ok){updateUI(data);setConnStatus("ok");}else{console.error("[TerminalPro] switchMode error:",data);setConnStatus("err");}}catch(e){console.error("[TerminalPro] switchMode failed:",e.message);setConnStatus("err");}}
 function tab(t,el){document.querySelectorAll('.tab-content').forEach(x=>x.classList.remove('active'));document.querySelectorAll('.nav-item').forEach(x=>x.classList.remove('active'));document.getElementById(t).classList.add('active');el.classList.add('active');}
-function openModal(id,tA,tB){activeId=id;document.getElementById('modalTitle').innerText=id;document.getElementById('lblA').innerText=(tA||"PRICE A")+" PRICE";document.getElementById('lblB').innerText=(tB||"PRICE B")+" PRICE";document.getElementById('pA').value="";document.getElementById('pB').value="";document.getElementById('sA').value="0";document.getElementById('sB').value="0";document.getElementById('entryModal').style.display='block';}
+function openModal(id,tA,tB,exitParams){activeId=id;window._pendingExitParams=exitParams||null;document.getElementById('modalTitle').innerText=id;document.getElementById('lblA').innerText=(tA||"PRICE A")+" PRICE";document.getElementById('lblB').innerText=(tB||"PRICE B")+" PRICE";document.getElementById('pA').value="";document.getElementById('pB').value="";document.getElementById('sA').value="0";document.getElementById('sB').value="0";var epInfo=document.getElementById('exitParamsInfo');if(epInfo){if(exitParams&&exitParams.targetExitZ){epInfo.style.display='block';epInfo.innerHTML='<span style="color:var(--low);font-weight:900">Exit targets will be stamped:</span> Exit Z: '+parseFloat(exitParams.targetExitZ).toFixed(1)+'σ · Profit capture: '+(exitParams.profitCapturePct||'—')+'% · Max hold: '+(exitParams.maxHoldDays||'—')+'d';}else{epInfo.style.display='none';}}document.getElementById('entryModal').style.display='block';}
 function closeModal(){document.getElementById('entryModal').style.display='none';}
-async function doSubmit(){try{await apiGet("saveTrade",{id:activeId,priceA:document.getElementById('pA').value,priceB:document.getElementById('pB').value,sizeA:document.getElementById('sA').value,sizeB:document.getElementById('sB').value});closeModal();refreshData();}catch(e){alert("Failed to save.");}}
+async function doSubmit(){try{var params={id:activeId,priceA:document.getElementById('pA').value,priceB:document.getElementById('pB').value,sizeA:document.getElementById('sA').value,sizeB:document.getElementById('sB').value};var ep=window._pendingExitParams;if(ep){if(ep.targetExitZ)params.targetExitZ=ep.targetExitZ;if(ep.profitCapturePct)params.profitCapturePct=ep.profitCapturePct;if(ep.partialAtPct)params.partialAtPct=ep.partialAtPct;if(ep.sourcePortfolio)params.sourcePortfolio=ep.sourcePortfolio;if(ep.maxHoldDays)params.maxHoldDays=ep.maxHoldDays;var pA=parseFloat(params.priceA)||0,pB=parseFloat(params.priceB)||0,sA=parseFloat(params.sizeA)||0,sB=parseFloat(params.sizeB)||0;if(ep.profitCapturePct&&pA>0&&pB>0){var entrySpread=pA-pB;var mean=ep._mean||0;var stdev=ep._stdev||1;var theoreticalMax=Math.abs(entrySpread-mean)*((Math.abs(sA)+Math.abs(sB))/2);params.targetPnL=(theoreticalMax*(parseFloat(ep.profitCapturePct)/100)).toFixed(2);}}window._pendingExitParams=null;await apiGet("saveTrade",params);closeModal();refreshData();}catch(e){alert("Failed to save.");}}
 var closeTargetId='',closeCardId='';
 function openCloseModal(id,cid){closeTargetId=id;closeCardId=cid;document.getElementById('closeTypeChoices').style.display='block';document.getElementById('partialInputs').style.display='none';document.getElementById('reduceA').value='0';document.getElementById('reduceB').value='0';document.getElementById('closeTypeModal').style.display='block';}
 function closeCloseModal(){document.getElementById('closeTypeModal').style.display='none';}
@@ -1451,6 +1452,7 @@ function renderModelPortfolios(mp){
     h+='<th style="text-align:center;padding:6px 8px;font-size:8px;font-weight:900;color:var(--subtext);text-transform:uppercase">Avg Days</th>';
     h+='<th style="text-align:center;padding:6px 8px;font-size:8px;font-weight:900;color:var(--subtext);text-transform:uppercase">Opt Entry/Exit</th>';
     h+='<th style="text-align:center;padding:6px 8px;font-size:8px;font-weight:900;color:var(--subtext);text-transform:uppercase">Direction</th>';
+    h+='<th style="text-align:center;padding:6px 8px;font-size:8px;font-weight:900;color:var(--subtext);text-transform:uppercase">Trade</th>';
     h+='</tr></thead><tbody>';
     pairs.forEach(function(pr){
       var pz=parseFloat(pr.z)||0;
@@ -1487,6 +1489,12 @@ function renderModelPortfolios(mp){
         h+='<td style="padding:8px;text-align:center;color:var(--subtext);font-size:9px">—</td>';
       }
       h+='<td style="padding:8px;text-align:center;font-size:9px"><span style="color:var(--low);font-weight:900">L:'+((pz>0)?pr.tB:pr.tA)+'</span> <span style="color:var(--subtext)">/</span> <span style="color:var(--high);font-weight:900">S:'+((pz>0)?pr.tA:pr.tB)+'</span></td>';
+      // Enter Trade button with exit params from model portfolio
+      var _mpEp=JSON.stringify({targetExitZ:parseFloat(pr.optExit||0.5).toFixed(2),profitCapturePct:pc!=null?pc.toFixed(0):'60',partialAtPct:'50',sourcePortfolio:'MP#'+p.rank,maxHoldDays:pDays||60}).replace(/'/g,'\\x27');
+      var _prTa=(pr.tA||'').replace(/'/g,"\\'");
+      var _prTb=(pr.tB||'').replace(/'/g,"\\'");
+      var _prId=(pr.id||'').replace(/'/g,"\\'");
+      h+='<td style="padding:8px;text-align:center"><button onclick="openModal(\''+_prId+'\',\''+_prTa+'\',\''+_prTb+'\',JSON.parse(\''+_mpEp+'\'))" style="background:var(--accent);color:#000;border:none;border-radius:4px;padding:4px 10px;font-size:9px;font-weight:900;cursor:pointer;text-transform:uppercase">Trade</button></td>';
       h+='</tr>';
     });
     h+='</tbody></table>';
@@ -1605,7 +1613,47 @@ var lng=0,sht=0;if(data.portfolioData)data.portfolioData.forEach(function(p){var
 document.getElementById('valLong').innerText='$'+lng.toFixed(0);document.getElementById('valShort').innerText='$'+sht.toFixed(0);
 var ph='';if(data.portfolioData&&data.portfolioData.length>0){data.portfolioData.forEach(function(p,i){var prog=Math.min(100,Math.max(0,(1-(Math.abs(p.centRem)/(Math.abs(p.centGoal)||1)))*100));var c=p.isWinning?'var(--low)':'var(--high)';var tA=p.tA||"LEG A",tB=p.tB||"LEG B";var ez=parseFloat(p.entryZ)||0;var mv=parseFloat(p.target)||0;var tm=mv>=0?'<div class="target-val accent">'+tA+' SHOULD BE $'+mv.toFixed(2)+' HIGHER THAN '+tB+'</div>':'<div class="target-val accent">'+tA+' SHOULD BE $'+Math.abs(mv).toFixed(2)+' LOWER THAN '+tB+'</div>';var sa=String(tA).replace(/'/g,"\\'"),sb=String(tB).replace(/'/g,"\\'"),si=String(p.id).replace(/'/g,"\\'");
 var pd=parseFloat(p.paidDiv)||0,rd=parseFloat(p.rcvdDiv)||0,nd=rd-pd,cg=parseFloat(p.capGains)||0;var ndClr=nd>=0?'var(--low)':'var(--high)';var cgClr=cg>=0?'var(--low)':'var(--high)';
-ph+='<div class="trade-card" id="card-'+i+'">'+'<div style="display:flex;justify-content:space-between;align-items:flex-start"><div><div style="font-weight:900;font-size:22px;color:var(--accent)">'+p.id+'</div><div style="display:flex;gap:6px;align-items:center;margin-top:4px"><div style="font-size:12px;color:var(--subtext);font-weight:700">Spread: $'+p.spr+'</div><div class="entry-indicator">ENTRY: '+ez.toFixed(2)+'σ</div></div></div><div style="font-family:\'JetBrains Mono\';font-weight:900;font-size:22px;color:'+c+'">'+(p.dollarPnL>=0?'+':'')+p.dollarPnL+'$</div></div>'+'<div class="target-ribbon"><div class="target-row"><div class="target-desc">CURRENT SPREAD</div><div class="target-val">$'+p.spr+' (Diff)</div></div><div class="target-row"><div class="target-desc">TARGET MEAN</div>'+tm+'</div></div>'+'<div style="display:flex;gap:12px;margin-top:20px;margin-bottom:20px"><div style="flex:1;padding:12px;background:rgba(255,255,255,.03);border-radius:10px;border:1px solid var(--border)"><div style="font-size:10px;color:var(--accent);font-weight:900;text-transform:uppercase;margin-bottom:6px">'+tA+'</div><div style="font-family:\'JetBrains Mono\';font-size:15px;font-weight:900;color:white">$'+p.pA+'</div><div style="font-size:10px;color:var(--subtext);margin-top:4px">Qty: '+p.sA+'</div></div><div style="flex:1;padding:12px;background:rgba(255,255,255,.03);border-radius:10px;border:1px solid var(--border)"><div style="font-size:10px;color:var(--accent);font-weight:900;text-transform:uppercase;margin-bottom:6px">'+tB+'</div><div style="font-family:\'JetBrains Mono\';font-size:15px;font-weight:900;color:white">$'+p.pB+'</div><div style="font-size:10px;color:var(--subtext);margin-top:4px">Qty: '+p.sB+'</div></div></div>'+'<div class="div-flow-row"><div class="div-flow-item"><div class="div-flow-label" style="color:var(--subtext)">Capital Gains</div><div class="div-flow-val" style="color:'+cgClr+'">'+(cg>=0?'+':'')+cg.toFixed(2)+'$</div></div><div class="div-flow-item"><div class="div-flow-label" style="color:var(--high)">Dividends Paid</div><div class="div-flow-val" style="color:var(--high)">-'+pd.toFixed(2)+'$</div><button class="div-btn paid" onclick="openDivModal(\''+si+'\',\'paid\')" style="margin-top:4px">+ Add</button></div><div class="div-flow-item"><div class="div-flow-label" style="color:var(--low)">Dividends Received</div><div class="div-flow-val" style="color:var(--low)">+'+rd.toFixed(2)+'$</div><button class="div-btn rcvd" onclick="openDivModal(\''+si+'\',\'received\')" style="margin-top:4px">+ Add</button></div><div class="div-flow-item"><div class="div-flow-label" style="color:var(--subtext)">Net Dividends</div><div class="div-flow-val" style="color:'+ndClr+'">'+(nd>=0?'+':'')+nd.toFixed(2)+'$</div></div></div>'+'<div class="progress-container"><div class="progress-bar" style="width:'+prog+'%;background:'+c+'"></div></div>'+'<div class="tc-progress-label"><span>Total Distance: <span class="tc-val">'+p.centGoal+'&cent;</span></span><span style="color:'+c+'">Remaining: <span class="tc-val">'+p.centRem+'&cent;</span></span></div>'+'<div style="display:flex;justify-content:space-between;margin-top:20px"><button class="scale-btn" onclick="openModal(\''+si+'\',\''+sa+'\',\''+sb+'\')">Scale</button><button class="close-trade-btn" onclick="openCloseModal(\''+si+'\',\'card-'+i+'\')">Close</button></div></div>';});}
+// Build exit target tracking panel (if per-trade targets exist)
+var exitPanel='';
+if(p.targetPnL!=null&&parseFloat(p.targetPnL)>0){
+var tpnl=parseFloat(p.targetPnL),npnl=parseFloat(p.dollarPnL)||0;
+var pprog=Math.min(120,Math.max(-50,Math.round((npnl/tpnl)*100)));
+var partAt=p.partialAtPct!=null?parseFloat(p.partialAtPct):50;
+var partialMet=pprog>=partAt,fullMet=pprog>=100;
+var profClr=fullMet?'var(--low)':partialMet?'var(--yellow)':pprog>=0?'var(--accent)':'var(--high)';
+var profLabel=fullMet?'EXIT \u2014 TARGET HIT':partialMet?'TAKE PARTIAL PROFITS':pprog>=0?'TRACKING':'UNDERWATER';
+var profBg=fullMet?'rgba(16,185,129,.12)':partialMet?'rgba(245,158,11,.12)':'rgba(255,255,255,.03)';
+var profBdr=fullMet?'rgba(16,185,129,.4)':partialMet?'rgba(245,158,11,.4)':'var(--border)';
+exitPanel='<div style="margin-top:14px;padding:14px;background:'+profBg+';border:1px solid '+profBdr+';border-radius:10px">';
+exitPanel+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">';
+exitPanel+='<div style="font-size:9px;font-weight:900;color:'+profClr+';text-transform:uppercase;letter-spacing:1px">'+profLabel+'</div>';
+exitPanel+='<div style="font-family:JetBrains Mono;font-size:14px;font-weight:900;color:'+profClr+'">'+pprog+'%</div>';
+exitPanel+='</div>';
+// Progress bar with partial marker
+exitPanel+='<div style="position:relative;height:8px;background:rgba(255,255,255,.06);border-radius:4px;overflow:visible;margin-bottom:10px">';
+var barW=Math.max(0,Math.min(100,pprog));
+exitPanel+='<div style="height:100%;width:'+barW+'%;background:'+profClr+';border-radius:4px;transition:width .3s"></div>';
+exitPanel+='<div style="position:absolute;left:'+partAt+'%;top:-2px;width:2px;height:12px;background:var(--yellow);border-radius:1px" title="Partial at '+partAt+'%"></div>';
+exitPanel+='<div style="position:absolute;left:100%;top:-2px;width:2px;height:12px;background:var(--low);border-radius:1px" title="Full target"></div>';
+exitPanel+='</div>';
+// Metrics row
+exitPanel+='<div style="display:flex;gap:16px;font-size:10px;color:var(--subtext);flex-wrap:wrap">';
+exitPanel+='<span>Target: <span style="color:var(--low);font-weight:900">$'+tpnl.toFixed(2)+'</span></span>';
+exitPanel+='<span>Current: <span style="color:'+profClr+';font-weight:900">'+(npnl>=0?'+':'')+npnl.toFixed(2)+'$</span></span>';
+if(p.targetExitZ!=null) exitPanel+='<span>Exit Z: <span style="font-weight:900">'+parseFloat(p.targetExitZ).toFixed(1)+'&sigma;</span></span>';
+if(p.maxHoldDays!=null) exitPanel+='<span>Max hold: <span style="font-weight:900">'+p.maxHoldDays+'d</span></span>';
+if(p.sourcePortfolio) exitPanel+='<span>Source: <span style="font-weight:900;color:var(--accent)">'+p.sourcePortfolio+'</span></span>';
+exitPanel+='</div></div>';
+}else if(p.targetExitZ!=null){
+// Has exit Z target but no dollar target
+exitPanel='<div style="margin-top:14px;padding:10px 14px;background:rgba(14,165,233,.06);border:1px solid rgba(14,165,233,.2);border-radius:8px;font-size:10px;color:var(--text)">';
+exitPanel+='<span style="font-weight:900;color:var(--accent)">EXIT TARGET:</span> ';
+exitPanel+='Z \u2264 '+parseFloat(p.targetExitZ).toFixed(1)+'\u03C3';
+if(p.maxHoldDays!=null) exitPanel+=' \u00B7 Max hold: '+p.maxHoldDays+'d';
+if(p.sourcePortfolio) exitPanel+=' \u00B7 Source: '+p.sourcePortfolio;
+exitPanel+='</div>';
+}
+ph+='<div class="trade-card" id="card-'+i+'">'+'<div style="display:flex;justify-content:space-between;align-items:flex-start"><div><div style="font-weight:900;font-size:22px;color:var(--accent)">'+p.id+'</div><div style="display:flex;gap:6px;align-items:center;margin-top:4px"><div style="font-size:12px;color:var(--subtext);font-weight:700">Spread: $'+p.spr+'</div><div class="entry-indicator">ENTRY: '+ez.toFixed(2)+'σ</div></div></div><div style="font-family:\'JetBrains Mono\';font-weight:900;font-size:22px;color:'+c+'">'+(p.dollarPnL>=0?'+':'')+p.dollarPnL+'$</div></div>'+'<div class="target-ribbon"><div class="target-row"><div class="target-desc">CURRENT SPREAD</div><div class="target-val">$'+p.spr+' (Diff)</div></div><div class="target-row"><div class="target-desc">TARGET MEAN</div>'+tm+'</div></div>'+'<div style="display:flex;gap:12px;margin-top:20px;margin-bottom:20px"><div style="flex:1;padding:12px;background:rgba(255,255,255,.03);border-radius:10px;border:1px solid var(--border)"><div style="font-size:10px;color:var(--accent);font-weight:900;text-transform:uppercase;margin-bottom:6px">'+tA+'</div><div style="font-family:\'JetBrains Mono\';font-size:15px;font-weight:900;color:white">$'+p.pA+'</div><div style="font-size:10px;color:var(--subtext);margin-top:4px">Qty: '+p.sA+'</div></div><div style="flex:1;padding:12px;background:rgba(255,255,255,.03);border-radius:10px;border:1px solid var(--border)"><div style="font-size:10px;color:var(--accent);font-weight:900;text-transform:uppercase;margin-bottom:6px">'+tB+'</div><div style="font-family:\'JetBrains Mono\';font-size:15px;font-weight:900;color:white">$'+p.pB+'</div><div style="font-size:10px;color:var(--subtext);margin-top:4px">Qty: '+p.sB+'</div></div></div>'+'<div class="div-flow-row"><div class="div-flow-item"><div class="div-flow-label" style="color:var(--subtext)">Capital Gains</div><div class="div-flow-val" style="color:'+cgClr+'">'+(cg>=0?'+':'')+cg.toFixed(2)+'$</div></div><div class="div-flow-item"><div class="div-flow-label" style="color:var(--high)">Dividends Paid</div><div class="div-flow-val" style="color:var(--high)">-'+pd.toFixed(2)+'$</div><button class="div-btn paid" onclick="openDivModal(\''+si+'\',\'paid\')" style="margin-top:4px">+ Add</button></div><div class="div-flow-item"><div class="div-flow-label" style="color:var(--low)">Dividends Received</div><div class="div-flow-val" style="color:var(--low)">+'+rd.toFixed(2)+'$</div><button class="div-btn rcvd" onclick="openDivModal(\''+si+'\',\'received\')" style="margin-top:4px">+ Add</button></div><div class="div-flow-item"><div class="div-flow-label" style="color:var(--subtext)">Net Dividends</div><div class="div-flow-val" style="color:'+ndClr+'">'+(nd>=0?'+':'')+nd.toFixed(2)+'$</div></div></div>'+exitPanel+'<div class="progress-container"><div class="progress-bar" style="width:'+prog+'%;background:'+c+'"></div></div>'+'<div class="tc-progress-label"><span>Total Distance: <span class="tc-val">'+p.centGoal+'&cent;</span></span><span style="color:'+c+'">Remaining: <span class="tc-val">'+p.centRem+'&cent;</span></span></div>'+'<div style="display:flex;justify-content:space-between;margin-top:20px"><button class="scale-btn" onclick="openModal(\''+si+'\',\''+sa+'\',\''+sb+'\')">Scale</button><button class="close-trade-btn" onclick="openCloseModal(\''+si+'\',\'card-'+i+'\')">Close</button></div></div>';});}
 document.getElementById('portfolioGrid').innerHTML=ph;
 renderHealthBar(data.portfolioData);
 checkExitSignalsClient();
@@ -2989,10 +3037,11 @@ h+='</div>';
 h+='</div>';
 var eTa=p.tA||p.id.split('|')[0]||'';
 var eTb=p.tB||p.id.split('|')[1]||'';
+var _epJson=JSON.stringify({targetExitZ:exitZ.toFixed(2),profitCapturePct:'60',partialAtPct:'50',sourcePortfolio:'backtest',maxHoldDays:p.avgHold||60}).replace(/'/g,'\\x27');
 if(isActive){
-h+='<button onclick="openModal(\''+p.id.replace(/'/g,"\\'")+'\',\''+eTa.replace(/'/g,"\\'")+'\',\''+eTb.replace(/'/g,"\\'")+'\')" style="background:var(--accent);color:#000;border:none;border-radius:6px;padding:9px 16px;font-size:11px;font-weight:900;cursor:pointer;text-transform:uppercase;letter-spacing:1px;width:100%;transition:opacity .15s" onmouseenter="this.style.opacity=\'0.85\'" onmouseleave="this.style.opacity=\'1\'">&#9889; ENTER TRADE</button>';
+h+='<button onclick="openModal(\''+p.id.replace(/'/g,"\\'")+'\',\''+eTa.replace(/'/g,"\\'")+'\',\''+eTb.replace(/'/g,"\\'")+'\',JSON.parse(\''+_epJson+'\'))" style="background:var(--accent);color:#000;border:none;border-radius:6px;padding:9px 16px;font-size:11px;font-weight:900;cursor:pointer;text-transform:uppercase;letter-spacing:1px;width:100%;transition:opacity .15s" onmouseenter="this.style.opacity=\'0.85\'" onmouseleave="this.style.opacity=\'1\'">&#9889; ENTER TRADE</button>';
 }else if(!isInPort){
-h+='<button onclick="openModal(\''+p.id.replace(/'/g,"\\'")+'\',\''+eTa.replace(/'/g,"\\'")+'\',\''+eTb.replace(/'/g,"\\'")+'\')" style="background:rgba(255,255,255,.08);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:9px 16px;font-size:11px;font-weight:900;cursor:pointer;text-transform:uppercase;letter-spacing:1px;width:100%;transition:opacity .15s" onmouseenter="this.style.opacity=\'0.85\'" onmouseleave="this.style.opacity=\'1\'">ENTER TRADE</button>';
+h+='<button onclick="openModal(\''+p.id.replace(/'/g,"\\'")+'\',\''+eTa.replace(/'/g,"\\'")+'\',\''+eTb.replace(/'/g,"\\'")+'\',JSON.parse(\''+_epJson+'\'))" style="background:rgba(255,255,255,.08);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:9px 16px;font-size:11px;font-weight:900;cursor:pointer;text-transform:uppercase;letter-spacing:1px;width:100%;transition:opacity .15s" onmouseenter="this.style.opacity=\'0.85\'" onmouseleave="this.style.opacity=\'1\'">ENTER TRADE</button>';
 }
 h+='</div>';
 }
@@ -3319,22 +3368,64 @@ function checkExitSignalsClient() {
     var entryNotional = Math.abs(costA * sA) + Math.abs(costB * sB);
     var stdev = parseFloat(p.stdev) || 0;
 
+    // Use per-trade targets if available, fall back to global params
+    var effectiveExitZ = p.targetExitZ != null ? parseFloat(p.targetExitZ) : _exitParams.exitZ;
+    var effectiveMaxHold = p.maxHoldDays != null ? parseInt(p.maxHoldDays) : _exitParams.maxHold;
+    var targetPnL = p.targetPnL != null ? parseFloat(p.targetPnL) : null;
+    var partialAtPct = p.partialAtPct != null ? parseFloat(p.partialAtPct) : null;
+    var hasTradeTargets = p.targetExitZ != null || p.targetPnL != null;
+
+    // Trigger 4: Partial Profit Capture (per-trade target)
+    if (targetPnL != null && targetPnL > 0 && partialAtPct != null && partialAtPct > 0) {
+      var partialThreshold = targetPnL * (partialAtPct / 100);
+      if (netPnl >= partialThreshold && netPnl < targetPnL) {
+        var pctDone = Math.round((netPnl / targetPnL) * 100);
+        signals.push({
+          pairId: p.id, tA: p.tA, tB: p.tB,
+          trigger: 'PARTIAL_PROFIT', severity: 'profit',
+          message: 'PnL $' + netPnl.toFixed(2) + ' reached ' + pctDone + '% of $' + targetPnL.toFixed(2) + ' target \u2014 take partial profits',
+          currentZ: currentZ, daysHeld: daysHeld, unrealizedPnl: netPnl, targetPnL: targetPnL, profitProgress: pctDone, cardIdx: null
+        });
+      }
+    }
+
+    // Trigger 5: Full Profit Capture Target
+    if (targetPnL != null && targetPnL > 0 && netPnl >= targetPnL) {
+      signals.push({
+        pairId: p.id, tA: p.tA, tB: p.tB,
+        trigger: 'FULL_TARGET', severity: 'profit',
+        message: 'PnL $' + netPnl.toFixed(2) + ' reached target $' + targetPnL.toFixed(2) + ' \u2014 EXIT NOW',
+        currentZ: currentZ, daysHeld: daysHeld, unrealizedPnl: netPnl, targetPnL: targetPnL, profitProgress: 100, cardIdx: null
+      });
+    }
+
+    // Trigger 6: Stagnation (per-trade maxHold exceeded while losing)
+    if (p.maxHoldDays != null && daysHeld > Math.round(effectiveMaxHold * 1.5) && netPnl <= 0) {
+      signals.push({
+        pairId: p.id, tA: p.tA, tB: p.tB,
+        trigger: 'STAGNATION', severity: 'warning',
+        message: 'Day ' + daysHeld + ' exceeds 1.5\u00D7 expected ' + effectiveMaxHold + 'd hold \u2014 trade is stagnant',
+        currentZ: currentZ, daysHeld: daysHeld, unrealizedPnl: netPnl, cardIdx: null
+      });
+    }
+
     // Trigger 1: Statistical Target
-    if (Math.abs(currentZ) <= _exitParams.exitZ) {
+    if (Math.abs(currentZ) <= effectiveExitZ) {
+      var zSrc = hasTradeTargets ? ' (per-trade)' : '';
       signals.push({
         pairId: p.id, tA: p.tA, tB: p.tB,
         trigger: 'STATISTICAL_TARGET', severity: 'profit',
-        message: 'Z-score reverted to ' + currentZ.toFixed(2) + '\u03C3 (target: \u2264' + _exitParams.exitZ.toFixed(1) + '\u03C3) \u2014 take profit',
+        message: 'Z-score reverted to ' + currentZ.toFixed(2) + '\u03C3 (target: \u2264' + effectiveExitZ.toFixed(1) + '\u03C3' + zSrc + ') \u2014 take profit',
         currentZ: currentZ, daysHeld: daysHeld, unrealizedPnl: netPnl, cardIdx: null
       });
     }
 
     // Trigger 2: Time Stop
-    if (daysHeld >= _exitParams.maxHold) {
+    if (daysHeld >= effectiveMaxHold) {
       signals.push({
         pairId: p.id, tA: p.tA, tB: p.tB,
         trigger: 'TIME_STOP', severity: 'warning',
-        message: 'Day ' + daysHeld + ' of ' + _exitParams.maxHold + '-day max hold \u2014 consider closing',
+        message: 'Day ' + daysHeld + ' of ' + effectiveMaxHold + '-day max hold \u2014 consider closing',
         currentZ: currentZ, daysHeld: daysHeld, unrealizedPnl: netPnl, cardIdx: null
       });
     }
@@ -3416,7 +3507,8 @@ function renderExitSignals() {
   var h = '';
   _exitSignals.forEach(function(s) {
     var icon = s.severity === 'danger' ? '&#9888;' : (s.severity === 'warning' ? '&#9200;' : '&#9989;');
-    var typeLabel = s.trigger === 'STATISTICAL_TARGET' ? 'TARGET REACHED' : (s.trigger === 'TIME_STOP' ? 'TIME STOP' : 'STOP LOSS');
+    var triggerLabels = {'STATISTICAL_TARGET':'TARGET REACHED','TIME_STOP':'TIME STOP','STOP_LOSS':'STOP LOSS','PARTIAL_PROFIT':'TAKE PARTIAL','FULL_TARGET':'EXIT \u2014 TARGET HIT','STAGNATION':'STAGNANT'};
+    var typeLabel = triggerLabels[s.trigger] || s.trigger;
     var si = String(s.pairId).replace(/'/g, "\\'");
     var sa = String(s.tA).replace(/'/g, "\\'");
     var sb = String(s.tB).replace(/'/g, "\\'");
@@ -3446,7 +3538,8 @@ function renderExitSignals() {
       banner.setAttribute('data-trigger', s.trigger);
       banner.style.marginTop = '10px';
       var icon = s.severity === 'danger' ? '&#9888;' : (s.severity === 'warning' ? '&#9200;' : '&#9989;');
-      var typeLabel = s.trigger === 'STATISTICAL_TARGET' ? 'TARGET REACHED' : (s.trigger === 'TIME_STOP' ? 'TIME STOP' : 'STOP LOSS');
+      var trigLabels2 = {'STATISTICAL_TARGET':'TARGET REACHED','TIME_STOP':'TIME STOP','STOP_LOSS':'STOP LOSS','PARTIAL_PROFIT':'TAKE PARTIAL','FULL_TARGET':'EXIT \u2014 TARGET HIT','STAGNATION':'STAGNANT'};
+      var typeLabel = trigLabels2[s.trigger] || s.trigger;
       banner.innerHTML = '<div class="exit-banner-icon">' + icon + '</div><div class="exit-banner-body"><div class="exit-banner-type">' + typeLabel + '</div><div class="exit-banner-msg">' + s.message + '</div></div>';
       var progBar = card.querySelector('.progress-container');
       if (progBar) card.insertBefore(banner, progBar);
@@ -3464,7 +3557,8 @@ function requestNotificationPermission() {
 
 function fireExitNotification(signal) {
   if (!('Notification' in window) || Notification.permission !== 'granted') return;
-  var typeLabel = signal.trigger === 'STATISTICAL_TARGET' ? 'Target Reached' : (signal.trigger === 'TIME_STOP' ? 'Time Stop' : 'Stop Loss');
+  var notifLabels = {'STATISTICAL_TARGET':'Target Reached','TIME_STOP':'Time Stop','STOP_LOSS':'Stop Loss','PARTIAL_PROFIT':'Take Partial Profits','FULL_TARGET':'Exit - Target Hit','STAGNATION':'Trade Stagnant'};
+  var typeLabel = notifLabels[signal.trigger] || signal.trigger;
   try {
     new Notification('Exit Signal: ' + signal.pairId, {
       body: typeLabel + ' \u2014 ' + signal.message,
