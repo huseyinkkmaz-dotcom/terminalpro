@@ -4518,7 +4518,7 @@ function buildWebCachePriceMap_(ss) {
 
 /**
  * Main generator — called by daily trigger or on-demand via API.
- * Writes 5 model portfolios to ModelPortfolioCache sheet.
+ * Writes up to 10 model portfolios to ModelPortfolioCache sheet.
  */
 function runModelPortfolioGenerator() {
   var startTime = new Date().getTime();
@@ -4558,14 +4558,20 @@ function runModelPortfolioGenerator() {
     var SWEEP_RESERVE_MS = 30000;
     var SEARCH_DEADLINE = MAX_MS - SWEEP_RESERVE_MS;
     var PAIRS_PER_PORTFOLIO = Math.min(5, candidates.length);
-    var NUM_PORTFOLIOS = 5;
+    var NUM_PORTFOLIOS = 10;
 
     var scoredCombos = exhaustivePortfolioSearch_(candidates, crossMetrics, corrMatrix, PAIRS_PER_PORTFOLIO, startTime, SEARCH_DEADLINE);
     Logger.log('ModelPortfolio: Stage 3 complete — ' + scoredCombos.length + ' valid combos from C(' + candidates.length + ',' + PAIRS_PER_PORTFOLIO + ') in ' + ((new Date().getTime() - startTime) / 1000).toFixed(1) + 's');
 
     // ── STAGE 3b: Select diverse top-K portfolios ──
-    var topCombos = diverseTopK_(scoredCombos, NUM_PORTFOLIOS, 2);
-    Logger.log('ModelPortfolio: Stage 3b complete — ' + topCombos.length + ' diverse portfolios selected');
+    // Dynamic maxOverlap: with few candidates, strict overlap limits make it
+    // mathematically impossible to find multiple diverse portfolios (pigeonhole).
+    // E.g. C(7,5) combos always share ≥3 pairs, so maxOverlap=2 yields only 1 result.
+    var maxOverlap = candidates.length <= PAIRS_PER_PORTFOLIO + 2 ? PAIRS_PER_PORTFOLIO - 1
+                   : candidates.length <= PAIRS_PER_PORTFOLIO * 2 ? 3
+                   : 2;
+    var topCombos = diverseTopK_(scoredCombos, NUM_PORTFOLIOS, maxOverlap);
+    Logger.log('ModelPortfolio: Stage 3b complete — ' + topCombos.length + ' diverse portfolios selected (maxOverlap=' + maxOverlap + ', candidates=' + candidates.length + ')');
 
     // ── Build portfolio objects + STAGE 4-6: mini-sweeps, profit capture, Kelly ──
     var portfolios = [];
@@ -4785,9 +4791,56 @@ function buildCandidatePool_(ss, histMap, startTime, maxMs, relaxed) {
       tickerBestPair[ta] = di;
       tickerBestPair[tb] = di;
       dedupedIndices.push(di);
+    } else if (conflictA && conflictB) {
+      // Both tickers conflict — may be with same or different existing pairs
+      var conflictIdxA = tickerBestPair[ta];
+      var conflictIdxB = tickerBestPair[tb];
+
+      // Composite comparison
+      var scoreNew = (c.wr30 || 0) * 0.4 + (c.ep30 || 0) * 10 * 0.4 + Math.max(0, 5 - (c.avgMae || 0)) * 0.2;
+      var existA = candidates[conflictIdxA];
+      var scoreOldA = (existA.wr30 || 0) * 0.4 + (existA.ep30 || 0) * 10 * 0.4 + Math.max(0, 5 - (existA.avgMae || 0)) * 0.2;
+
+      if (conflictIdxA === conflictIdxB) {
+        // Both tickers claimed by the SAME existing pair — simple 1:1 replacement
+        if (scoreNew > scoreOldA) {
+          var oldTa2 = String(existA.tA).toUpperCase();
+          var oldTb2 = String(existA.tB).toUpperCase();
+          rejected[conflictIdxA] = true;
+          dedupedIndices = dedupedIndices.filter(function(idx) { return idx !== conflictIdxA; });
+          if (tickerBestPair[oldTa2] === conflictIdxA) delete tickerBestPair[oldTa2];
+          if (tickerBestPair[oldTb2] === conflictIdxA) delete tickerBestPair[oldTb2];
+          tickerBestPair[ta] = di;
+          tickerBestPair[tb] = di;
+          dedupedIndices.push(di);
+        }
+      } else {
+        // Tickers claimed by TWO DIFFERENT existing pairs — must beat BOTH to take this slot
+        var existB = candidates[conflictIdxB];
+        var scoreOldB = (existB.wr30 || 0) * 0.4 + (existB.ep30 || 0) * 10 * 0.4 + Math.max(0, 5 - (existB.avgMae || 0)) * 0.2;
+        if (scoreNew > scoreOldA && scoreNew > scoreOldB) {
+          // Evict both conflicting pairs
+          var evictPairs = [conflictIdxA, conflictIdxB];
+          for (var ev = 0; ev < evictPairs.length; ev++) {
+            var evIdx = evictPairs[ev];
+            if (!rejected[evIdx]) {
+              var evOld = candidates[evIdx];
+              var evOldTa = String(evOld.tA).toUpperCase();
+              var evOldTb = String(evOld.tB).toUpperCase();
+              rejected[evIdx] = true;
+              dedupedIndices = dedupedIndices.filter(function(idx) { return idx !== evIdx; });
+              if (tickerBestPair[evOldTa] === evIdx) delete tickerBestPair[evOldTa];
+              if (tickerBestPair[evOldTb] === evIdx) delete tickerBestPair[evOldTb];
+            }
+          }
+          tickerBestPair[ta] = di;
+          tickerBestPair[tb] = di;
+          dedupedIndices.push(di);
+        }
+        // else: new pair isn't better than both — skip it
+      }
     } else {
-      // At least one ticker is already taken — compare against the existing pair(s)
-      // and only replace if this pair is strictly better for that ticker
+      // Only one ticker conflicts — compare against the existing pair that owns it
       var conflictIdx = conflictA ? tickerBestPair[ta] : tickerBestPair[tb];
       var existing = candidates[conflictIdx];
 
@@ -5178,8 +5231,8 @@ function exhaustivePortfolioSearch_(candidates, crossMetrics, corrMatrix, k, sta
     var tickerFreq = {};
     var exposureViolation = false;
     for (var te = 0; te < k; te++) {
-      var cTa = String(candidates[combo[te]].tA).toUpperCase();
-      var cTb = String(candidates[combo[te]].tB).toUpperCase();
+      var cTa = String(candidates[combo[te]].tA).toUpperCase().trim();
+      var cTb = String(candidates[combo[te]].tB).toUpperCase().trim();
       tickerFreq[cTa] = (tickerFreq[cTa] || 0) + 1;
       tickerFreq[cTb] = (tickerFreq[cTb] || 0) + 1;
       if (tickerFreq[cTa] > MAX_TICKER_EXPOSURE || tickerFreq[cTb] > MAX_TICKER_EXPOSURE) {
@@ -5263,8 +5316,10 @@ function exhaustivePortfolioSearch_(candidates, crossMetrics, corrMatrix, k, sta
       var badAvgPts = cmBadAvg > 0 ? Math.max(0, 15 - cmBadAvg * 0.05) : 7.5;
       var badP75Pts = cmBadP75 > 0 ? Math.max(0, 20 - cmBadP75 * 0.05) : 10;
       var widenPts = Math.max(0, 15 - (cmWidenProb * 0.3));
-      // Bonus for low correlation (diversification reward, up to 5 pts)
-      var corrBonus = Math.max(0, 5 * (1 - avgCorr));
+      // Mild bonus for low correlation — preferred stocks are naturally correlated,
+      // so we only lightly reward diversification (up to ~2.6 pts) and don't penalize
+      // typical correlation levels (0.5-0.7) that are normal for this asset class.
+      var corrBonus = Math.max(0, 2 * (1.3 - avgCorr));
       var score = wrPts + epPts + badAvgPts + badP75Pts + widenPts + corrBonus;
 
       // ── Anti-overfitting: penalize suspiciously high blended win rates ──
@@ -5310,14 +5365,16 @@ function exhaustivePortfolioSearch_(candidates, crossMetrics, corrMatrix, k, sta
  */
 function diverseTopK_(scoredCombos, topK, maxOverlap) {
   maxOverlap = maxOverlap || 2;
+  var MAX_PAIR_APPEARANCES = 4; // A single pair can appear in at most 4 of the 10 portfolios
   var selected = [];
+  var pairUsageCount = {}; // index → number of portfolios it appears in
 
   for (var i = 0; i < scoredCombos.length && selected.length < topK; i++) {
     var combo = scoredCombos[i];
     var tooSimilar = false;
 
+    // Check pairwise overlap with already-selected portfolios
     for (var s = 0; s < selected.length; s++) {
-      // Count shared indices between this combo and an already-selected one
       var overlap = 0;
       var selIndices = selected[s].indices;
       for (var a = 0; a < combo.indices.length; a++) {
@@ -5327,8 +5384,23 @@ function diverseTopK_(scoredCombos, topK, maxOverlap) {
       }
       if (overlap > maxOverlap) { tooSimilar = true; break; }
     }
+    if (tooSimilar) continue;
 
-    if (!tooSimilar) selected.push(combo);
+    // Check global pair cap: no pair can appear in more than MAX_PAIR_APPEARANCES portfolios
+    var pairCapViolation = false;
+    for (var pc = 0; pc < combo.indices.length; pc++) {
+      if ((pairUsageCount[combo.indices[pc]] || 0) >= MAX_PAIR_APPEARANCES) {
+        pairCapViolation = true;
+        break;
+      }
+    }
+    if (pairCapViolation) continue;
+
+    // Accept this combo — update pair usage counts
+    selected.push(combo);
+    for (var pu = 0; pu < combo.indices.length; pu++) {
+      pairUsageCount[combo.indices[pu]] = (pairUsageCount[combo.indices[pu]] || 0) + 1;
+    }
   }
 
   return selected;
