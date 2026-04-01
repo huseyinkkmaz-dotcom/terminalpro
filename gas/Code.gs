@@ -4768,112 +4768,12 @@ function buildCandidatePool_(ss, histMap, startTime, maxMs, relaxed) {
     }
   }
 
-  // ── Ticker deduplication: each ticker may only appear in ONE pair ──
-  // When multiple pairs share a ticker, keep only the best pair for that ticker.
-  // "Best" = composite of highest win rate, highest expected profit, lowest bad scenario.
+  // Ticker uniqueness is enforced per-portfolio by MAX_TICKER_EXPOSURE=1 in
+  // exhaustivePortfolioSearch_, so no global dedup needed here. Just sort by
+  // quality and return the full pool (capped at 15 upstream).
   candidates.sort(function(a, b) { return b.qualityScore - a.qualityScore; });
-
-  var tickerBestPair = {};  // ticker → index of best pair that uses it
-  var dedupedIndices = [];  // indices into candidates[] that survive dedup
-  var rejected = {};        // index → true if pair was rejected
-
-  for (var di = 0; di < candidates.length; di++) {
-    var c = candidates[di];
-    var ta = String(c.tA).toUpperCase();
-    var tb = String(c.tB).toUpperCase();
-
-    // Check if either ticker is already claimed by a better pair
-    var conflictA = tickerBestPair[ta] !== undefined;
-    var conflictB = tickerBestPair[tb] !== undefined;
-
-    if (!conflictA && !conflictB) {
-      // Both tickers are free — claim them
-      tickerBestPair[ta] = di;
-      tickerBestPair[tb] = di;
-      dedupedIndices.push(di);
-    } else if (conflictA && conflictB) {
-      // Both tickers conflict — may be with same or different existing pairs
-      var conflictIdxA = tickerBestPair[ta];
-      var conflictIdxB = tickerBestPair[tb];
-
-      // Composite comparison
-      var scoreNew = (c.wr30 || 0) * 0.4 + (c.ep30 || 0) * 10 * 0.4 + Math.max(0, 5 - (c.avgMae || 0)) * 0.2;
-      var existA = candidates[conflictIdxA];
-      var scoreOldA = (existA.wr30 || 0) * 0.4 + (existA.ep30 || 0) * 10 * 0.4 + Math.max(0, 5 - (existA.avgMae || 0)) * 0.2;
-
-      if (conflictIdxA === conflictIdxB) {
-        // Both tickers claimed by the SAME existing pair — simple 1:1 replacement
-        if (scoreNew > scoreOldA) {
-          var oldTa2 = String(existA.tA).toUpperCase();
-          var oldTb2 = String(existA.tB).toUpperCase();
-          rejected[conflictIdxA] = true;
-          dedupedIndices = dedupedIndices.filter(function(idx) { return idx !== conflictIdxA; });
-          if (tickerBestPair[oldTa2] === conflictIdxA) delete tickerBestPair[oldTa2];
-          if (tickerBestPair[oldTb2] === conflictIdxA) delete tickerBestPair[oldTb2];
-          tickerBestPair[ta] = di;
-          tickerBestPair[tb] = di;
-          dedupedIndices.push(di);
-        }
-      } else {
-        // Tickers claimed by TWO DIFFERENT existing pairs — must beat BOTH to take this slot
-        var existB = candidates[conflictIdxB];
-        var scoreOldB = (existB.wr30 || 0) * 0.4 + (existB.ep30 || 0) * 10 * 0.4 + Math.max(0, 5 - (existB.avgMae || 0)) * 0.2;
-        if (scoreNew > scoreOldA && scoreNew > scoreOldB) {
-          // Evict both conflicting pairs
-          var evictPairs = [conflictIdxA, conflictIdxB];
-          for (var ev = 0; ev < evictPairs.length; ev++) {
-            var evIdx = evictPairs[ev];
-            if (!rejected[evIdx]) {
-              var evOld = candidates[evIdx];
-              var evOldTa = String(evOld.tA).toUpperCase();
-              var evOldTb = String(evOld.tB).toUpperCase();
-              rejected[evIdx] = true;
-              dedupedIndices = dedupedIndices.filter(function(idx) { return idx !== evIdx; });
-              if (tickerBestPair[evOldTa] === evIdx) delete tickerBestPair[evOldTa];
-              if (tickerBestPair[evOldTb] === evIdx) delete tickerBestPair[evOldTb];
-            }
-          }
-          tickerBestPair[ta] = di;
-          tickerBestPair[tb] = di;
-          dedupedIndices.push(di);
-        }
-        // else: new pair isn't better than both — skip it
-      }
-    } else {
-      // Only one ticker conflicts — compare against the existing pair that owns it
-      var conflictIdx = conflictA ? tickerBestPair[ta] : tickerBestPair[tb];
-      var existing = candidates[conflictIdx];
-
-      // Composite comparison: WR (40%), EP (40%), bad scenario (20%, inverted)
-      var scoreNew = (c.wr30 || 0) * 0.4 + (c.ep30 || 0) * 10 * 0.4 + Math.max(0, 5 - (c.avgMae || 0)) * 0.2;
-      var scoreOld = (existing.wr30 || 0) * 0.4 + (existing.ep30 || 0) * 10 * 0.4 + Math.max(0, 5 - (existing.avgMae || 0)) * 0.2;
-
-      if (scoreNew > scoreOld) {
-        // New pair is better — evict the old pair and reclaim its tickers
-        var oldTa = String(existing.tA).toUpperCase();
-        var oldTb = String(existing.tB).toUpperCase();
-        rejected[conflictIdx] = true;
-        dedupedIndices = dedupedIndices.filter(function(idx) { return idx !== conflictIdx; });
-
-        // Release old pair's tickers (only if they pointed to the evicted pair)
-        if (tickerBestPair[oldTa] === conflictIdx) delete tickerBestPair[oldTa];
-        if (tickerBestPair[oldTb] === conflictIdx) delete tickerBestPair[oldTb];
-
-        // Claim tickers for new pair
-        tickerBestPair[ta] = di;
-        tickerBestPair[tb] = di;
-        dedupedIndices.push(di);
-      }
-      // else: existing pair is better, skip this candidate
-    }
-  }
-
-  var deduped = dedupedIndices.map(function(idx) { return candidates[idx]; });
-  Logger.log('ModelPortfolio: Deduped candidates from ' + candidates.length + ' to ' + deduped.length + ' (unique tickers)');
-
-  // Sort deduped by quality score descending
-  deduped.sort(function(a, b) { return b.qualityScore - a.qualityScore; });
-  return deduped;
+  Logger.log('ModelPortfolio: ' + candidates.length + ' candidates passing quality gates');
+  return candidates;
 }
 
 /**
