@@ -4636,7 +4636,7 @@ function buildCandidatePool_(ss, histMap, startTime, maxMs, relaxed) {
   // ── Anti-overfitting constants for candidate screening ──
   var SUSPICIOUS_WR_THRESHOLD = 95; // WR above this gets dampened (likely overfit)
   var SUSPICIOUS_WR_MULT = 0.6;     // dampening multiplier for suspicious WR
-  var MIN_TRIGGERS = 3;             // minimum historical trigger signals required
+  var MIN_TRIGGERS = 1;             // minimum historical trigger signals required
 
   // Source 1: ScreenerCache (pre-analyzed with win rates + MAE)
   var scrSheet = ss.getSheetByName('ScreenerCache');
@@ -5193,10 +5193,13 @@ function exhaustivePortfolioSearch_(candidates, crossMetrics, corrMatrix, k, sta
     var cmBadP75 = badP75WS > 0 ? parseFloat((aggBadP75 / badP75WS).toFixed(2)) : 0;
     var cmWidenProb = widenWS > 0 ? parseFloat((aggWidenProb / widenWS).toFixed(1)) : 0;
 
-    // Hard gates: reject combos that fail at any horizon
+    // Hard gates: only require 30d horizon to pass (primary/actionable horizon).
+    // 60d/90d are incorporated as scoring factors below — requiring ALL three
+    // horizons simultaneously chokes the pipeline because off-diagonal cross-pair
+    // blending drags longer horizons toward noise.
     var reject = false;
-    if ((cmWR30 > 0 && cmWR30 < 50) || (cmWR60 > 0 && cmWR60 < 50) || (cmWR90 > 0 && cmWR90 < 50)) reject = true;
-    if (!reject && (cmEP30 <= 0 || cmEP60 <= 0 || cmEP90 <= 0)) reject = true;
+    if (cmWR30 > 0 && cmWR30 < 50) reject = true;
+    if (!reject && cmEP30 <= 0) reject = true;
 
     if (!reject) {
       // Avg pairwise correlation within the combo
@@ -5220,7 +5223,12 @@ function exhaustivePortfolioSearch_(candidates, crossMetrics, corrMatrix, k, sta
       // so we only lightly reward diversification (up to ~2.6 pts) and don't penalize
       // typical correlation levels (0.5-0.7) that are normal for this asset class.
       var corrBonus = Math.max(0, 2 * (1.3 - avgCorr));
-      var score = wrPts + epPts + badAvgPts + badP75Pts + widenPts + corrBonus;
+      // Soft scoring for 60d/90d horizons (not hard-gated, but rewarded/penalized)
+      var wr60Bonus = (cmWR60 >= 50) ? Math.min(3, (cmWR60 - 50) * 0.1) : (cmWR60 > 0 ? -2 : 0);
+      var wr90Bonus = (cmWR90 >= 50) ? Math.min(3, (cmWR90 - 50) * 0.1) : (cmWR90 > 0 ? -2 : 0);
+      var ep60Bonus = (cmEP60 > 0) ? Math.min(2, cmEP60 / (kk * kk * 200) * 5) : (cmEP60 < 0 ? -2 : 0);
+      var ep90Bonus = (cmEP90 > 0) ? Math.min(2, cmEP90 / (kk * kk * 200) * 5) : (cmEP90 < 0 ? -2 : 0);
+      var score = wrPts + epPts + badAvgPts + badP75Pts + widenPts + corrBonus + wr60Bonus + wr90Bonus + ep60Bonus + ep90Bonus;
 
       // ── Anti-overfitting: penalize suspiciously high blended win rates ──
       if (cmWR30 > PORTFOLIO_WR_CEILING) score *= 0.85;
