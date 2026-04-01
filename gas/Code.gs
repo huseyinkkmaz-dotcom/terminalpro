@@ -4565,6 +4565,20 @@ function runModelPortfolioGenerator() {
     var scoredCombos = exhaustivePortfolioSearch_(candidates, crossMetrics, corrMatrix, PAIRS_PER_PORTFOLIO, startTime, SEARCH_DEADLINE);
     Logger.log('ModelPortfolio: Stage 3 complete — ' + scoredCombos.length + ' valid combos from C(' + candidates.length + ',' + PAIRS_PER_PORTFOLIO + ') in ' + ((new Date().getTime() - startTime) / 1000).toFixed(1) + 's');
 
+    // Fallback: if no valid combos at k=5, degrade to k=4 then k=3
+    if (scoredCombos.length === 0 && PAIRS_PER_PORTFOLIO > 3) {
+      for (var fallK = PAIRS_PER_PORTFOLIO - 1; fallK >= 3; fallK--) {
+        if (new Date().getTime() - startTime > SEARCH_DEADLINE) break;
+        Logger.log('ModelPortfolio: 0 valid combos at k=' + (fallK + 1) + ', retrying with k=' + fallK);
+        scoredCombos = exhaustivePortfolioSearch_(candidates, crossMetrics, corrMatrix, fallK, startTime, SEARCH_DEADLINE);
+        Logger.log('ModelPortfolio: Stage 3 retry k=' + fallK + ' — ' + scoredCombos.length + ' valid combos from C(' + candidates.length + ',' + fallK + ')');
+        if (scoredCombos.length > 0) {
+          PAIRS_PER_PORTFOLIO = fallK;
+          break;
+        }
+      }
+    }
+
     // ── STAGE 3b: Select diverse top-K portfolios ──
     // Dynamic maxOverlap: with few candidates, strict overlap limits make it
     // mathematically impossible to find multiple diverse portfolios (pigeonhole).
@@ -5138,7 +5152,28 @@ function exhaustivePortfolioSearch_(candidates, crossMetrics, corrMatrix, k, sta
   var evalCount = 0;
 
   // ── Tunable constants ──
-  var MAX_TICKER_EXPOSURE = 1;  // each ticker can only appear once per portfolio
+  // Dynamic ticker exposure: if a single ticker dominates >50% of candidates,
+  // allow it up to 2× per portfolio — otherwise strict 1× uniqueness.
+  var tickerCounts = {};
+  for (var tc = 0; tc < n; tc++) {
+    var tcA = String(candidates[tc].tA).toUpperCase().trim();
+    var tcB = String(candidates[tc].tB).toUpperCase().trim();
+    tickerCounts[tcA] = (tickerCounts[tcA] || 0) + 1;
+    tickerCounts[tcB] = (tickerCounts[tcB] || 0) + 1;
+  }
+  var maxTickerCount = 0;
+  var dominantTicker = '';
+  for (var tk in tickerCounts) {
+    if (tickerCounts[tk] > maxTickerCount) {
+      maxTickerCount = tickerCounts[tk];
+      dominantTicker = tk;
+    }
+  }
+  var concentrated = maxTickerCount > n * 0.5;
+  var MAX_TICKER_EXPOSURE = concentrated ? 2 : 1;
+  if (concentrated) {
+    Logger.log('ModelPortfolio: Ticker concentration detected — ' + dominantTicker + ' appears in ' + maxTickerCount + '/' + n + ' candidates. Relaxing MAX_TICKER_EXPOSURE to 2.');
+  }
   var PORTFOLIO_WR_CEILING = 90; // blended WR above this gets skepticism discount
 
   // Generate all C(n, k) combinations iteratively using an index array
