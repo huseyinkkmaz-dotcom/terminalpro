@@ -4559,6 +4559,8 @@ function runModelPortfolioGenerator() {
     var SEARCH_DEADLINE = MAX_MS - SWEEP_RESERVE_MS;
     var PAIRS_PER_PORTFOLIO = Math.min(5, candidates.length);
     var NUM_PORTFOLIOS = 10;
+    Logger.log('ModelPortfolio: PAIRS_PER_PORTFOLIO=' + PAIRS_PER_PORTFOLIO + ' (candidates=' + candidates.length + ')');
+    if (PAIRS_PER_PORTFOLIO < 5) Logger.log('ModelPortfolio: ⚠ WARNING — degraded from 5 to ' + PAIRS_PER_PORTFOLIO + ' pairs/portfolio due to insufficient candidates. This is likely the root cause of undersized portfolios.');
 
     var scoredCombos = exhaustivePortfolioSearch_(candidates, crossMetrics, corrMatrix, PAIRS_PER_PORTFOLIO, startTime, SEARCH_DEADLINE);
     Logger.log('ModelPortfolio: Stage 3 complete — ' + scoredCombos.length + ' valid combos from C(' + candidates.length + ',' + PAIRS_PER_PORTFOLIO + ') in ' + ((new Date().getTime() - startTime) / 1000).toFixed(1) + 's');
@@ -4649,7 +4651,10 @@ function buildCandidatePool_(ss, histMap, startTime, maxMs, relaxed) {
       var tA = String(r[1] || '').trim();
       var tB = String(r[2] || '').trim();
       // Need both tickers in histMap
-      if (!histMap[tA.toUpperCase()] || !histMap[tB.toUpperCase()]) continue;
+      if (!histMap[tA.toUpperCase()] || !histMap[tB.toUpperCase()]) {
+        Logger.log('CANDIDATE SKIP [histMap]: ' + id + ' — ' + tA + '/' + tB + ' missing from TickerHistory');
+        continue;
+      }
       var cid = cleanId(id);
       if (seen[cid]) continue;
       seen[cid] = true;
@@ -4664,13 +4669,25 @@ function buildCandidatePool_(ss, histMap, startTime, maxMs, relaxed) {
       var z = parseFloat(r[4]) || 0;
       var triggers = parseInt(r[12]) || 0;
       // Anti-overfitting: reject candidates with too few historical trigger signals
-      if (triggers < MIN_TRIGGERS) continue;
+      if (triggers < MIN_TRIGGERS) {
+        Logger.log('CANDIDATE SKIP [triggers]: ' + id + ' — triggers=' + triggers + ' < ' + MIN_TRIGGERS);
+        continue;
+      }
       // Hard gate: reject candidates with poor win rates (relaxed mode lowers threshold)
       var wrGate = relaxed ? 15 : 30;
-      if (wr30 < wrGate) continue;
+      if (wr30 < wrGate) {
+        Logger.log('CANDIDATE SKIP [WR gate]: ' + id + ' — wr30=' + wr30 + ' < ' + wrGate);
+        continue;
+      }
       // Hard gate: reject candidates with negative 30d expected profit (relaxed allows ~zero)
-      if (!relaxed && ep30 <= 0) continue;
-      if (relaxed && ep30 < -0.5) continue;
+      if (!relaxed && ep30 <= 0) {
+        Logger.log('CANDIDATE SKIP [EP gate]: ' + id + ' — ep30=' + ep30 + ' (strict mode)');
+        continue;
+      }
+      if (relaxed && ep30 < -0.5) {
+        Logger.log('CANDIDATE SKIP [EP gate]: ' + id + ' — ep30=' + ep30 + ' (relaxed mode)');
+        continue;
+      }
       var mode = String(r[3] || 'intra');
       var sector = '';
 
@@ -4702,6 +4719,8 @@ function buildCandidatePool_(ss, histMap, startTime, maxMs, relaxed) {
     }
   }
 
+  Logger.log('ModelPortfolio: ScreenerCache yielded ' + candidates.length + ' candidates after filters. Seen IDs: ' + Object.keys(seen).join(', '));
+
   // Source 2: Live alerts (fill up to 15 if screener didn't have enough)
   // IMPORTANT: analyzeSinglePair_ is expensive (~2-5s each), so enforce time budget
   if (candidates.length < 15) {
@@ -4718,13 +4737,16 @@ function buildCandidatePool_(ss, histMap, startTime, maxMs, relaxed) {
         delete alerts._allPairs;
         for (var a = 0; a < alerts.length; a++) {
           // Check time budget before each expensive analyzeSinglePair_ call
-          if (new Date().getTime() - startTime > CANDIDATE_TIME_BUDGET) break;
+          if (new Date().getTime() - startTime > CANDIDATE_TIME_BUDGET) {
+            Logger.log('ModelPortfolio: Source 2 per-alert time budget hit at ' + ((new Date().getTime() - startTime)/1000).toFixed(1) + 's, candidates so far: ' + candidates.length + ', alerts remaining: ' + (alerts.length - a));
+            break;
+          }
           var alert = alerts[a];
           var aid = cleanId(alert.id);
-          if (seen[aid]) continue;
+          if (seen[aid]) { Logger.log('CANDIDATE SKIP [seen]: ' + alert.id + ' — already in pool'); continue; }
           var aTa = String(alert.tA || '').trim().toUpperCase();
           var aTb = String(alert.tB || '').trim().toUpperCase();
-          if (!histMap[aTa] || !histMap[aTb]) continue;
+          if (!histMap[aTa] || !histMap[aTb]) { Logger.log('CANDIDATE SKIP [histMap-S2]: ' + alert.id + ' — ' + aTa + '/' + aTb + ' missing from TickerHistory'); continue; }
           seen[aid] = true;
           var aZ = parseFloat(alert.z) || 0;
           var aEp = parseFloat(alert.expProfit) || 0;
@@ -4744,9 +4766,9 @@ function buildCandidatePool_(ss, histMap, startTime, maxMs, relaxed) {
                 var lWiden = (lm.badScenario) ? lm.badScenario.wideningProb : 0;
                 var lMae = (lm.badScenario) ? lm.badScenario.avgMae : 0;
                 var lp75 = (lm.badScenario) ? lm.badScenario.p75Mae : 0;
-                if (lwr30 < wrGate2) continue; // Apply hard gate (relaxed-aware)
-                if (!relaxed && lep30 <= 0) continue; // Reject negative EP
-                if (relaxed && lep30 < -0.5) continue;
+                if (lwr30 < wrGate2) { Logger.log('CANDIDATE SKIP [WR gate-S2]: ' + alert.id + ' — lwr30=' + lwr30 + ' < ' + wrGate2); continue; }
+                if (!relaxed && lep30 <= 0) { Logger.log('CANDIDATE SKIP [EP gate-S2]: ' + alert.id + ' — lep30=' + lep30 + ' (strict)'); continue; }
+                if (relaxed && lep30 < -0.5) { Logger.log('CANDIDATE SKIP [EP gate-S2]: ' + alert.id + ' — lep30=' + lep30 + ' (relaxed)'); continue; }
                 var aScore = computeCandidateScore_(lwr30, lep30, lWiden, aZ, lMae, lp75);
                 // Anti-overfitting: dampen suspiciously high win rates
                 if (lwr30 > SUSPICIOUS_WR_THRESHOLD) aScore *= SUSPICIOUS_WR_MULT;
@@ -4759,11 +4781,11 @@ function buildCandidatePool_(ss, histMap, startTime, maxMs, relaxed) {
                   qualityScore: aScore
                 });
               }
-            } catch (e) { /* skip pair if analysis fails */ }
+            } catch (e) { Logger.log('CANDIDATE SKIP [analyzeFail]: ' + alert.id + ' — ' + e.message + ' | stack: ' + (e.stack || '').substring(0, 200)); }
           }
           if (candidates.length >= 15) break;
         }
-      } catch (e) { /* skip mode if error */ }
+      } catch (e) { Logger.log('CANDIDATE SKIP [modeFail]: mode=' + modes[m] + ' — ' + e.message + ' | stack: ' + (e.stack || '').substring(0, 200)); }
       if (candidates.length >= 15) break;
     }
   }
@@ -4773,6 +4795,7 @@ function buildCandidatePool_(ss, histMap, startTime, maxMs, relaxed) {
   // quality and return the full pool (capped at 15 upstream).
   candidates.sort(function(a, b) { return b.qualityScore - a.qualityScore; });
   Logger.log('ModelPortfolio: ' + candidates.length + ' candidates passing quality gates');
+  Logger.log('ModelPortfolio: Final candidate list: ' + candidates.map(function(c) { return c.id + '(wr=' + c.wr30 + ',ep=' + c.ep30 + ',q=' + c.qualityScore.toFixed(1) + ')'; }).join(' | '));
   return candidates;
 }
 
@@ -5086,9 +5109,9 @@ function precomputeCrossPairMetrics_(candidates, histMap, startTime, deadlineMs)
       computed++;
     }
   }
-  if (skippedTimeout > 0) {
-    Logger.log('ModelPortfolio: Stage 2b computed ' + computed + '/' + (n * n) + ' cross-pairs (' + skippedTimeout + ' skipped due to timeout)');
-  }
+  // Always log Stage 2b summary (not just on timeout)
+  var nullCounts = crossMetrics.map(function(row, i) { var nulls = 0; for (var j = 0; j < row.length; j++) { if (!row[j]) nulls++; } return nulls; });
+  Logger.log('ModelPortfolio: Stage 2b computed ' + computed + '/' + (n * n) + ' cross-pairs (' + skippedTimeout + ' skipped due to timeout). Null counts per row: [' + nullCounts.join(',') + ']');
   return crossMetrics;
 }
 
