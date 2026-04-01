@@ -2290,6 +2290,8 @@ function saveTradeToSheet(trade) {
   var sheet = ss.getSheetByName('OpenTrades');
   if (!sheet) throw new Error('OpenTrades sheet not found. Run setupAllBatched() first.');
   var curZ = 0;
+  var liveMean = 0;
+  var liveStdev = 0;
   var cleanTradeId = cleanId(trade.id);
   var realId = trade.id;
   var foundPair = false;
@@ -2303,6 +2305,8 @@ function saveTradeToSheet(trade) {
     for (var i = 1; i < live.length; i++) {
       if (cleanId(live[i][0]) === cleanTradeId) {
         curZ = parseFloat(live[i][12]) || 0; // M: Z-Score
+        liveMean = parseFloat(live[i][10]) || 0; // K: Mean
+        liveStdev = parseFloat(live[i][11]) || 0; // L: StDev
         realId = live[i][0];
         foundPair = true;
         break;
@@ -2329,6 +2333,24 @@ function saveTradeToSheet(trade) {
       var avgPB = totalSB !== 0 ? ((oldPB * oldSB) + (newPB * newSB)) / totalSB : newPB;
       // Update existing row in-place (sheet rows are 1-indexed)
       sheet.getRange(i + 1, 3, 1, 4).setValues([[avgPA, avgPB, totalSA, totalSB]]);
+      // If existing trade has no exit targets but new trade does, populate them
+      var existingTargetZ = openData[i][9];
+      if ((existingTargetZ === '' || existingTargetZ === undefined || existingTargetZ === null) && trade.targetExitZ !== '') {
+        var scaleTargetExitZ = trade.targetExitZ !== '' ? parseFloat(trade.targetExitZ) || '' : '';
+        var scaleProfitCapPct = trade.profitCapturePct !== '' ? parseFloat(trade.profitCapturePct) || '' : '';
+        var scalePartialAt = trade.partialAtPct !== '' ? parseFloat(trade.partialAtPct) || '' : '';
+        var scaleSrcPortfolio = trade.sourcePortfolio !== '' ? trade.sourcePortfolio : '';
+        var scaleMaxHold = trade.maxHoldDays !== '' ? parseInt(trade.maxHoldDays) || '' : '';
+        // Compute targetPnL from live mean/stdev if profitCapturePct is set
+        var scaleTargetPnL = '';
+        if (scaleProfitCapPct !== '' && scaleProfitCapPct > 0) {
+          var entrySpr = avgPA - avgPB;
+          var avgShares = (Math.abs(totalSA) + Math.abs(totalSB)) / 2;
+          var theorMax = Math.abs(entrySpr - liveMean) * avgShares;
+          scaleTargetPnL = Math.round(theorMax * (scaleProfitCapPct / 100) * 100) / 100;
+        }
+        sheet.getRange(i + 1, 10, 1, 6).setValues([[scaleTargetExitZ, scaleProfitCapPct, scaleTargetPnL, scalePartialAt, scaleSrcPortfolio, scaleMaxHold]]);
+      }
       return true;
     }
   }
@@ -2337,10 +2359,26 @@ function saveTradeToSheet(trade) {
   //       TargetExitZ(J), ProfitCapturePct(K), TargetPnL(L), PartialAtPct(M), SourcePortfolio(N), MaxHoldDays(O)
   var targetExitZ = trade.targetExitZ !== '' ? parseFloat(trade.targetExitZ) || '' : '';
   var profitCapturePct = trade.profitCapturePct !== '' ? parseFloat(trade.profitCapturePct) || '' : '';
-  var targetPnL = trade.targetPnL !== '' ? parseFloat(trade.targetPnL) || '' : '';
   var partialAtPct = trade.partialAtPct !== '' ? parseFloat(trade.partialAtPct) || '' : '';
   var sourcePortfolio = trade.sourcePortfolio !== '' ? trade.sourcePortfolio : '';
   var maxHoldDays = trade.maxHoldDays !== '' ? parseInt(trade.maxHoldDays) || '' : '';
+  // Compute targetPnL from live mean/stdev (authoritative) — frontend value is a fallback
+  var targetPnL = '';
+  if (profitCapturePct !== '' && profitCapturePct > 0) {
+    var entryPriceA = parseMoney(trade.priceA);
+    var entryPriceB = parseMoney(trade.priceB);
+    var entrySizeA = parseMoney(trade.sizeA);
+    var entrySizeB = parseMoney(trade.sizeB);
+    var entrySpr = entryPriceA - entryPriceB;
+    var avgShares = (Math.abs(entrySizeA) + Math.abs(entrySizeB)) / 2;
+    var theoreticalMax = Math.abs(entrySpr - liveMean) * avgShares;
+    targetPnL = Math.round(theoreticalMax * (profitCapturePct / 100) * 100) / 100;
+    if (targetPnL <= 0) targetPnL = ''; // Don't set meaningless target
+  }
+  // Fallback: use frontend-computed targetPnL if backend couldn't compute
+  if ((targetPnL === '' || targetPnL === 0) && trade.targetPnL !== '' && parseFloat(trade.targetPnL) > 0) {
+    targetPnL = parseFloat(trade.targetPnL);
+  }
   sheet.appendRow([realId, curZ, trade.priceA, trade.priceB, trade.sizeA, trade.sizeB, new Date(), 0, 0,
                    targetExitZ, profitCapturePct, targetPnL, partialAtPct, sourcePortfolio, maxHoldDays]);
   return true;
