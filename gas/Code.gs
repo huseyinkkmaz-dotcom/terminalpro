@@ -4762,9 +4762,65 @@ function buildCandidatePool_(ss, histMap, startTime, maxMs, relaxed) {
     }
   }
 
-  // Sort by quality score descending
+  // ── Ticker deduplication: each ticker may only appear in ONE pair ──
+  // When multiple pairs share a ticker, keep only the best pair for that ticker.
+  // "Best" = composite of highest win rate, highest expected profit, lowest bad scenario.
   candidates.sort(function(a, b) { return b.qualityScore - a.qualityScore; });
-  return candidates;
+
+  var tickerBestPair = {};  // ticker → index of best pair that uses it
+  var dedupedIndices = [];  // indices into candidates[] that survive dedup
+  var rejected = {};        // index → true if pair was rejected
+
+  for (var di = 0; di < candidates.length; di++) {
+    var c = candidates[di];
+    var ta = String(c.tA).toUpperCase();
+    var tb = String(c.tB).toUpperCase();
+
+    // Check if either ticker is already claimed by a better pair
+    var conflictA = tickerBestPair[ta] !== undefined;
+    var conflictB = tickerBestPair[tb] !== undefined;
+
+    if (!conflictA && !conflictB) {
+      // Both tickers are free — claim them
+      tickerBestPair[ta] = di;
+      tickerBestPair[tb] = di;
+      dedupedIndices.push(di);
+    } else {
+      // At least one ticker is already taken — compare against the existing pair(s)
+      // and only replace if this pair is strictly better for that ticker
+      var conflictIdx = conflictA ? tickerBestPair[ta] : tickerBestPair[tb];
+      var existing = candidates[conflictIdx];
+
+      // Composite comparison: WR (40%), EP (40%), bad scenario (20%, inverted)
+      var scoreNew = (c.wr30 || 0) * 0.4 + (c.ep30 || 0) * 10 * 0.4 + Math.max(0, 5 - (c.avgMae || 0)) * 0.2;
+      var scoreOld = (existing.wr30 || 0) * 0.4 + (existing.ep30 || 0) * 10 * 0.4 + Math.max(0, 5 - (existing.avgMae || 0)) * 0.2;
+
+      if (scoreNew > scoreOld) {
+        // New pair is better — evict the old pair and reclaim its tickers
+        var oldTa = String(existing.tA).toUpperCase();
+        var oldTb = String(existing.tB).toUpperCase();
+        rejected[conflictIdx] = true;
+        dedupedIndices = dedupedIndices.filter(function(idx) { return idx !== conflictIdx; });
+
+        // Release old pair's tickers (only if they pointed to the evicted pair)
+        if (tickerBestPair[oldTa] === conflictIdx) delete tickerBestPair[oldTa];
+        if (tickerBestPair[oldTb] === conflictIdx) delete tickerBestPair[oldTb];
+
+        // Claim tickers for new pair
+        tickerBestPair[ta] = di;
+        tickerBestPair[tb] = di;
+        dedupedIndices.push(di);
+      }
+      // else: existing pair is better, skip this candidate
+    }
+  }
+
+  var deduped = dedupedIndices.map(function(idx) { return candidates[idx]; });
+  Logger.log('ModelPortfolio: Deduped candidates from ' + candidates.length + ' to ' + deduped.length + ' (unique tickers)');
+
+  // Sort deduped by quality score descending
+  deduped.sort(function(a, b) { return b.qualityScore - a.qualityScore; });
+  return deduped;
 }
 
 /**
@@ -5106,7 +5162,7 @@ function exhaustivePortfolioSearch_(candidates, crossMetrics, corrMatrix, k, sta
   var evalCount = 0;
 
   // ── Tunable constants ──
-  var MAX_TICKER_EXPOSURE = 2;  // max times a single ticker can appear in one portfolio
+  var MAX_TICKER_EXPOSURE = 1;  // each ticker can only appear once per portfolio
   var PORTFOLIO_WR_CEILING = 90; // blended WR above this gets skepticism discount
 
   // Generate all C(n, k) combinations iteratively using an index array
