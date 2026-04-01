@@ -734,8 +734,15 @@ th .th-hint{font-weight:400;font-size:8px;letter-spacing:0;text-transform:none;c
 <button id="mpRunBtn" onclick="runModelPortfolioGen()" style="background:linear-gradient(135deg,#a855f7,#6366f1);color:white;border:none;padding:10px 22px;border-radius:6px;font-size:10px;font-weight:900;cursor:pointer;text-transform:uppercase;letter-spacing:1px;transition:opacity .15s" onmouseenter="this.style.opacity='0.85'" onmouseleave="this.style.opacity='1'">Generate Now</button>
 </div>
 </div>
-<div style="font-size:11px;color:var(--subtext);margin-bottom:20px;line-height:1.6;padding:12px 16px;background:rgba(168,85,247,.04);border:1px solid rgba(168,85,247,.15);border-radius:8px">
-Mathematically optimized baskets built from pre-screened alert pairs. Uses <strong style="color:var(--text)">spread correlation analysis</strong> and <strong style="color:var(--text)">greedy diversification</strong> to find 10 portfolios with the best blend of win rate, expected profit, and low correlation. Updated daily at 10 AM (after screener).
+<div style="display:flex;gap:12px;margin-bottom:20px;flex-wrap:wrap;align-items:stretch">
+<div style="flex:1;font-size:11px;color:var(--subtext);line-height:1.6;padding:12px 16px;background:rgba(168,85,247,.04);border:1px solid rgba(168,85,247,.15);border-radius:8px">
+Optimized baskets from <strong style="color:var(--text)">sweep-validated backtest data</strong> + live alerts. Scoring prioritizes <strong style="color:var(--text)">30-day reversion speed</strong>, sample-size confidence, win rate, and expected profit. Updated daily at 10 AM.
+</div>
+<div style="display:flex;flex-direction:column;gap:6px;padding:12px 16px;background:rgba(168,85,247,.04);border:1px solid rgba(168,85,247,.15);border-radius:8px;min-width:220px">
+<label style="font-size:8px;font-weight:900;color:var(--subtext);text-transform:uppercase;letter-spacing:1px">Exclude Tickers</label>
+<input id="mpExcludeTickers" type="text" placeholder="e.g. BAC-B, PSA-F" style="background:var(--bg);border:1px solid var(--border);color:var(--text);padding:6px 10px;border-radius:4px;font-size:11px;font-family:JetBrains Mono,monospace;outline:none" />
+<div style="font-size:9px;color:var(--subtext)">Comma-separated. Pairs with these tickers will be excluded.</div>
+</div>
 </div>
 <div id="mpLoading" style="display:none;text-align:center;padding:40px;color:var(--subtext);font-size:11px">Generating model portfolios... analyzing correlations and building optimal baskets.</div>
 <div id="mpEmpty" style="display:none;text-align:center;padding:60px 20px">
@@ -1319,7 +1326,10 @@ async function runModelPortfolioGen(){
   document.getElementById('mpEmpty').style.display='none';
   document.getElementById('mpGrid').style.display='none';
   try{
-    var data=await apiGet('runModelPortfolios',{},300000);
+    var params={};
+    var excludeInput=document.getElementById('mpExcludeTickers');
+    if(excludeInput&&excludeInput.value.trim()){params.exclude=excludeInput.value.trim();}
+    var data=await apiGet('runModelPortfolios',params,300000);
     if(data&&data.ok&&data.modelPortfolios){
       if(data.modelPortfolios.generationError){
         console.warn('[TerminalPro] Generation error:',data.modelPortfolios.generationError);
@@ -1380,10 +1390,14 @@ function renderModelPortfolios(mp){
     // Header metrics
     var sp=parseFloat(p.stagnantRate)||Math.max(0,100-wr-wp);
     var spClr=sp>40?'var(--yellow)':sp>20?'var(--subtext)':'var(--low)';
-    h+='<div style="display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-bottom:16px">';
+    var ad=parseFloat(p.avgDaysToRevert)||0;
+    var adClr=ad>0&&ad<=30?'var(--low)':ad<=60?'var(--yellow)':'var(--high)';
+    if(ad===0) adClr='var(--subtext)';
+    h+='<div style="display:grid;grid-template-columns:repeat(6,1fr);gap:10px;margin-bottom:16px">';
     h+='<div style="text-align:center"><div style="font-size:8px;font-weight:900;color:var(--subtext);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">Basket Z</div><div style="font-family:JetBrains Mono;font-size:18px;font-weight:900;color:'+bzClr+'">'+bz.toFixed(2)+'&sigma;</div></div>';
     h+='<div style="text-align:center"><div style="font-size:8px;font-weight:900;color:var(--subtext);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">WR (30d)</div><div style="font-family:JetBrains Mono;font-size:18px;font-weight:900;color:'+wrClr+'">'+wr.toFixed(0)+'%</div></div>';
     h+='<div style="text-align:center"><div style="font-size:8px;font-weight:900;color:var(--subtext);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">Exp. Profit</div><div style="font-family:JetBrains Mono;font-size:18px;font-weight:900;color:var(--low)">$'+ep.toFixed(2)+'</div></div>';
+    h+='<div style="text-align:center"><div style="font-size:8px;font-weight:900;color:var(--subtext);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">Avg Days</div><div style="font-family:JetBrains Mono;font-size:18px;font-weight:900;color:'+adClr+'">'+(ad>0?ad.toFixed(0)+'d':'—')+'</div></div>';
     h+='<div style="text-align:center"><div style="font-size:8px;font-weight:900;color:var(--subtext);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">Widen Prob</div><div style="font-family:JetBrains Mono;font-size:18px;font-weight:900;color:'+wpClr+'">'+wp.toFixed(0)+'%</div></div>';
     h+='<div style="text-align:center"><div style="font-size:8px;font-weight:900;color:var(--subtext);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">Stagnant</div><div style="font-family:JetBrains Mono;font-size:18px;font-weight:900;color:'+spClr+'">'+sp.toFixed(0)+'%</div></div>';
     h+='</div>';
@@ -1434,6 +1448,7 @@ function renderModelPortfolios(mp){
     h+='<th style="text-align:center;padding:6px 8px;font-size:8px;font-weight:900;color:var(--subtext);text-transform:uppercase">Sector</th>';
     h+='<th style="text-align:center;padding:6px 8px;font-size:8px;font-weight:900;color:var(--subtext);text-transform:uppercase">Z-Score</th>';
     h+='<th style="text-align:center;padding:6px 8px;font-size:8px;font-weight:900;color:var(--subtext);text-transform:uppercase">WR(30d)</th>';
+    h+='<th style="text-align:center;padding:6px 8px;font-size:8px;font-weight:900;color:var(--subtext);text-transform:uppercase">Avg Days</th>';
     h+='<th style="text-align:center;padding:6px 8px;font-size:8px;font-weight:900;color:var(--subtext);text-transform:uppercase">Opt Entry/Exit</th>';
     h+='<th style="text-align:center;padding:6px 8px;font-size:8px;font-weight:900;color:var(--subtext);text-transform:uppercase">Direction</th>';
     h+='</tr></thead><tbody>';
@@ -1451,6 +1466,11 @@ function renderModelPortfolios(mp){
       h+='<td style="padding:8px;text-align:center;font-size:10px;color:var(--subtext)">'+(pr.sector||'—')+'</td>';
       h+='<td style="padding:8px;text-align:center;font-family:JetBrains Mono;font-weight:900;color:'+pzClr+'">'+pz.toFixed(2)+'&sigma;</td>';
       h+='<td style="padding:8px;text-align:center;font-family:JetBrains Mono;font-weight:900;color:'+pwrClr+'">'+pwr.toFixed(0)+'%</td>';
+      // Avg Days to Revert
+      var pDays=parseFloat(pr.avgDaysToRevert)||0;
+      var pDaysClr=pDays>0&&pDays<=30?'var(--low)':pDays<=60?'var(--yellow)':'var(--high)';
+      if(pDays===0) pDaysClr='var(--subtext)';
+      h+='<td style="padding:8px;text-align:center;font-family:JetBrains Mono;font-weight:700;font-size:10px;color:'+pDaysClr+'">'+(pDays>0?pDays.toFixed(0)+'d':'—')+'</td>';
       // Optimal entry/exit from mini-sweep
       if(pr.optEntry){
         var owr=parseFloat(pr.optWR)||0;

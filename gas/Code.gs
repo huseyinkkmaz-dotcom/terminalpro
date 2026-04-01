@@ -201,8 +201,10 @@ function doGet(e) {
       result = { ok: true, modelPortfolios: getModelPortfolios_() };
     }
     else if (action === 'runModelPortfolios') {
+      var excludeStr = (e && e.parameter && e.parameter.exclude) ? e.parameter.exclude : '';
+      var excludeTickers = excludeStr ? excludeStr.split(',').map(function(t) { return t.trim().toUpperCase(); }).filter(function(t) { return t.length > 0; }) : [];
       var genError = null;
-      try { runModelPortfolioGenerator(); } catch (genErr) { genError = genErr.toString(); }
+      try { runModelPortfolioGenerator(excludeTickers); } catch (genErr) { genError = genErr.toString(); }
       var mpResult = getModelPortfolios_();
       mpResult.generationError = genError;
       result = { ok: true, modelPortfolios: mpResult };
@@ -4464,6 +4466,7 @@ function getModelPortfolios_() {
           metrics: m,
           profitCapture: m.profitCapture != null ? m.profitCapture : null,
           kellySizing: m.kellySizing || null,
+          avgDaysToRevert: m.avgDaysToRevert || 0,
           updatedAt: r[9] || ''
         });
       } catch (e) { continue; }
@@ -4520,18 +4523,19 @@ function buildWebCachePriceMap_(ss) {
  * Main generator — called by daily trigger or on-demand via API.
  * Writes up to 10 model portfolios to ModelPortfolioCache sheet.
  */
-function runModelPortfolioGenerator() {
+function runModelPortfolioGenerator(excludeTickers) {
   var startTime = new Date().getTime();
   var MAX_MS = 240000; // 4 min safety
+  excludeTickers = excludeTickers || [];
   try {
     var ss = SpreadsheetApp.getActive();
     var histMap = readTickerHistMap_(ss);
 
-    // ── STAGE 1: Candidate selection ──
-    var candidates = buildCandidatePool_(ss, histMap, startTime, MAX_MS);
+    // ── STAGE 1: Candidate selection (SweepCache + Alerts, merged) ──
+    var candidates = buildCandidatePool_(ss, histMap, startTime, MAX_MS, false, excludeTickers);
     if (candidates.length < 3) {
       Logger.log('ModelPortfolio: Only ' + candidates.length + ' candidates with strict gates, retrying with relaxed gates...');
-      candidates = buildCandidatePool_(ss, histMap, startTime, MAX_MS, true);
+      candidates = buildCandidatePool_(ss, histMap, startTime, MAX_MS, true, excludeTickers);
     }
     if (candidates.length < 2) {
       Logger.log('ModelPortfolio: Only ' + candidates.length + ' candidates even with relaxed gates. Aborting.');
@@ -4606,6 +4610,11 @@ function runModelPortfolioGenerator() {
           mpPair.optAvgPnl = sweep.optAvgPnl;
           mpPair.optTrades = sweep.optTrades;
           mpPair.optProfitFactor = sweep.optProfitFactor;
+          mpPair.optAvgHold = sweep.optAvgHold || 0;
+          // Update avgDaysToRevert from mini-sweep if candidate didn't have it
+          if ((!mpPair.avgDaysToRevert || mpPair.avgDaysToRevert === 0) && sweep.optAvgHold > 0) {
+            mpPair.avgDaysToRevert = sweep.optAvgHold;
+          }
         } else {
           var absZ = Math.abs(parseFloat(mpPair.z) || 2.0);
           mpPair.optEntry = Math.max(1.5, Math.round(absZ * 10) / 10);
@@ -4644,198 +4653,244 @@ function runModelPortfolioGenerator() {
  * Stage 1: Build candidate pool from ScreenerCache + live alerts.
  * Returns up to 15 candidates sorted by composite quality score.
  */
-function buildCandidatePool_(ss, histMap, startTime, maxMs, relaxed) {
+/**
+ * Build candidate pool by merging two data sources:
+ *   Source 1: SweepCache (pre-computed optimal entry/exit sweeps with trades, WR, EP, avgHold)
+ *   Source 2: Market Alerts (all currently dislocated pairs with |Z| >= 1.8)
+ *
+ * Sweep-validated pairs dominate because they carry real backtest metrics (trades, avgHold)
+ * which feed the confidence multiplier. Alert-only pairs enter with zero confidence.
+ *
+ * @param {Spreadsheet} ss
+ * @param {Object} histMap - ticker → price array
+ * @param {number} startTime - epoch ms
+ * @param {number} maxMs - total time budget
+ * @param {boolean} relaxed - lower WR/EP gates
+ * @param {Array} excludeTickers - tickers to exclude (uppercase)
+ */
+function buildCandidatePool_(ss, histMap, startTime, maxMs, relaxed, excludeTickers) {
   var candidates = [];
   var seen = {};
-  var CANDIDATE_TIME_BUDGET = maxMs * 0.4; // Use at most 40% of total budget for candidates
+  excludeTickers = excludeTickers || [];
 
-  // ── Anti-overfitting constants for candidate screening ──
-  var SUSPICIOUS_WR_THRESHOLD = 95; // WR above this gets dampened (likely overfit)
-  var SUSPICIOUS_WR_MULT = 0.6;     // dampening multiplier for suspicious WR
-  var MIN_TRIGGERS = 1;             // minimum historical trigger signals required
+  // ── Anti-overfitting constants ──
+  var SUSPICIOUS_WR_THRESHOLD = 95;
+  var SUSPICIOUS_WR_MULT = 0.6;
+  var wrGate = relaxed ? 15 : 30;
 
-  // Source 1: ScreenerCache (pre-analyzed with win rates + MAE)
+  // ── Helper: check if pair contains excluded ticker ──
+  function isExcluded(tA, tB) {
+    if (excludeTickers.length === 0) return false;
+    for (var i = 0; i < excludeTickers.length; i++) {
+      if (tA === excludeTickers[i] || tB === excludeTickers[i]) return true;
+    }
+    return false;
+  }
+
+  // ── Pre-load sector map from WebCache/WebCacheCredit ──
+  var sectorMap = {};
+  var cacheNames = ['WebCache', 'WebCacheCredit'];
+  for (var cn = 0; cn < cacheNames.length; cn++) {
+    var cacheSheet = ss.getSheetByName(cacheNames[cn]);
+    if (cacheSheet && cacheSheet.getLastRow() > 1) {
+      var cacheData = cacheSheet.getDataRange().getValues();
+      for (var ci = 1; ci < cacheData.length; ci++) {
+        var cacheId = cleanId(cacheData[ci][0]);
+        if (cacheId) sectorMap[cacheId] = String(cacheData[ci][15] || '');
+      }
+    }
+  }
+
+  // ── Source 1: SweepCache (backtest-validated pairs with real trades/avgHold) ──
+  var sweepPairs = readSweepCache_(ss);
+  Logger.log('ModelPortfolio: SweepCache has ' + sweepPairs.length + ' pairs');
+
+  for (var si = 0; si < sweepPairs.length; si++) {
+    var sp = sweepPairs[si];
+    var spTA = String(sp.tA).toUpperCase().trim();
+    var spTB = String(sp.tB).toUpperCase().trim();
+    if (isExcluded(spTA, spTB)) { Logger.log('CANDIDATE SKIP [excluded]: ' + sp.id); continue; }
+    if (!histMap[spTA] || !histMap[spTB]) { Logger.log('CANDIDATE SKIP [histMap]: ' + sp.id); continue; }
+
+    var spCid = cleanId(sp.id);
+    if (seen[spCid]) continue;
+    seen[spCid] = true;
+
+    var spWr = sp.winRate || 0;
+    var spEp = sp.avgPnl || 0;
+    var spTrades = sp.trades || 0;
+    var spAvgHold = sp.avgHold || 0;
+
+    // Hard gates
+    if (spWr < wrGate) { Logger.log('CANDIDATE SKIP [WR gate]: ' + sp.id + ' — wr=' + spWr); continue; }
+    if (!relaxed && spEp <= 0) { Logger.log('CANDIDATE SKIP [EP gate]: ' + sp.id + ' — ep=' + spEp); continue; }
+    if (relaxed && spEp < -0.5) { Logger.log('CANDIDATE SKIP [EP gate]: ' + sp.id + ' — ep=' + spEp); continue; }
+
+    var spSector = sp.sector || sectorMap[spCid] || '';
+    var spZ = sp.currentZ || 0;
+
+    // Score with new formula (includes trades + avgDays for confidence + time bias)
+    var qualityScore = computeCandidateScore_(spWr, spEp, 0, spZ, 0, 0, spTrades, spAvgHold);
+    if (spWr > SUSPICIOUS_WR_THRESHOLD) qualityScore *= SUSPICIOUS_WR_MULT;
+
+    candidates.push({
+      id: sp.id, tA: sp.tA, tB: sp.tB, mode: sp.mode, sector: spSector,
+      z: spZ, wr30: spWr, wr60: 0, wr90: 0,
+      ep30: spEp, ep60: 0, widenProb: 0,
+      avgMae: 0, p75Mae: 0,
+      trades: spTrades, avgDaysToRevert: spAvgHold,
+      optEntry: sp.optimalEntryZ, optExit: sp.optimalExitZ,
+      profitFactor: sp.profitFactor,
+      qualityScore: qualityScore
+    });
+  }
+
+  Logger.log('ModelPortfolio: SweepCache yielded ' + candidates.length + ' candidates. Seen IDs: ' + Object.keys(seen).join(', '));
+
+  // ── Source 2: Market Alerts (all pairs with |Z| >= 1.8, enrich with ScreenerCache if available) ──
+  // Also load ScreenerCache for enrichment (WR, EP, MAE data for alert pairs)
+  var screenerMap = {};
   var scrSheet = ss.getSheetByName('ScreenerCache');
   if (scrSheet && scrSheet.getLastRow() > 1) {
     var scrData = scrSheet.getDataRange().getValues();
-    for (var i = 1; i < scrData.length; i++) {
-      var r = scrData[i];
-      var id = String(r[0] || '').trim();
-      if (!id) continue;
-      var tA = String(r[1] || '').trim();
-      var tB = String(r[2] || '').trim();
-      // Need both tickers in histMap
-      if (!histMap[tA.toUpperCase()] || !histMap[tB.toUpperCase()]) {
-        Logger.log('CANDIDATE SKIP [histMap]: ' + id + ' — ' + tA + '/' + tB + ' missing from TickerHistory');
-        continue;
+    for (var sci = 1; sci < scrData.length; sci++) {
+      var scrId = cleanId(scrData[sci][0]);
+      if (scrId) {
+        screenerMap[scrId] = {
+          wr30: parseFloat(scrData[sci][6]) || 0,
+          wr60: parseFloat(scrData[sci][7]) || 0,
+          wr90: parseFloat(scrData[sci][8]) || 0,
+          avgMae: parseFloat(scrData[sci][9]) || 0,
+          p75Mae: parseFloat(scrData[sci][10]) || 0,
+          widenProb: parseFloat(scrData[sci][11]) || 0,
+          triggers: parseInt(scrData[sci][12]) || 0,
+          ep30: parseFloat(scrData[sci][13]) || 0,
+          ep60: parseFloat(scrData[sci][14]) || 0
+        };
       }
-      var cid = cleanId(id);
-      if (seen[cid]) continue;
-      seen[cid] = true;
-      var wr30 = parseFloat(r[6]) || 0;
-      var wr60 = parseFloat(r[7]) || 0;
-      var wr90 = parseFloat(r[8]) || 0;
-      var avgMae = parseFloat(r[9]) || 0;
-      var p75Mae = parseFloat(r[10]) || 0;
-      var widenProb = parseFloat(r[11]) || 0;
-      var ep30 = parseFloat(r[13]) || 0;
-      var ep60 = parseFloat(r[14]) || 0;
-      var z = parseFloat(r[4]) || 0;
-      var triggers = parseInt(r[12]) || 0;
-      // Anti-overfitting: reject candidates with too few historical trigger signals
-      if (triggers < MIN_TRIGGERS) {
-        Logger.log('CANDIDATE SKIP [triggers]: ' + id + ' — triggers=' + triggers + ' < ' + MIN_TRIGGERS);
-        continue;
-      }
-      // Hard gate: reject candidates with poor win rates (relaxed mode lowers threshold)
-      var wrGate = relaxed ? 15 : 30;
-      if (wr30 < wrGate) {
-        Logger.log('CANDIDATE SKIP [WR gate]: ' + id + ' — wr30=' + wr30 + ' < ' + wrGate);
-        continue;
-      }
-      // Hard gate: reject candidates with negative 30d expected profit (relaxed allows ~zero)
-      if (!relaxed && ep30 <= 0) {
-        Logger.log('CANDIDATE SKIP [EP gate]: ' + id + ' — ep30=' + ep30 + ' (strict mode)');
-        continue;
-      }
-      if (relaxed && ep30 < -0.5) {
-        Logger.log('CANDIDATE SKIP [EP gate]: ' + id + ' — ep30=' + ep30 + ' (relaxed mode)');
-        continue;
-      }
-      var mode = String(r[3] || 'intra');
-      var sector = '';
-
-      // Look up sector from WebCache/WebCacheCredit
-      var cacheName = (mode === 'credit') ? 'WebCacheCredit' : 'WebCache';
-      var cacheSheet = ss.getSheetByName(cacheName);
-      if (cacheSheet && cacheSheet.getLastRow() > 1) {
-        var cacheData = cacheSheet.getDataRange().getValues();
-        for (var ci = 1; ci < cacheData.length; ci++) {
-          if (cleanId(cacheData[ci][0]) === cid) {
-            sector = String(cacheData[ci][15] || '');
-            break;
-          }
-        }
-      }
-
-      // Composite quality score for ranking (uses 30d win rate and expected profit)
-      var qualityScore = computeCandidateScore_(wr30, ep30, widenProb, z, avgMae, p75Mae);
-      // Anti-overfitting: dampen suspiciously high win rates (likely curve-fitted)
-      if (wr30 > SUSPICIOUS_WR_THRESHOLD) qualityScore *= SUSPICIOUS_WR_MULT;
-
-      candidates.push({
-        id: id, tA: tA, tB: tB, mode: mode, sector: sector,
-        z: z, wr30: wr30, wr60: wr60, wr90: wr90,
-        ep30: ep30, ep60: ep60, widenProb: widenProb,
-        avgMae: avgMae, p75Mae: p75Mae,
-        qualityScore: qualityScore
-      });
     }
   }
 
-  Logger.log('ModelPortfolio: ScreenerCache yielded ' + candidates.length + ' candidates after filters. Seen IDs: ' + Object.keys(seen).join(', '));
+  var alertModes = ['intra', 'credit'];
+  for (var m = 0; m < alertModes.length; m++) {
+    try {
+      var alerts = getAlertData(alertModes[m]);
+      delete alerts._diag;
+      delete alerts._allPairs;
+      for (var a = 0; a < alerts.length; a++) {
+        var alert = alerts[a];
+        var aTA = String(alert.tA || '').trim().toUpperCase();
+        var aTB = String(alert.tB || '').trim().toUpperCase();
+        if (isExcluded(aTA, aTB)) continue;
+        var aid = cleanId(alert.id);
+        if (seen[aid]) continue; // already from sweep
+        seen[aid] = true;
+        if (!histMap[aTA] || !histMap[aTB]) continue;
 
-  // Source 2: Live alerts (fill up to 15 if screener didn't have enough)
-  // IMPORTANT: analyzeSinglePair_ is expensive (~2-5s each), so enforce time budget
-  if (candidates.length < 15) {
-    var modes = ['intra', 'credit'];
-    var wrGate2 = relaxed ? 15 : 30;
-    for (var m = 0; m < modes.length; m++) {
-      if (new Date().getTime() - startTime > CANDIDATE_TIME_BUDGET) {
-        Logger.log('ModelPortfolio: Candidate pool hit time budget at ' + candidates.length + ' candidates (Source 2, mode=' + modes[m] + ')');
-        break;
+        var aZ = parseFloat(alert.z) || 0;
+        var scr = screenerMap[aid] || null;
+
+        // If we have screener data, use it for WR/EP/MAE
+        var aWr = scr ? scr.wr30 : 0;
+        var aEp = scr ? scr.ep30 : (parseFloat(alert.expProfit) || 0);
+        var aWiden = scr ? scr.widenProb : 0;
+        var aP75 = scr ? scr.p75Mae : 0;
+        var aTrades = 0; // no backtest data — zero confidence
+        var aAvgDays = 0; // no reversion data
+
+        // Hard gates (alert-only pairs are held to same standard)
+        if (aWr < wrGate && aWr > 0) continue;
+        if (!relaxed && aEp <= 0 && aEp !== 0) continue;
+
+        var aSector = alert.sec || sectorMap[aid] || '';
+        var aScore = computeCandidateScore_(aWr, aEp, aWiden, aZ, 0, aP75, aTrades, aAvgDays);
+        if (aWr > SUSPICIOUS_WR_THRESHOLD) aScore *= SUSPICIOUS_WR_MULT;
+
+        candidates.push({
+          id: alert.id, tA: alert.tA, tB: alert.tB,
+          mode: alertModes[m], sector: aSector,
+          z: aZ, wr30: aWr, wr60: scr ? scr.wr60 : 0, wr90: scr ? scr.wr90 : 0,
+          ep30: aEp, ep60: scr ? scr.ep60 : 0, widenProb: aWiden,
+          avgMae: scr ? scr.avgMae : 0, p75Mae: aP75,
+          trades: aTrades, avgDaysToRevert: aAvgDays,
+          qualityScore: aScore
+        });
       }
-      try {
-        var alerts = getAlertData(modes[m]);
-        delete alerts._diag;
-        delete alerts._allPairs;
-        for (var a = 0; a < alerts.length; a++) {
-          // Check time budget before each expensive analyzeSinglePair_ call
-          if (new Date().getTime() - startTime > CANDIDATE_TIME_BUDGET) {
-            Logger.log('ModelPortfolio: Source 2 per-alert time budget hit at ' + ((new Date().getTime() - startTime)/1000).toFixed(1) + 's, candidates so far: ' + candidates.length + ', alerts remaining: ' + (alerts.length - a));
-            break;
-          }
-          var alert = alerts[a];
-          var aid = cleanId(alert.id);
-          if (seen[aid]) { Logger.log('CANDIDATE SKIP [seen]: ' + alert.id + ' — already in pool'); continue; }
-          var aTa = String(alert.tA || '').trim().toUpperCase();
-          var aTb = String(alert.tB || '').trim().toUpperCase();
-          if (!histMap[aTa] || !histMap[aTb]) { Logger.log('CANDIDATE SKIP [histMap-S2]: ' + alert.id + ' — ' + aTa + '/' + aTb + ' missing from TickerHistory'); continue; }
-          seen[aid] = true;
-          var aZ = parseFloat(alert.z) || 0;
-          var aEp = parseFloat(alert.expProfit) || 0;
-          // No screener data → run live analysis instead of fabricating estimates
-          var pA = parseFloat(alert.pA) || 0;
-          var pB = parseFloat(alert.pB) || 0;
-          if (pA > 0 && pB > 0) {
-            try {
-              var liveAnalysis = analyzeSinglePair_(alert.tA, alert.tB, pA, pB, aZ);
-              if (liveAnalysis && liveAnalysis.metrics) {
-                var lm = liveAnalysis.metrics;
-                var lwr30 = (lm.winRates && lm.winRates['30d']) ? lm.winRates['30d'].rate : 0;
-                var lwr60 = (lm.winRates && lm.winRates['60d']) ? lm.winRates['60d'].rate : 0;
-                var lwr90 = (lm.winRates && lm.winRates['90d']) ? lm.winRates['90d'].rate : 0;
-                var lep30 = (lm.rollingZ && lm.rollingZ['30d']) ? lm.rollingZ['30d'].expectedProfit : 0;
-                var lep60 = (lm.rollingZ && lm.rollingZ['60d']) ? lm.rollingZ['60d'].expectedProfit : 0;
-                var lWiden = (lm.badScenario) ? lm.badScenario.wideningProb : 0;
-                var lMae = (lm.badScenario) ? lm.badScenario.avgMae : 0;
-                var lp75 = (lm.badScenario) ? lm.badScenario.p75Mae : 0;
-                if (lwr30 < wrGate2) { Logger.log('CANDIDATE SKIP [WR gate-S2]: ' + alert.id + ' — lwr30=' + lwr30 + ' < ' + wrGate2); continue; }
-                if (!relaxed && lep30 <= 0) { Logger.log('CANDIDATE SKIP [EP gate-S2]: ' + alert.id + ' — lep30=' + lep30 + ' (strict)'); continue; }
-                if (relaxed && lep30 < -0.5) { Logger.log('CANDIDATE SKIP [EP gate-S2]: ' + alert.id + ' — lep30=' + lep30 + ' (relaxed)'); continue; }
-                var aScore = computeCandidateScore_(lwr30, lep30, lWiden, aZ, lMae, lp75);
-                // Anti-overfitting: dampen suspiciously high win rates
-                if (lwr30 > SUSPICIOUS_WR_THRESHOLD) aScore *= SUSPICIOUS_WR_MULT;
-                candidates.push({
-                  id: alert.id, tA: alert.tA, tB: alert.tB,
-                  mode: modes[m], sector: alert.sec || '',
-                  z: aZ, wr30: lwr30, wr60: lwr60, wr90: lwr90,
-                  ep30: lep30 || 0, ep60: lep60 || 0, widenProb: lWiden,
-                  avgMae: lMae, p75Mae: lp75,
-                  qualityScore: aScore
-                });
-              }
-            } catch (e) { Logger.log('CANDIDATE SKIP [analyzeFail]: ' + alert.id + ' — ' + e.message + ' | stack: ' + (e.stack || '').substring(0, 200)); }
-          }
-          if (candidates.length >= 15) break;
-        }
-      } catch (e) { Logger.log('CANDIDATE SKIP [modeFail]: mode=' + modes[m] + ' — ' + e.message + ' | stack: ' + (e.stack || '').substring(0, 200)); }
-      if (candidates.length >= 15) break;
-    }
+    } catch (e) { Logger.log('CANDIDATE SKIP [alertFail]: mode=' + alertModes[m] + ' — ' + e.message); }
   }
 
-  // Ticker uniqueness is enforced per-portfolio by MAX_TICKER_EXPOSURE=1 in
-  // exhaustivePortfolioSearch_, so no global dedup needed here. Just sort by
-  // quality and return the full pool (capped at 15 upstream).
   candidates.sort(function(a, b) { return b.qualityScore - a.qualityScore; });
-  Logger.log('ModelPortfolio: ' + candidates.length + ' candidates passing quality gates');
-  Logger.log('ModelPortfolio: Final candidate list: ' + candidates.map(function(c) { return c.id + '(wr=' + c.wr30 + ',ep=' + c.ep30 + ',q=' + c.qualityScore.toFixed(1) + ')'; }).join(' | '));
+  Logger.log('ModelPortfolio: ' + candidates.length + ' total candidates (sweep + alerts)');
+  Logger.log('ModelPortfolio: Final candidate list: ' + candidates.map(function(c) { return c.id + '(wr=' + c.wr30 + ',ep=' + c.ep30 + ',trades=' + c.trades + ',days=' + c.avgDaysToRevert + ',q=' + c.qualityScore.toFixed(1) + ')'; }).join(' | '));
   return candidates;
 }
 
 /**
  * Compute a 0-100 candidate quality score.
- * Weights: WR30(25%), EP30(25%), low widen(15%), |Z| magnitude(10%), low AvgMAE(10%), low P75MAE(15%)
- * All 5 target metrics are used: Win Rate, Expected Profit, Widen Prob (holding proxy), Avg MAE, P75 MAE.
- * P75 MAE (tail risk) is weighted heavily because it represents the worst-case drawdown scenario.
+ * New scoring: Time-to-Revert(20), WR(20, confidence-scaled), EP(20, confidence-scaled),
+ *              Sample Size Confidence(15), Widen(10), Tail Risk P75(10), |Z|(5)
+ *
+ * Key design decisions:
+ *   - 30d bias: pairs reverting in <30d are heavily rewarded
+ *   - Confidence scaling: WR/EP are dampened when trade count is low (anti-overfit)
+ *   - Speed without profit is worthless: fast reversion with EP<$0.20 gets clamped
+ *   - TC=10/WR=65%/EP=$0.50 > TC=2/WR=100%/EP=$1.00 (confidence wins)
+ *   - TC=2/WR=100%/EP=$1.00 > TC=30/WR=50%/EP=$0.12 (weak WR/EP still loses)
+ *
+ * @param {number} wr30 - 30-day win rate (0-100)
+ * @param {number} ep30 - 30-day expected profit (dollars per 100 shares)
+ * @param {number} widenProb - widening probability (0-100)
+ * @param {number} z - current Z-score
+ * @param {number} avgMae - average max adverse excursion (unused, kept for signature compat)
+ * @param {number} p75Mae - 75th percentile max adverse excursion
+ * @param {number} trades - number of historical trades (sample size)
+ * @param {number} avgDays - average days to revert (from sweep)
  */
-function computeCandidateScore_(wr30, ep30, widenProb, z, avgMae, p75Mae) {
-  // Normalize win rate: 50% = 0, 100% = 25, below 50% goes negative (penalty)
-  var wrScore = Math.min(25, (wr30 - 50) * 0.5);
-  // Normalize expected profit: negative EP = negative score (penalty), $0 = 0, $2+ = 25
-  // CRITICAL: Use signed ep30 — negative EP must penalize, not reward
-  var epScore = ep30 >= 0 ? Math.min(25, ep30 * 12.5) : Math.max(-25, ep30 * 12.5);
-  // Widen penalty: 0% widen = 15, 50%+ = 0 (proxy for holding period / stagnation risk)
-  var widenScore = Math.max(0, 15 - (widenProb * 0.3));
-  // Z magnitude: |Z| of 1.8 = 3, |Z| of 3.0 = 10 (reduced weight — extreme Z can be structural)
-  var zScore = Math.min(10, Math.max(0, (Math.abs(z) - 1.5) * 6.67));
-  // Avg MAE bonus: lower is better. 0 = 10, 2+ = 0
-  var maeScore = avgMae > 0 ? Math.max(0, 10 - avgMae * 5) : 5;
-  // P75 MAE penalty (tail risk): lower is better. 0 = 15, 3+ = 0
-  // This is the 75th percentile worst drawdown — critical for risk management
+function computeCandidateScore_(wr30, ep30, widenProb, z, avgMae, p75Mae, trades, avgDays) {
+  trades = trades || 0;
+  avgDays = avgDays || 0;
+
+  // ── Sample Size Confidence (15pts) ──
+  // Determines how much we trust WR/EP. Also provides a standalone score component.
+  var confidencePts = 0;
+  var confidenceMult = 0.07; // default for trades < 3
+  if (trades >= 10) { confidencePts = 15; confidenceMult = 1.0; }
+  else if (trades >= 8) { confidencePts = 12; confidenceMult = 0.85; }
+  else if (trades >= 5) { confidencePts = 8; confidenceMult = 0.65; }
+  else if (trades >= 3) { confidencePts = 4; confidenceMult = 0.35; }
+  else { confidencePts = 1; confidenceMult = 0.07; }
+
+  // ── Win Rate (20pts, confidence-scaled) ──
+  var rawWR = Math.min(20, Math.max(-10, (wr30 - 50) * 0.4));
+  var wrScore = rawWR * confidenceMult;
+
+  // ── Expected Profit (20pts, confidence-scaled) ──
+  var rawEP = ep30 >= 0 ? Math.min(20, ep30 * 10) : Math.max(-20, ep30 * 10);
+  var epScore = rawEP * confidenceMult;
+
+  // ── Time-to-Revert (20pts, 30d bias) ──
+  var timePts = 0;
+  if (avgDays > 0) {
+    if (avgDays <= 15) timePts = 20;
+    else if (avgDays <= 30) timePts = 16;
+    else if (avgDays <= 45) timePts = 10;
+    else if (avgDays <= 60) timePts = 5;
+    else timePts = 0;
+  }
+  // Speed without profit is worthless — clamp time bonus if EP too low
+  if (ep30 < 0.20) timePts = Math.min(timePts, 2);
+
+  // ── Widen Prob (10pts) ──
+  var widenScore = Math.max(0, 10 - (widenProb * 0.2));
+
+  // ── Tail Risk P75 MAE (10pts) ──
   var p75 = parseFloat(p75Mae) || 0;
-  var p75Score = p75 > 0 ? Math.max(0, 15 - p75 * 5) : 7.5;
-  return wrScore + epScore + widenScore + zScore + maeScore + p75Score;
+  var p75Score = p75 > 0 ? Math.max(0, 10 - p75 * 3.33) : 5;
+
+  // ── Z Magnitude (5pts) ──
+  var zScore = Math.min(5, Math.max(0, (Math.abs(z) - 1.5) * 3.33));
+
+  return confidencePts + wrScore + epScore + timePts + widenScore + p75Score + zScore;
 }
 
 /**
@@ -5152,28 +5207,8 @@ function exhaustivePortfolioSearch_(candidates, crossMetrics, corrMatrix, k, sta
   var evalCount = 0;
 
   // ── Tunable constants ──
-  // Dynamic ticker exposure: if a single ticker dominates >50% of candidates,
-  // allow it up to 2× per portfolio — otherwise strict 1× uniqueness.
-  var tickerCounts = {};
-  for (var tc = 0; tc < n; tc++) {
-    var tcA = String(candidates[tc].tA).toUpperCase().trim();
-    var tcB = String(candidates[tc].tB).toUpperCase().trim();
-    tickerCounts[tcA] = (tickerCounts[tcA] || 0) + 1;
-    tickerCounts[tcB] = (tickerCounts[tcB] || 0) + 1;
-  }
-  var maxTickerCount = 0;
-  var dominantTicker = '';
-  for (var tk in tickerCounts) {
-    if (tickerCounts[tk] > maxTickerCount) {
-      maxTickerCount = tickerCounts[tk];
-      dominantTicker = tk;
-    }
-  }
-  var concentrated = maxTickerCount > n * 0.5;
-  var MAX_TICKER_EXPOSURE = concentrated ? 2 : 1;
-  if (concentrated) {
-    Logger.log('ModelPortfolio: Ticker concentration detected — ' + dominantTicker + ' appears in ' + maxTickerCount + '/' + n + ' candidates. Relaxing MAX_TICKER_EXPOSURE to 2.');
-  }
+  // Hard ticker cap: max 2 occurrences of the same ticker per portfolio
+  var MAX_TICKER_EXPOSURE = 2;
   var PORTFOLIO_WR_CEILING = 90; // blended WR above this gets skepticism discount
 
   // Generate all C(n, k) combinations iteratively using an index array
@@ -5270,23 +5305,55 @@ function exhaustivePortfolioSearch_(candidates, crossMetrics, corrMatrix, k, sta
       }
       var avgCorr = corrCount > 0 ? parseFloat((avgCorrSum / corrCount).toFixed(3)) : 0;
 
-      // Risk-adjusted composite score (same formula as final ranking)
-      var wrPts = Math.min(25, (cmWR30 - 50) * 0.5);
-      var epNorm = cmEP30 / (kk * kk * 200); // normalize to per-share across k² cross-pairs
-      var epPts = Math.min(25, Math.max(-25, epNorm * 20));
-      var badAvgPts = cmBadAvg > 0 ? Math.max(0, 15 - cmBadAvg * 0.05) : 7.5;
-      var badP75Pts = cmBadP75 > 0 ? Math.max(0, 20 - cmBadP75 * 0.05) : 10;
-      var widenPts = Math.max(0, 15 - (cmWidenProb * 0.3));
-      // Mild bonus for low correlation — preferred stocks are naturally correlated,
-      // so we only lightly reward diversification (up to ~2.6 pts) and don't penalize
-      // typical correlation levels (0.5-0.7) that are normal for this asset class.
-      var corrBonus = Math.max(0, 2 * (1.3 - avgCorr));
-      // Soft scoring for 60d/90d horizons (not hard-gated, but rewarded/penalized)
+      // ── Portfolio combo scoring (matches candidate scoring philosophy) ──
+      // WR (20pts), EP (20pts), Time-to-Revert (20pts), Bad scenario (10+10pts),
+      // Widen (10pts), Sample confidence (10pts), Correlation (1pt max)
+      var wrPts = Math.min(20, Math.max(-10, (cmWR30 - 50) * 0.4));
+      var epNorm = cmEP30 / (kk * kk * 200);
+      var epPts = Math.min(20, Math.max(-20, epNorm * 15));
+
+      // Time-to-Revert from candidate avgDaysToRevert (portfolio avg)
+      var totalDays = 0, daysCount = 0;
+      for (var di = 0; di < kk; di++) {
+        var cDays = candidates[combo[di]].avgDaysToRevert || 0;
+        if (cDays > 0) { totalDays += cDays; daysCount++; }
+      }
+      var avgDaysCombo = daysCount > 0 ? totalDays / daysCount : 0;
+      var timePts = 0;
+      if (avgDaysCombo > 0) {
+        if (avgDaysCombo <= 15) timePts = 20;
+        else if (avgDaysCombo <= 30) timePts = 16;
+        else if (avgDaysCombo <= 45) timePts = 10;
+        else if (avgDaysCombo <= 60) timePts = 5;
+      }
+      // Clamp time bonus if EP too low
+      if (epNorm < 0.001) timePts = Math.min(timePts, 2);
+
+      // Sample confidence from candidate trade counts
+      var totalTrades = 0, tradesCt = 0;
+      for (var ti = 0; ti < kk; ti++) {
+        var cTrades = candidates[combo[ti]].trades || 0;
+        totalTrades += cTrades; tradesCt++;
+      }
+      var avgTrades = tradesCt > 0 ? totalTrades / tradesCt : 0;
+      var samplePts = 0;
+      if (avgTrades >= 10) samplePts = 10;
+      else if (avgTrades >= 8) samplePts = 8;
+      else if (avgTrades >= 5) samplePts = 5;
+      else if (avgTrades >= 3) samplePts = 3;
+      else samplePts = 1;
+
+      var badAvgPts = cmBadAvg > 0 ? Math.max(0, 10 - cmBadAvg * 0.03) : 5;
+      var badP75Pts = cmBadP75 > 0 ? Math.max(0, 10 - cmBadP75 * 0.03) : 5;
+      var widenPts = Math.max(0, 10 - (cmWidenProb * 0.2));
+      // Correlation: essentially a non-factor — max 1pt bonus, no penalty
+      var corrBonus = Math.max(0, 1 * (1.3 - avgCorr));
+      // Soft scoring for 60d/90d horizons
       var wr60Bonus = (cmWR60 >= 50) ? Math.min(3, (cmWR60 - 50) * 0.1) : (cmWR60 > 0 ? -2 : 0);
       var wr90Bonus = (cmWR90 >= 50) ? Math.min(3, (cmWR90 - 50) * 0.1) : (cmWR90 > 0 ? -2 : 0);
       var ep60Bonus = (cmEP60 > 0) ? Math.min(2, cmEP60 / (kk * kk * 200) * 5) : (cmEP60 < 0 ? -2 : 0);
       var ep90Bonus = (cmEP90 > 0) ? Math.min(2, cmEP90 / (kk * kk * 200) * 5) : (cmEP90 < 0 ? -2 : 0);
-      var score = wrPts + epPts + badAvgPts + badP75Pts + widenPts + corrBonus + wr60Bonus + wr90Bonus + ep60Bonus + ep90Bonus;
+      var score = wrPts + epPts + timePts + samplePts + badAvgPts + badP75Pts + widenPts + corrBonus + wr60Bonus + wr90Bonus + ep60Bonus + ep90Bonus;
 
       // ── Anti-overfitting: penalize suspiciously high blended win rates ──
       if (cmWR30 > PORTFOLIO_WR_CEILING) score *= 0.85;
@@ -5394,6 +5461,7 @@ function buildPortfolioFromCombo_(combo, candidates, corrMatrix, histMap) {
       z: c.z, wr30: c.wr30, wr60: c.wr60, ep30: c.ep30, ep60: c.ep60,
       widenProb: c.widenProb, qualityScore: c.qualityScore,
       avgMae: c.avgMae, p75Mae: c.p75Mae,
+      trades: c.trades || 0, avgDaysToRevert: c.avgDaysToRevert || 0,
       pA: parseFloat(priceA.toFixed(2)), pB: parseFloat(priceB.toFixed(2))
     });
     totalWr += c.wr30;
@@ -5406,6 +5474,14 @@ function buildPortfolioFromCombo_(combo, candidates, corrMatrix, histMap) {
 
   var m = combo.metrics;
   var nn = pairs.length || 1;
+
+  // Compute portfolio-level avg days to revert
+  var daysSum = 0, daysN = 0;
+  for (var di = 0; di < pairs.length; di++) {
+    if (pairs[di].avgDaysToRevert > 0) { daysSum += pairs[di].avgDaysToRevert; daysN++; }
+  }
+  var portfolioAvgDays = daysN > 0 ? parseFloat((daysSum / daysN).toFixed(1)) : 0;
+
   return {
     pairs: pairs,
     blendedWR: m.wr30,
@@ -5413,6 +5489,7 @@ function buildPortfolioFromCombo_(combo, candidates, corrMatrix, histMap) {
     widenProb: m.widenProb,
     stagnantRate: parseFloat((totalStagnant / nn).toFixed(1)),
     avgCorrelation: m.avgCorr,
+    avgDaysToRevert: portfolioAvgDays,
     sectorMix: sectorMix,
     basketZ: m.basketZ,
     rollingZ: {
@@ -5472,7 +5549,7 @@ function miniSweepSinglePair_(tA, tB, histMap, maxHold) {
     for (var xi = 0; xi < exitZValues.length; xi++) {
       var exitZ = exitZValues[xi];
       if (exitZ >= zThreshold) continue;
-      var trades = 0, wins = 0, totalPnl = 0, grossWin = 0, grossLoss = 0;
+      var trades = 0, wins = 0, totalPnl = 0, grossWin = 0, grossLoss = 0, holdSum = 0;
       var openEntry = null;
 
       for (var day = WINDOW; day < len; day++) {
@@ -5488,6 +5565,7 @@ function miniSweepSinglePair_(tA, tB, histMap, maxHold) {
             var pnl = ((pA[day] - openEntry.pA) * openEntry.dirA + (pB[day] - openEntry.pB) * openEntry.dirB) * 100;
             trades++;
             totalPnl += pnl;
+            holdSum += hold;
             if (pnl > 0) { wins++; grossWin += pnl; } else { grossLoss += Math.abs(pnl); }
             openEntry = null;
           }
@@ -5498,6 +5576,7 @@ function miniSweepSinglePair_(tA, tB, histMap, maxHold) {
       if (trades < MIN_SWEEP_TRADES) continue;
       var wr = parseFloat((wins / trades * 100).toFixed(1));
       var avgPnl = parseFloat((totalPnl / trades).toFixed(2));
+      var avgHold = parseFloat((holdSum / trades).toFixed(1));
       var pf = grossLoss > 0 ? parseFloat((grossWin / grossLoss).toFixed(2)) : 0;
 
       // Anti-overfitting: cap profit factor to prevent curve-fitted outliers
@@ -5515,7 +5594,8 @@ function miniSweepSinglePair_(tA, tB, histMap, maxHold) {
           optWR: wr,
           optAvgPnl: avgPnl,
           optTrades: trades,
-          optProfitFactor: pf
+          optProfitFactor: pf,
+          optAvgHold: avgHold
         };
       }
     }
@@ -5528,7 +5608,8 @@ function miniSweepSinglePair_(tA, tB, histMap, maxHold) {
     optWR: best.optWR,
     optAvgPnl: best.optAvgPnl,
     optTrades: best.optTrades,
-    optProfitFactor: best.optProfitFactor
+    optProfitFactor: best.optProfitFactor,
+    optAvgHold: best.optAvgHold || 0
   };
 }
 
@@ -5639,9 +5720,107 @@ function writeModelPortfolioCache_(ss, portfolios) {
       p.widenProb,
       JSON.stringify(p.sectorMix),
       p.avgCorrelation,
-      JSON.stringify({ rollingZ: p.rollingZ || {}, badScenario: p.badScenario || {}, profitCapture: p.profitCapture, kellySizing: p.kellySizing || null, crossMatrixWR: p.crossMatrixWR || {}, crossMatrixEP: p.crossMatrixEP || {} }),
+      JSON.stringify({ rollingZ: p.rollingZ || {}, badScenario: p.badScenario || {}, profitCapture: p.profitCapture, kellySizing: p.kellySizing || null, crossMatrixWR: p.crossMatrixWR || {}, crossMatrixEP: p.crossMatrixEP || {}, avgDaysToRevert: p.avgDaysToRevert || 0 }),
       ts
     ];
   });
   sheet.getRange(2, 1, rows.length, 10).setValues(rows);
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// SWEEP CACHE — daily pre-computation of optimal entry/exit sweeps
+// Runs runOptimalSweep_ for all alert pairs and caches results.
+// Decouples the expensive sweep from model portfolio generation.
+// ═══════════════════════════════════════════════════════════════════
+
+/**
+ * Daily trigger function (7:30 AM). Runs optimal sweep for all alert pairs
+ * and writes results to SweepCache sheet.
+ */
+function updateSweepCache() {
+  try {
+    var result = runOptimalSweep_(90, 'all');
+    if (!result || result.error) {
+      Logger.log('SweepCache: sweep returned error — ' + (result ? result.error : 'null'));
+      return;
+    }
+    var pairs = result.results || [];
+    if (pairs.length === 0) {
+      Logger.log('SweepCache: sweep returned 0 pairs');
+      return;
+    }
+    var ss = SpreadsheetApp.getActive();
+    writeSweepCache_(ss, pairs);
+    Logger.log('SweepCache: cached ' + pairs.length + ' sweep results');
+  } catch (e) {
+    Logger.log('SweepCache error: ' + e);
+  }
+}
+
+/**
+ * Write sweep results to SweepCache sheet.
+ * Columns: PairID | TickerA | TickerB | Mode | Sector | CurrentZ | OptEntry | OptExit | WinRate | Trades | AvgPnl | AvgHold | TotalPnl | ProfitFactor | UpdatedAt
+ */
+function writeSweepCache_(ss, pairs) {
+  var sheet = ss.getSheetByName('SweepCache');
+  if (!sheet) {
+    sheet = ss.insertSheet('SweepCache');
+    sheet.getRange(1, 1, 1, 15).setValues([['PairID', 'TickerA', 'TickerB', 'Mode', 'Sector', 'CurrentZ', 'OptEntry', 'OptExit', 'WinRate', 'Trades', 'AvgPnl', 'AvgHold', 'TotalPnl', 'ProfitFactor', 'UpdatedAt']]);
+  } else {
+    if (sheet.getLastRow() > 1) sheet.getRange(2, 1, sheet.getLastRow() - 1, 15).clearContent();
+  }
+  if (pairs.length === 0) return;
+  var ts = new Date().toISOString();
+  var rows = pairs.map(function(p) {
+    return [
+      p.id || '',
+      p.tA || '',
+      p.tB || '',
+      p.mode || 'intra',
+      p.sector || '',
+      p.currentZ || 0,
+      p.optimalEntryZ || 0,
+      p.optimalExitZ || 0,
+      p.winRate || 0,
+      p.trades || 0,
+      p.avgPnl || 0,
+      p.avgHold || 0,
+      p.totalPnl || 0,
+      p.profitFactor || 0,
+      ts
+    ];
+  });
+  sheet.getRange(2, 1, rows.length, 15).setValues(rows);
+}
+
+/**
+ * Read sweep cache into array of candidate objects.
+ */
+function readSweepCache_(ss) {
+  var sheet = ss.getSheetByName('SweepCache');
+  if (!sheet || sheet.getLastRow() <= 1) return [];
+  var data = sheet.getDataRange().getValues();
+  var results = [];
+  for (var i = 1; i < data.length; i++) {
+    var r = data[i];
+    var id = String(r[0] || '').trim();
+    if (!id) continue;
+    results.push({
+      id: id,
+      tA: String(r[1] || '').trim(),
+      tB: String(r[2] || '').trim(),
+      mode: String(r[3] || 'intra'),
+      sector: String(r[4] || ''),
+      currentZ: parseFloat(r[5]) || 0,
+      optimalEntryZ: parseFloat(r[6]) || 0,
+      optimalExitZ: parseFloat(r[7]) || 0,
+      winRate: parseFloat(r[8]) || 0,
+      trades: parseInt(r[9]) || 0,
+      avgPnl: parseFloat(r[10]) || 0,
+      avgHold: parseFloat(r[11]) || 0,
+      totalPnl: parseFloat(r[12]) || 0,
+      profitFactor: parseFloat(r[13]) || 0
+    });
+  }
+  return results;
 }
