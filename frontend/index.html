@@ -1030,6 +1030,17 @@ function computeSetupScore(r, maxEP) {
     // <45% win rate = no bonus (already risky)
   }
 
+  // 10b. Robustness modifier (-5 to +5): from screener anti-overfitting score
+  if (scr && scr.robustness !== undefined) {
+    if (scr.robustness >= 60) score += 5;          // high robustness = trusted signal
+    else if (scr.robustness >= 45) score += 2;      // moderate robustness
+    else if (scr.robustness < 25) score -= 5;        // low robustness = likely overfit
+    else if (scr.robustness < 35) score -= 2;        // below average
+    // Flag penalties from backend
+    if (scr.robustnessFlags && scr.robustnessFlags.indexOf('SUSPICIOUS_WR') !== -1) score -= 3;
+    if (scr.robustnessFlags && scr.robustnessFlags.indexOf('NOISE_LEVEL') !== -1) score -= 3;
+  }
+
   // 11. Regime awareness (0-3): if macro regime data is loaded
   if (window._regimeData && window._regimeData.regime) {
     var reg = window._regimeData.regime;
@@ -1044,6 +1055,73 @@ function computeSetupScore(r, maxEP) {
   return Math.max(0, Math.min(100, Math.round(score)));
 }
 function cleanIdFE(id) { return String(id).replace(/[^a-zA-Z0-9]/g, '').toUpperCase(); }
+// ── ROBUSTNESS HELPERS (frontend mirror of backend logic for display) ──
+function robGradeColor(grade) {
+  if (grade === 'A') return { c: 'var(--low)', bg: 'rgba(16,185,129,.12)', border: 'rgba(16,185,129,.4)' };
+  if (grade === 'B') return { c: 'var(--accent)', bg: 'rgba(14,165,233,.1)', border: 'rgba(14,165,233,.3)' };
+  if (grade === 'C') return { c: 'var(--yellow)', bg: 'rgba(245,158,11,.1)', border: 'rgba(245,158,11,.3)' };
+  if (grade === 'D') return { c: 'var(--high)', bg: 'rgba(239,68,68,.08)', border: 'rgba(239,68,68,.25)' };
+  return { c: 'var(--subtext)', bg: 'rgba(255,255,255,.04)', border: 'var(--border)' };
+}
+function robBadgeHtml(score, grade, flags, size) {
+  size = size || 'normal'; // 'normal' or 'small'
+  var rc = robGradeColor(grade);
+  var fs = size === 'small' ? '8px' : '9px';
+  var pad = size === 'small' ? '2px 5px' : '3px 7px';
+  var h = '<span style="display:inline-flex;align-items:center;gap:3px;font-size:'+fs+';font-weight:900;padding:'+pad+';border-radius:4px;background:'+rc.bg+';color:'+rc.c+';border:1px solid '+rc.border+'" title="Robustness: '+score+'/100';
+  if (flags && flags.length > 0) h += ' | Flags: ' + flags.join(', ');
+  h += '">R:'+score;
+  if (grade) h += '<span style="font-size:'+(size==='small'?'7':'8')+'px;opacity:.7">'+grade+'</span>';
+  h += '</span>';
+  return h;
+}
+// Compute robustness score in frontend (mirrors backend for real-time display)
+function computeRobustnessFE(trades, winRate, avgReward, avgLoss) {
+  var flags = [];
+  // Trade count (0-30)
+  var ts = 0;
+  if (trades >= 30) ts = 30;
+  else if (trades >= 20) ts = 25 + (trades - 20) / 10 * 5;
+  else if (trades >= 10) ts = 18 + (trades - 10) / 10 * 7;
+  else if (trades >= 8) ts = 14 + (trades - 8) / 2 * 4;
+  else if (trades >= 5) ts = 6 + (trades - 5) / 3 * 8;
+  else if (trades >= 3) ts = 2 + (trades - 3) / 2 * 4;
+  else ts = trades * 0.5;
+  if (trades < 5) flags.push('LOW_SAMPLE');
+  // Win rate (0-30)
+  var ws = 0;
+  if (winRate >= 55 && winRate <= 75) ws = 25 + (winRate - 55) / 20 * 5;
+  else if (winRate > 75 && winRate <= 85) ws = 25 - (winRate - 75) / 10 * 5;
+  else if (winRate > 85) { ws = 15 - (winRate - 85) / 15 * 10; if (winRate > 90) flags.push('SUSPICIOUS_WR'); }
+  else if (winRate >= 45) ws = 15 + (winRate - 45) / 10 * 10;
+  else ws = Math.max(0, winRate / 45 * 15);
+  var conf = trades >= 20 ? 1.0 : trades >= 10 ? 0.85 : trades >= 5 ? 0.65 : 0.35;
+  ws *= conf;
+  // Reward (0-30)
+  var rs = 0;
+  if (avgReward >= 3.0) rs = 30;
+  else if (avgReward >= 2.0) rs = 24 + (avgReward - 2.0) * 6;
+  else if (avgReward >= 1.0) rs = 16 + (avgReward - 1.0) * 8;
+  else if (avgReward >= 0.50) rs = 8 + (avgReward - 0.50) * 16;
+  else if (avgReward >= 0.25) rs = 3 + (avgReward - 0.25) * 20;
+  else rs = avgReward / 0.25 * 3;
+  if (avgReward < 0.25 && trades > 5) flags.push('LOW_REWARD');
+  // Synergy (0-10)
+  var tiers = [ts / 30, ws / 30, rs / 30];
+  var tierMin = Math.min.apply(null, tiers), tierMax = Math.max.apply(null, tiers);
+  var spread = tierMax - tierMin;
+  var sy = 0;
+  if (spread < 0.2 && tierMin > 0.4) sy = 10;
+  else if (spread < 0.3 && tierMin > 0.3) sy = 7;
+  else if (spread < 0.4 && tierMin > 0.2) sy = 4;
+  else if (spread >= 0.5) { sy = -3; flags.push('IMBALANCED'); }
+  if (avgReward > 0 && avgLoss > 0) { var rr = avgReward / avgLoss; if (rr >= 1.5) sy += 2; else if (rr < 0.75) sy -= 2; }
+  sy = Math.max(-5, Math.min(10, sy));
+  var raw = ts + ws + rs + sy;
+  var score = Math.max(0, Math.min(100, Math.round(raw)));
+  var grade = score >= 75 ? 'A' : score >= 60 ? 'B' : score >= 45 ? 'C' : score >= 25 ? 'D' : 'F';
+  return { score: score, grade: grade, flags: flags };
+}
 function scoreColor(s) {
   if (s >= 75) return { c: 'var(--low)', bg: 'rgba(16,185,129,.1)' };
   if (s >= 55) return { c: 'var(--accent)', bg: 'rgba(14,165,233,.08)' };

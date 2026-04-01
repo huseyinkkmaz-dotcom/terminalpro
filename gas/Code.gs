@@ -3378,29 +3378,42 @@ function runBacktest_(zThreshold, exitZ, maxHold, mode) {
     var allPairsSorted = Object.keys(pairStats).map(function(k) {
       var ps = pairStats[k];
       var recent = ps.allPairTrades.slice(-5).map(function(t){ return { entryZ: t.entryZ, exitZ: t.exitZ, holdDays: t.holdDays, pnl: t.pnl, exitReason: t.exitReason, entrySpread: t.entrySpread, exitSpread: t.exitSpread }; });
-      return { id: k, tA: ps.tA, tB: ps.tB, mode: ps.mode, trades: ps.trades, pnl: parseFloat(ps.pnl.toFixed(2)), winRate: parseFloat((ps.wins/ps.trades*100).toFixed(1)), avgPnl: parseFloat((ps.pnl/ps.trades).toFixed(2)), avgWin: ps.wins > 0 ? parseFloat((ps.winPnl/ps.wins).toFixed(2)) : 0, avgLoss: ps.losses > 0 ? parseFloat((ps.lossPnl/ps.losses).toFixed(2)) : 0, avgHold: parseFloat((ps.holdSum/ps.trades).toFixed(1)), avgEntryZ: parseFloat((ps.entryZSum/ps.trades).toFixed(2)), avgExitZ: parseFloat((ps.exitZSum/ps.trades).toFixed(2)), avgEntrySpr: parseFloat((ps.entrySprSum/ps.trades).toFixed(4)), avgExitSpr: parseFloat((ps.exitSprSum/ps.trades).toFixed(4)), recentTrades: recent };
+      var wr = parseFloat((ps.wins/ps.trades*100).toFixed(1));
+      var aWin = ps.wins > 0 ? parseFloat((ps.winPnl/ps.wins).toFixed(2)) : 0;
+      var aLoss = ps.losses > 0 ? parseFloat((ps.lossPnl/ps.losses).toFixed(2)) : 0;
+      var pf = aLoss > 0 ? parseFloat((ps.winPnl / ps.lossPnl).toFixed(2)) : 0;
+      var zRevertCount = ps.allPairTrades.filter(function(t){return t.exitReason==='Z_REVERT';}).length;
+      var rob = computeRobustnessScore_(ps.trades, wr, aWin, aLoss, { profitFactor: pf });
+      return { id: k, tA: ps.tA, tB: ps.tB, mode: ps.mode, trades: ps.trades, pnl: parseFloat(ps.pnl.toFixed(2)), winRate: wr, avgPnl: parseFloat((ps.pnl/ps.trades).toFixed(2)), avgWin: aWin, avgLoss: aLoss, profitFactor: pf, avgHold: parseFloat((ps.holdSum/ps.trades).toFixed(1)), avgEntryZ: parseFloat((ps.entryZSum/ps.trades).toFixed(2)), avgExitZ: parseFloat((ps.exitZSum/ps.trades).toFixed(2)), avgEntrySpr: parseFloat((ps.entrySprSum/ps.trades).toFixed(4)), avgExitSpr: parseFloat((ps.exitSprSum/ps.trades).toFixed(4)), recentTrades: recent, robustness: rob.score, robustnessGrade: rob.grade, robustnessFlags: rob.flags };
     }).sort(function(a,b){return b.pnl - a.pnl;});
 
     // Return top 30 pairs by PnL (no balanced quota — frontend handles mode labels)
     var topPairs = allPairsSorted.slice(0, 30);
 
+    var overallWR = parseFloat((winTrades.length / totalTrades * 100).toFixed(1));
+    var overallPF = (function(){ var gp=winTrades.reduce(function(s,t){return s+t.pnl;},0); var gl=Math.abs(lossTrades.reduce(function(s,t){return s+t.pnl;},0)); return gl>0?parseFloat((gp/gl).toFixed(2)):0; })();
+    var overallRob = computeRobustnessScore_(totalTrades, overallWR, parseFloat(avgWin.toFixed(2)), parseFloat(Math.abs(avgLoss).toFixed(2)), { profitFactor: overallPF });
+
     return {
       trades: totalTrades,
       wins: winTrades.length,
       losses: lossTrades.length,
-      winRate: parseFloat((winTrades.length / totalTrades * 100).toFixed(1)),
+      winRate: overallWR,
       totalPnl: parseFloat(totalPnl.toFixed(2)),
       avgPnl: parseFloat(avgPnl.toFixed(2)),
       avgWin: parseFloat(avgWin.toFixed(2)),
       avgLoss: parseFloat(avgLoss.toFixed(2)),
       avgHold: parseFloat(avgHold.toFixed(1)),
-      profitFactor: (function(){ var gp=winTrades.reduce(function(s,t){return s+t.pnl;},0); var gl=Math.abs(lossTrades.reduce(function(s,t){return s+t.pnl;},0)); return gl>0?parseFloat((gp/gl).toFixed(2)):0; })(),
+      profitFactor: overallPF,
       maxDrawdown: parseFloat(maxDrawdown.toFixed(2)),
       zRevertPct: parseFloat((zRevertExits / totalTrades * 100).toFixed(1)),
       equityCurve: downsampleArray_(equityCurve, 500),
       topPairs: topPairs,
       sampleTrades: allTrades.slice(-50),
       params: { zThreshold: zThreshold, exitZ: exitZ, maxHold: maxHold, mode: mode },
+      robustness: overallRob.score,
+      robustnessGrade: overallRob.grade,
+      robustnessFlags: overallRob.flags,
       _meta: _meta
     };
   } catch(e) {
@@ -3753,6 +3766,12 @@ function getScreenerData_() {
     for (var i = 1; i < data.length; i++) {
       var r = data[i];
       if (!r[0]) continue;
+      var scrTriggers = parseInt(r[12]) || 0;
+      var scrWr30 = parseFloat(r[6]) || 0;
+      var scrEp30 = parseFloat(r[13]) || 0;
+      var scrMae = parseFloat(r[9]) || 0;
+      // Compute robustness: use triggers as trade count proxy, wr30 as win rate, ep30 as reward, avgMae as loss
+      var scrRob = computeRobustnessScore_(scrTriggers, scrWr30, Math.max(0, scrEp30), scrMae > 0 ? scrMae : 0.5, {});
       results.push({
         id: r[0], tA: r[1], tB: r[2], mode: r[3],
         z: r[4], expProfit: r[5],
@@ -3763,7 +3782,10 @@ function getScreenerData_() {
         wr15: r[16] != null ? r[16] : null,
         ep15: r[17] != null ? r[17] : null,
         ep90: r[18] != null ? r[18] : null,
-        stagnantRate: r[19] != null ? r[19] : null
+        stagnantRate: r[19] != null ? r[19] : null,
+        robustness: scrRob.score,
+        robustnessGrade: scrRob.grade,
+        robustnessFlags: scrRob.flags
       });
     }
     return results;
@@ -3876,12 +3898,20 @@ function runSensitivitySweep_(maxHold, mode, pairId) {
           }
         }
 
+        var cellWR = trades > 0 ? parseFloat((wins / trades * 100).toFixed(1)) : 0;
+        var cellAvgPnl = trades > 0 ? parseFloat((totalPnl / trades).toFixed(2)) : 0;
+        var cellPF = grossLoss > 0 ? parseFloat((grossWin / grossLoss).toFixed(2)) : 0;
+        var cellAvgWin = wins > 0 ? parseFloat((grossWin / wins).toFixed(2)) : 0;
+        var cellAvgLoss = (trades - wins) > 0 ? parseFloat((grossLoss / (trades - wins)).toFixed(2)) : 0;
+        var cellRob = trades > 0 ? computeRobustnessScore_(trades, cellWR, cellAvgWin, cellAvgLoss, { profitFactor: cellPF }) : { score: 0, grade: 'F', flags: [] };
         row.push({
           trades: trades,
-          winRate: trades > 0 ? parseFloat((wins / trades * 100).toFixed(1)) : 0,
-          avgPnl: trades > 0 ? parseFloat((totalPnl / trades).toFixed(2)) : 0,
-          profitFactor: grossLoss > 0 ? parseFloat((grossWin / grossLoss).toFixed(2)) : 0,
-          totalPnl: parseFloat(totalPnl.toFixed(2))
+          winRate: cellWR,
+          avgPnl: cellAvgPnl,
+          profitFactor: cellPF,
+          totalPnl: parseFloat(totalPnl.toFixed(2)),
+          robustness: cellRob.score,
+          robustnessGrade: cellRob.grade
         });
       }
       grid.push(row);
@@ -4760,6 +4790,128 @@ function computeCandidateScore_(wr30, ep30, widenProb, z, avgMae, p75Mae) {
   var p75 = parseFloat(p75Mae) || 0;
   var p75Score = p75 > 0 ? Math.max(0, 15 - p75 * 5) : 7.5;
   return wrScore + epScore + widenScore + zScore + maeScore + p75Score;
+}
+
+/**
+ * Robustness Score (0-100): Anti-overfitting metric that rewards the sweet spot
+ * where trade count, win rate, AND expected reward ALL converge.
+ *
+ * Philosophy: A pair is only truly tradeable when it has enough history to trust,
+ * wins consistently within that history, and pays real money per trade.
+ * If any one of these three is weak, the signal is likely overfit or noise.
+ *
+ * Inputs:
+ *   trades    — number of completed trades (backtest or historical triggers)
+ *   winRate   — win rate as percentage (0-100)
+ *   avgReward — average profit per winning trade (dollars, per 100 shares for backtest)
+ *   avgLoss   — average loss per losing trade (dollars, absolute value)
+ *   opts      — optional: { profitFactor, zRevertPct, maxDrawdown, totalPnl }
+ *
+ * Returns: { score: 0-100, grade: 'A'|'B'|'C'|'D'|'F', flags: [...], details: {...} }
+ */
+function computeRobustnessScore_(trades, winRate, avgReward, avgLoss, opts) {
+  opts = opts || {};
+  var flags = [];
+  var details = {};
+
+  // ── Tier 1: Trade Count Score (0-30) ──
+  // Requires meaningful sample. Sweet spot = 8-30 trades. Below 5 = unreliable.
+  // Above 30 = diminishing returns but still good.
+  var tradeScore = 0;
+  if (trades >= 30) tradeScore = 30;
+  else if (trades >= 20) tradeScore = 25 + (trades - 20) / 10 * 5;
+  else if (trades >= 10) tradeScore = 18 + (trades - 10) / 10 * 7;
+  else if (trades >= 8) tradeScore = 14 + (trades - 8) / 2 * 4;
+  else if (trades >= 5) tradeScore = 6 + (trades - 5) / 3 * 8;
+  else if (trades >= 3) tradeScore = 2 + (trades - 3) / 2 * 4;
+  else tradeScore = trades * 0.5; // 0-2 trades = almost zero
+  if (trades < 5) flags.push('LOW_SAMPLE');
+  if (trades < 3) flags.push('UNRELIABLE');
+  details.tradeScore = parseFloat(tradeScore.toFixed(1));
+
+  // ── Tier 2: Win Rate Score (0-30) ──
+  // But ONLY meaningful with sufficient trades. Discounted by sample confidence.
+  // Sweet spot: 55-75%. Below 45% = bad. Above 85% = suspicious (possible overfit).
+  var wrScore = 0;
+  if (winRate >= 55 && winRate <= 75) wrScore = 25 + (winRate - 55) / 20 * 5; // sweet spot: 25-30
+  else if (winRate > 75 && winRate <= 85) wrScore = 25 - (winRate - 75) / 10 * 5; // declining: 25-20
+  else if (winRate > 85) {
+    wrScore = 15 - (winRate - 85) / 15 * 10; // suspicious: 15-5
+    if (winRate > 90) flags.push('SUSPICIOUS_WR');
+    if (winRate >= 100 && trades > 1) flags.push('PERFECT_WR');
+  }
+  else if (winRate >= 45) wrScore = 15 + (winRate - 45) / 10 * 10; // marginal: 15-25
+  else wrScore = Math.max(0, winRate / 45 * 15); // poor: 0-15
+  // Confidence discount: WR score is less trustworthy with fewer trades
+  var confidence = trades >= 20 ? 1.0 : trades >= 10 ? 0.85 : trades >= 5 ? 0.65 : 0.35;
+  wrScore *= confidence;
+  details.wrScore = parseFloat(wrScore.toFixed(1));
+  details.confidence = confidence;
+
+  // ── Tier 3: Expected Reward Score (0-30) ──
+  // Must be meaningful in dollar terms. $0.50+ avg reward per 100 shares is decent.
+  // $2+ is excellent. $0.10 is noise / spread cost territory.
+  var rewardScore = 0;
+  if (avgReward > 0) {
+    if (avgReward >= 3.0) rewardScore = 30;
+    else if (avgReward >= 2.0) rewardScore = 24 + (avgReward - 2.0) / 1.0 * 6;
+    else if (avgReward >= 1.0) rewardScore = 16 + (avgReward - 1.0) / 1.0 * 8;
+    else if (avgReward >= 0.50) rewardScore = 8 + (avgReward - 0.50) / 0.50 * 8;
+    else if (avgReward >= 0.25) rewardScore = 3 + (avgReward - 0.25) / 0.25 * 5;
+    else rewardScore = avgReward / 0.25 * 3; // near-zero reward
+  }
+  if (avgReward < 0.25 && trades > 5) flags.push('LOW_REWARD');
+  if (avgReward < 0.10) flags.push('NOISE_LEVEL');
+  details.rewardScore = parseFloat(rewardScore.toFixed(1));
+
+  // ── Tier 4: Synergy Bonus/Penalty (0-10) ──
+  // All three must converge. Penalize if one is great but others are weak.
+  var tiers = [details.tradeScore / 30, details.wrScore / 30, details.rewardScore / 30];
+  var tierMin = Math.min.apply(null, tiers);
+  var tierMax = Math.max.apply(null, tiers);
+  var tierSpread = tierMax - tierMin;
+  var synergyScore = 0;
+  if (tierSpread < 0.2 && tierMin > 0.4) synergyScore = 10; // all three balanced + strong
+  else if (tierSpread < 0.3 && tierMin > 0.3) synergyScore = 7;
+  else if (tierSpread < 0.4 && tierMin > 0.2) synergyScore = 4;
+  else if (tierSpread >= 0.5) {
+    synergyScore = -3; // heavy imbalance = likely overfit to one dimension
+    flags.push('IMBALANCED');
+  }
+  // Extra bonus for risk/reward ratio
+  if (avgReward > 0 && avgLoss > 0) {
+    var rr = avgReward / avgLoss;
+    if (rr >= 1.5) synergyScore += 2;
+    else if (rr < 0.75) { synergyScore -= 2; flags.push('BAD_RR'); }
+    details.riskReward = parseFloat(rr.toFixed(2));
+  }
+  // Profit factor bonus (if provided)
+  if (opts.profitFactor > 0) {
+    if (opts.profitFactor >= 1.5 && opts.profitFactor <= 4.0) synergyScore += 1;
+    else if (opts.profitFactor > 5.0 && trades < 20) {
+      synergyScore -= 2;
+      flags.push('EXTREME_PF');
+    }
+  }
+  details.synergyScore = parseFloat(Math.max(-5, Math.min(10, synergyScore)).toFixed(1));
+
+  // ── Final Score ──
+  var raw = tradeScore + wrScore + rewardScore + details.synergyScore;
+  var score = Math.max(0, Math.min(100, Math.round(raw)));
+
+  // Grade assignment
+  var grade = 'F';
+  if (score >= 75) grade = 'A';
+  else if (score >= 60) grade = 'B';
+  else if (score >= 45) grade = 'C';
+  else if (score >= 25) grade = 'D';
+
+  return {
+    score: score,
+    grade: grade,
+    flags: flags,
+    details: details
+  };
 }
 
 /**
