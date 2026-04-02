@@ -604,9 +604,8 @@ th .th-hint{font-weight:400;font-size:8px;letter-spacing:0;text-transform:none;c
 </div>
 <div id="pairSweepBar" style="background:var(--card);border-bottom:1px solid var(--border);padding:10px 20px;display:flex;align-items:center;justify-content:center;gap:10px;position:sticky;top:54px;z-index:999;backdrop-filter:blur(10px)">
 <span style="font-size:9px;font-weight:900;color:var(--subtext);text-transform:uppercase;letter-spacing:1.5px;white-space:nowrap">Pair Sweep</span>
-<input type="text" id="sweepTickerA" placeholder="Ticker A" style="width:100px;padding:7px 12px;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:6px;outline:none;font-size:12px;font-family:'JetBrains Mono',monospace;text-transform:uppercase" onkeydown="if(event.key==='Enter')runPairSweep()">
-<input type="text" id="sweepTickerB" placeholder="Ticker B" style="width:100px;padding:7px 12px;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:6px;outline:none;font-size:12px;font-family:'JetBrains Mono',monospace;text-transform:uppercase" onkeydown="if(event.key==='Enter')runPairSweep()">
-<input type="number" id="sweepMaxHold" value="60" min="10" max="120" title="Max Hold Days" style="width:55px;padding:7px 8px;background:var(--bg);border:1px solid var(--border);color:var(--subtext);border-radius:6px;outline:none;font-size:11px;text-align:center" onkeydown="if(event.key==='Enter')runPairSweep()">
+<input type="text" id="sweepTickerA" placeholder="Long Ticker" style="width:100px;padding:7px 12px;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:6px;outline:none;font-size:12px;font-family:'JetBrains Mono',monospace;text-transform:uppercase" onkeydown="if(event.key==='Enter')runPairSweep()">
+<input type="text" id="sweepTickerB" placeholder="Short Ticker" style="width:100px;padding:7px 12px;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:6px;outline:none;font-size:12px;font-family:'JetBrains Mono',monospace;text-transform:uppercase" onkeydown="if(event.key==='Enter')runPairSweep()">
 <button onclick="runPairSweep()" style="padding:7px 18px;background:var(--accent);color:#fff;border:none;border-radius:6px;font-size:10px;font-weight:900;text-transform:uppercase;letter-spacing:1px;cursor:pointer;transition:.2s;white-space:nowrap" onmouseover="this.style.opacity='0.85'" onmouseout="this.style.opacity='1'">Sweep</button>
 <div id="sweepResultWrap" style="display:none;margin-left:10px;flex:1;max-width:800px"></div>
 </div>
@@ -2868,12 +2867,11 @@ else{body.style.display='none';arrow.style.transform='rotate(0deg)';}
 async function runPairSweep(){
 var tA=(document.getElementById('sweepTickerA').value||'').toUpperCase().trim();
 var tB=(document.getElementById('sweepTickerB').value||'').toUpperCase().trim();
-var maxHold=parseInt(document.getElementById('sweepMaxHold').value)||60;
 var wrap=document.getElementById('sweepResultWrap');
 if(!tA||!tB){wrap.style.display='flex';wrap.innerHTML='<span style="color:var(--high);font-size:11px;font-weight:700">Enter both tickers</span>';return;}
-wrap.style.display='flex';wrap.innerHTML='<span style="color:var(--subtext);font-size:11px">Sweeping '+tA+' / '+tB+'...</span>';
+wrap.style.display='flex';wrap.innerHTML='<span style="color:var(--subtext);font-size:11px">Sweeping '+tA+' / '+tB+' (all hold periods)...</span>';
 try{
-var res=await apiGet('sweepPair',{tA:tA,tB:tB,maxHold:maxHold},60000);
+var res=await apiGet('sweepPair',{tA:tA,tB:tB},60000);
 var d=res.sweepResult;
 if(!d||d.error){wrap.innerHTML='<span style="color:var(--high);font-size:11px;font-weight:700">'+((d&&d.error)||'No result')+'</span>';return;}
 if(!d.best){wrap.innerHTML='<span style="color:var(--yellow);font-size:11px;font-weight:700">No valid combos found (need 3+ trades per combo). History: '+d.historyDays+' days</span>';return;}
@@ -2889,6 +2887,7 @@ wrap.innerHTML=''
 +'<div style="display:flex;gap:12px;flex-wrap:wrap">'
 +sweepStat('Entry Z',b.entryZ,'var(--accent)')
 +sweepStat('Exit Z',b.exitZ,'var(--low)')
++sweepStat('Max Hold',b.maxHold+'d','var(--purple)')
 +sweepStat('Avg Hold',b.avgHold+'d','var(--text)')
 +sweepStat('Trades',b.trades,'var(--text)')
 +sweepStat('Win Rate',b.winRate+'%',b.winRate>=60?'var(--low)':b.winRate>=45?'var(--yellow)':'var(--high)')

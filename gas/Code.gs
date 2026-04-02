@@ -175,8 +175,7 @@ function doGet(e) {
     else if (action === 'sweepPair') {
       var spTA = (e && e.parameter && e.parameter.tA) ? e.parameter.tA : '';
       var spTB = (e && e.parameter && e.parameter.tB) ? e.parameter.tB : '';
-      var spMaxHold = parseInt((e && e.parameter && e.parameter.maxHold) || 60);
-      result = { ok: true, sweepResult: sweepSinglePair_(spTA, spTB, spMaxHold) };
+      result = { ok: true, sweepResult: sweepSinglePair_(spTA, spTB) };
     }
     else if (action === 'getExitAlerts') {
       result = { ok: true, exitAlerts: getExitAlerts_() };
@@ -3351,12 +3350,12 @@ function runBacktest_(zThreshold, exitZ, maxHold, mode) {
 
       // Align from end (most recent prices align)
       var len = Math.min(histA.length, histB.length);
-      if (len < 30) { pairsSkippedHist++; continue; } // need minimum history
+      if (len < 100) { pairsSkippedHist++; continue; } // need minimum history for 90-day window
       var pricesA = histA.slice(histA.length - len);
       var pricesB = histB.slice(histB.length - len);
 
-      // Compute rolling 30-day mean and stdev for Z-scores
-      var WINDOW = 30;
+      // Compute rolling 90-day mean and stdev for Z-scores (matches Live sheet methodology)
+      var WINDOW = 90;
       if (len < WINDOW + 5) { pairsSkippedHist++; continue; }
 
       pairsProcessed++;
@@ -3912,8 +3911,8 @@ function runSensitivitySweep_(maxHold, mode, pairId) {
       }
     }
 
-    // Phase 1: Pre-compute rolling Z-score series for each pair
-    var WINDOW = 30;
+    // Phase 1: Pre-compute rolling Z-score series for each pair (90-day window matches Live sheet)
+    var WINDOW = 90;
     var startTime = new Date().getTime();
     var MAX_MS = 240000;
     var zSeriesList = []; // [{zScores: [floats], pricesA: [], pricesB: []}]
@@ -4022,12 +4021,11 @@ function runSensitivitySweep_(maxHold, mode, pairId) {
 // ═══════════════════════════════════════════════════════════════════
 // SINGLE PAIR SWEEP — parameter optimization for a user-specified pair
 // ═══════════════════════════════════════════════════════════════════
-function sweepSinglePair_(tA, tB, maxHold) {
+function sweepSinglePair_(tA, tB) {
   try {
     tA = (tA || '').toUpperCase().trim();
     tB = (tB || '').toUpperCase().trim();
     if (!tA || !tB) return { error: 'Both tA and tB are required' };
-    maxHold = maxHold || 60;
 
     var ss = SpreadsheetApp.getActive();
     var histMap = readTickerHistMap_(ss);
@@ -4038,14 +4036,16 @@ function sweepSinglePair_(tA, tB, maxHold) {
     if (!histA) return { error: 'No history for ticker ' + tA };
     if (!histB) return { error: 'No history for ticker ' + tB };
 
-    var WINDOW = 30;
+    // Use 90-day rolling window to match Live sheet Z-score methodology
+    var WINDOW = 90;
     var len = Math.min(histA.length, histB.length);
-    if (len < WINDOW + 5) return { error: 'Insufficient history (' + len + ' days). Need at least ' + (WINDOW + 5) + '.' };
+    if (len < WINDOW + 10) return { error: 'Insufficient history (' + len + ' days). Need at least ' + (WINDOW + 10) + '.' };
 
+    // Align from end (most recent days match)
     var pA = histA.slice(histA.length - len);
     var pB = histB.slice(histB.length - len);
 
-    // Compute rolling Z-score series
+    // Compute rolling Z-score series using 90-day window (matches Live sheet)
     var zArr = new Array(len);
     for (var day = WINDOW; day < len; day++) {
       var sumSpr = 0, sumSprSq = 0;
@@ -4060,61 +4060,73 @@ function sweepSinglePair_(tA, tB, maxHold) {
       zArr[day] = (pA[day] - pB[day] - rollMean) / rollStdev;
     }
 
-    // Current Z (last value)
-    var currentZ = zArr[len - 1] !== undefined ? parseFloat(zArr[len - 1].toFixed(2)) : null;
+    // Current Z: look up from WebCache/WebCacheCredit for exact match with alerts
+    var currentZ = null;
+    var canonicalZ = lookupCanonicalZ_(ss, tA, tB);
+    if (canonicalZ !== null) {
+      currentZ = canonicalZ;
+    } else {
+      // Fallback: use the last computed rolling Z
+      currentZ = zArr[len - 1] !== undefined ? parseFloat(zArr[len - 1].toFixed(2)) : null;
+    }
 
-    // Sweep all entry/exit combos
+    // Sweep all entry Z × exit Z × max hold day combos
     var entryGrid = [1.5, 1.8, 2.0, 2.2, 2.5, 2.8, 3.0];
     var exitGrid  = [0.0, 0.25, 0.5, 0.75, 1.0, 1.25, 1.5];
+    var holdGrid  = [20, 30, 45, 60, 90, 120];
     var MIN_TRADES = 3;
     var bestAvgPnl = -Infinity;
     var bestCombo = null;
     var allCombos = [];
 
-    for (var ei = 0; ei < entryGrid.length; ei++) {
-      var zThreshold = entryGrid[ei];
-      for (var xi = 0; xi < exitGrid.length; xi++) {
-        var exitZ = exitGrid[xi];
-        if (exitZ >= zThreshold) continue;
+    for (var hi = 0; hi < holdGrid.length; hi++) {
+      var maxHold = holdGrid[hi];
+      for (var ei = 0; ei < entryGrid.length; ei++) {
+        var zThreshold = entryGrid[ei];
+        for (var xi = 0; xi < exitGrid.length; xi++) {
+          var exitZ = exitGrid[xi];
+          if (exitZ >= zThreshold) continue;
 
-        var trades = 0, wins = 0, totalPnl = 0, grossWin = 0, grossLoss = 0, holdSum = 0;
-        var openEntry = null;
-        for (var day = WINDOW; day < len; day++) {
-          var z = zArr[day];
-          if (z === undefined) continue;
-          if (!openEntry) {
-            if (Math.abs(z) >= zThreshold) {
-              openEntry = { day: day, z: z, dirA: z > 0 ? -1 : 1, dirB: z > 0 ? 1 : -1, pA: pA[day], pB: pB[day] };
-            }
-          } else {
-            var hold = day - openEntry.day;
-            if (Math.abs(z) <= exitZ || hold >= maxHold) {
-              var pnl = ((pA[day] - openEntry.pA) * openEntry.dirA + (pB[day] - openEntry.pB) * openEntry.dirB) * 100;
-              trades++;
-              totalPnl += pnl;
-              holdSum += hold;
-              if (pnl > 0) { wins++; grossWin += pnl; } else { grossLoss += Math.abs(pnl); }
-              openEntry = null;
+          var trades = 0, wins = 0, totalPnl = 0, grossWin = 0, grossLoss = 0, holdSum = 0;
+          var openEntry = null;
+          for (var day = WINDOW; day < len; day++) {
+            var z = zArr[day];
+            if (z === undefined) continue;
+            if (!openEntry) {
+              if (Math.abs(z) >= zThreshold) {
+                openEntry = { day: day, z: z, dirA: z > 0 ? -1 : 1, dirB: z > 0 ? 1 : -1, pA: pA[day], pB: pB[day] };
+              }
+            } else {
+              var hold = day - openEntry.day;
+              if (Math.abs(z) <= exitZ || hold >= maxHold) {
+                var pnl = ((pA[day] - openEntry.pA) * openEntry.dirA + (pB[day] - openEntry.pB) * openEntry.dirB) * 100;
+                trades++;
+                totalPnl += pnl;
+                holdSum += hold;
+                if (pnl > 0) { wins++; grossWin += pnl; } else { grossLoss += Math.abs(pnl); }
+                openEntry = null;
+              }
             }
           }
-        }
 
-        if (trades >= MIN_TRADES) {
-          var avgPnl = totalPnl / trades;
-          var combo = {
-            entryZ: zThreshold,
-            exitZ: exitZ,
-            avgPnl: parseFloat(avgPnl.toFixed(2)),
-            winRate: parseFloat((wins / trades * 100).toFixed(1)),
-            trades: trades,
-            avgHold: parseFloat((holdSum / trades).toFixed(1)),
-            totalPnl: parseFloat(totalPnl.toFixed(2)),
-            profitFactor: grossLoss > 0 ? parseFloat((grossWin / grossLoss).toFixed(2)) : (grossWin > 0 ? 99.9 : 0)
-          };
-          allCombos.push(combo);
-          if (avgPnl > bestAvgPnl) {
-            bestAvgPnl = avgPnl;
-            bestCombo = combo;
+          if (trades >= MIN_TRADES) {
+            var avgPnl = totalPnl / trades;
+            var combo = {
+              entryZ: zThreshold,
+              exitZ: exitZ,
+              maxHold: maxHold,
+              avgPnl: parseFloat(avgPnl.toFixed(2)),
+              winRate: parseFloat((wins / trades * 100).toFixed(1)),
+              trades: trades,
+              avgHold: parseFloat((holdSum / trades).toFixed(1)),
+              totalPnl: parseFloat(totalPnl.toFixed(2)),
+              profitFactor: grossLoss > 0 ? parseFloat((grossWin / grossLoss).toFixed(2)) : (grossWin > 0 ? 99.9 : 0)
+            };
+            allCombos.push(combo);
+            if (avgPnl > bestAvgPnl) {
+              bestAvgPnl = avgPnl;
+              bestCombo = combo;
+            }
           }
         }
       }
@@ -4128,7 +4140,6 @@ function sweepSinglePair_(tA, tB, maxHold) {
       tB: tB,
       currentZ: currentZ,
       historyDays: len,
-      maxHold: maxHold,
       best: bestCombo,
       topCombos: allCombos.slice(0, 5)
     };
@@ -4136,6 +4147,36 @@ function sweepSinglePair_(tA, tB, maxHold) {
     console.error('sweepSinglePair_ error: ' + e);
     return { error: e.toString() };
   }
+}
+
+/**
+ * Looks up the canonical Z-score for a pair from WebCache/WebCacheCredit.
+ * Tries both ticker orderings (tA|tB and tB|tA) to handle user input order.
+ * Returns null if pair not found.
+ */
+function lookupCanonicalZ_(ss, tA, tB) {
+  var sheets = ['WebCache', 'WebCacheCredit'];
+  var cleanA = tA.replace(/-/g, '').toUpperCase();
+  var cleanB = tB.replace(/-/g, '').toUpperCase();
+  for (var s = 0; s < sheets.length; s++) {
+    var sheet = ss.getSheetByName(sheets[s]);
+    if (!sheet || sheet.getLastRow() <= 1) continue;
+    var data = sheet.getDataRange().getValues();
+    for (var i = 1; i < data.length; i++) {
+      var rowTA = String(data[i][1]).replace(/-/g, '').toUpperCase().trim();
+      var rowTB = String(data[i][2]).replace(/-/g, '').toUpperCase().trim();
+      var z = parseFloat(data[i][12]);
+      if (isNaN(z)) continue;
+      // Match either order
+      if ((rowTA === cleanA && rowTB === cleanB)) {
+        return parseFloat(z.toFixed(2));
+      }
+      if ((rowTA === cleanB && rowTB === cleanA)) {
+        return parseFloat((-z).toFixed(2)); // negate Z when tickers are swapped
+      }
+    }
+  }
+  return null;
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -4173,8 +4214,8 @@ function runOptimalSweep_(maxHold, mode) {
     var histMap = readTickerHistMap_(ss);
     if (Object.keys(histMap).length === 0) return { error: 'No history data' };
 
-    // Step 3: Per-pair parameter sweep
-    var WINDOW = 30;
+    // Step 3: Per-pair parameter sweep (90-day window matches Live sheet)
+    var WINDOW = 90;
     var entryGrid = [1.5, 1.8, 2.0, 2.2, 2.5, 2.8, 3.0];
     var exitGrid = [0.0, 0.25, 0.5, 0.75, 1.0, 1.25, 1.5];
     var MIN_TRADES = 3; // minimum trades for a combo to be considered
@@ -5864,12 +5905,12 @@ function buildPortfolioFromCombo_(combo, candidates, corrMatrix, histMap) {
 
 /**
  * Mini parameter sweep for a single pair — lightweight version of runSensitivitySweep_.
- * Finds the optimal entry/exit Z thresholds based on 30-day rolling Z-score history.
+ * Finds the optimal entry/exit Z thresholds based on 90-day rolling Z-score history.
  * Returns { optEntry, optExit, optWR, optAvgPnl, optTrades, optProfitFactor } or null.
  */
 function miniSweepSinglePair_(tA, tB, histMap, maxHold) {
   maxHold = maxHold || 60;
-  var WINDOW = 30;
+  var WINDOW = 90;
   var histA = histMap[String(tA).toUpperCase().trim()];
   var histB = histMap[String(tB).toUpperCase().trim()];
   if (!histA || !histB) return null;
@@ -5976,11 +6017,11 @@ function miniSweepSinglePair_(tA, tB, histMap, maxHold) {
  * Compute Basket Profit Capture % for a model portfolio.
  * Measures what % of the theoretical mean-reversion profit the basket historically captures.
  * Theoretical profit = sum of |entryZ × stdev| per pair (full mean reversion to Z=0).
- * Actual expected profit = sum of expected profit from 30d rolling Z.
+ * Actual expected profit = sum of expected profit from 90d rolling Z.
  * Profit Capture % = actual / theoretical × 100.
  */
 function computeProfitCapture_(pairs, histMap) {
-  var WINDOW = 30;
+  var WINDOW = 90;
   var theoreticalTotal = 0;
   var actualTotal = 0;
 
@@ -5989,7 +6030,7 @@ function computeProfitCapture_(pairs, histMap) {
     var z = Math.abs(parseFloat(pair.z) || 0);
     var ep30 = parseFloat(pair.ep30) || 0;
 
-    // Compute theoretical profit from actual spread distance to 30-day mean
+    // Compute theoretical profit from actual spread distance to 90-day mean
     var histA = histMap[String(pair.tA).toUpperCase().trim()];
     var histB = histMap[String(pair.tB).toUpperCase().trim()];
     if (!histA || !histB || histA.length < WINDOW || histB.length < WINDOW) continue;
@@ -6021,7 +6062,7 @@ function computeProfitCapture_(pairs, histMap) {
 
 /**
  * Compute basket-level Kelly criterion for an entire model portfolio.
- * Uses the blended 30d win rate and portfolio-level expected profit/loss.
+ * Uses the blended win rate and portfolio-level expected profit/loss.
  * Returns { kellyPct, halfKellyPct, suggestedCapital, riskRewardRatio } or null.
  */
 function computeBasketKelly_(portfolio) {
