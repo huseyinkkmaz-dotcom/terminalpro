@@ -607,6 +607,7 @@ th .th-hint{font-weight:400;font-size:8px;letter-spacing:0;text-transform:none;c
 <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
 <span id="exitBadgeCount" style="display:none" class="exit-badge danger">0 EXIT SIGNALS</span>
 <button class="exit-cfg-btn" onclick="toggleExitCfg()">&#9881; Exit Params</button>
+<button class="exit-cfg-btn" id="backfillBtn" onclick="backfillExitTargets()" title="Compute exit targets for existing trades missing them">&#8635; Backfill Targets</button>
 </div>
 <div class="exit-cfg-panel" id="exitCfgPanel">
 <div class="exit-cfg-row">
@@ -3385,6 +3386,36 @@ async function saveExitCfg() {
 }
 
 /**
+ * Backfill exit targets for existing trades missing columns J-O.
+ * Calls backend to compute and write TargetExitZ, ProfitCapturePct, TargetPnL, etc.
+ */
+async function backfillExitTargets() {
+  var btn = document.getElementById('backfillBtn');
+  var origText = btn.innerHTML;
+  btn.innerHTML = '&#8987; Computing...';
+  btn.disabled = true;
+  try {
+    var resp = await apiGet('backfillTargets');
+    if (resp && resp.backfillResult) {
+      var r = resp.backfillResult;
+      if (r.backfilled > 0) {
+        btn.innerHTML = '&#10003; ' + r.backfilled + ' trade' + (r.backfilled > 1 ? 's' : '') + ' updated';
+        // Refresh data to pick up new targets
+        setTimeout(function() { refreshData(); }, 1000);
+      } else {
+        btn.innerHTML = '&#10003; All trades have targets';
+      }
+    } else {
+      btn.innerHTML = '&#10007; Failed';
+    }
+  } catch (e) {
+    console.error('Backfill error:', e);
+    btn.innerHTML = '&#10007; Error';
+  }
+  setTimeout(function() { btn.innerHTML = origText; btn.disabled = false; }, 3000);
+}
+
+/**
  * Client-side exit signal detection — runs on every data refresh.
  * Uses portfolio data already loaded (no extra API call).
  */
@@ -3444,8 +3475,8 @@ function checkExitSignalsClient() {
       });
     }
 
-    // Trigger 6: Stagnation (per-trade maxHold exceeded while losing)
-    if (p.maxHoldDays != null && daysHeld > Math.round(effectiveMaxHold * 1.5) && netPnl <= 0) {
+    // Trigger 6: Stagnation (maxHold exceeded while losing — uses per-trade or global fallback)
+    if (daysHeld > Math.round(effectiveMaxHold * 1.5) && netPnl <= 0) {
       signals.push({
         pairId: p.id, tA: p.tA, tB: p.tB,
         trigger: 'STAGNATION', severity: 'warning',

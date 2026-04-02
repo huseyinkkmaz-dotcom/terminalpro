@@ -188,6 +188,9 @@ function doGet(e) {
       saveExitParams_(epExitZ, epMaxHold, epStopLoss);
       result = { ok: true, message: 'Exit params saved' };
     }
+    else if (action === 'backfillTargets') {
+      result = { ok: true, backfillResult: backfillExitTargets_() };
+    }
     else if (action === 'getJournalAnalytics') {
       result = { ok: true, journalAnalytics: getJournalAnalytics_() };
     }
@@ -4416,12 +4419,12 @@ function checkExitSignals_(params) {
         });
       }
 
-      // --- Trigger 6: Stagnation (per-trade maxHold exceeded while losing) ---
-      if (tradeMaxHold != null && daysHeld > Math.round(tradeMaxHold * 1.5) && netPnl <= 0) {
+      // --- Trigger 6: Stagnation (maxHold exceeded while losing — uses per-trade or global fallback) ---
+      if (daysHeld > Math.round(effectiveMaxHold * 1.5) && netPnl <= 0) {
         signals.push({
           pairId: info.id, tA: info.tA, tB: info.tB,
           trigger: 'STAGNATION', severity: 'warning',
-          message: 'Day ' + daysHeld + ' exceeds 1.5× expected ' + tradeMaxHold + 'd hold — trade is stagnant, review position',
+          message: 'Day ' + daysHeld + ' exceeds 1.5× expected ' + effectiveMaxHold + 'd hold — trade is stagnant, review position',
           currentZ: currentZ, daysHeld: daysHeld,
           unrealizedPnl: parseFloat(netPnl.toFixed(2)),
           timestamp: now.toISOString()
@@ -4508,6 +4511,9 @@ function checkExitSignals_(params) {
  */
 function runExitAlertCheck() {
   try {
+    // Auto-backfill exit targets for any trades missing them
+    backfillExitTargets_();
+
     var ss = SpreadsheetApp.getActive();
     // Read user-configured thresholds from ExitParams sheet (if exists)
     var params = {};
@@ -4633,6 +4639,107 @@ function saveExitParams_(exitZ, maxHold, stopLossPct) {
   } catch (e) {
     console.error('saveExitParams_ error: ' + e);
     return false;
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// BACKFILL EXIT TARGETS — fills columns J-O for existing trades
+// ═══════════════════════════════════════════════════════════════════
+
+/**
+ * Backfills exit target columns (J-O) for open trades that are missing them.
+ * Computes TargetExitZ, ProfitCapturePct, TargetPnL, PartialAtPct, MaxHoldDays
+ * using live mean/stdev and sensible defaults (60% capture, 50% partial).
+ * Returns count of trades backfilled.
+ */
+function backfillExitTargets_() {
+  try {
+    var ss = SpreadsheetApp.getActive();
+    var sheet = ss.getSheetByName('OpenTrades');
+    if (!sheet || sheet.getLastRow() <= 1) return { backfilled: 0, total: 0 };
+
+    var openData = sheet.getDataRange().getValues();
+
+    // Merge live rows from WebCache + WebCacheCredit (same logic as checkExitSignals_)
+    var liveRows = [];
+    var liveSheets = ['WebCache', 'WebCacheCredit', 'Live', 'CreditLive'];
+    for (var s = 0; s < liveSheets.length; s++) {
+      var ls = ss.getSheetByName(liveSheets[s]);
+      if (ls && ls.getLastRow() > 1) {
+        var rows = ls.getRange(2, 1, ls.getLastRow() - 1, 24).getValues();
+        liveRows = liveRows.concat(rows);
+      }
+    }
+
+    // Read ExitParams for global defaults
+    var globalExitZ = 0.5;
+    var globalMaxHold = 60;
+    var paramSheet = ss.getSheetByName('ExitParams');
+    if (paramSheet && paramSheet.getLastRow() > 1) {
+      var paramData = paramSheet.getDataRange().getValues();
+      for (var pi = 1; pi < paramData.length; pi++) {
+        var key = String(paramData[pi][0]).trim();
+        if (key === 'exitZ') globalExitZ = parseFloat(paramData[pi][1]) || 0.5;
+        else if (key === 'maxHold') globalMaxHold = parseInt(paramData[pi][1]) || 60;
+      }
+    }
+
+    var DEFAULT_PROFIT_CAPTURE = 60;  // 60% of theoretical max
+    var DEFAULT_PARTIAL_AT = 50;       // take partial at 50% of target
+    var backfilled = 0;
+
+    for (var j = 1; j < openData.length; j++) {
+      var rawId = openData[j][0];
+      if (!rawId) continue;
+
+      // Check if exit targets already exist (column J = index 9)
+      var existingTargetZ = openData[j][9];
+      if (existingTargetZ !== '' && existingTargetZ !== undefined && existingTargetZ !== null) {
+        continue; // Already has targets, skip
+      }
+
+      // Find live data for this pair to get mean/stdev
+      var openAnchor = cleanId(rawId);
+      var pair = null;
+      for (var k = 0; k < liveRows.length; k++) {
+        if (liveRows[k][0] && cleanId(liveRows[k][0]) === openAnchor) {
+          pair = liveRows[k];
+          break;
+        }
+      }
+
+      var liveMean = pair ? (parseFloat(pair[10]) || 0) : 0;   // K: Mean
+      var liveStdev = pair ? (parseFloat(pair[11]) || 0) : 0;   // L: StDev
+
+      var costA = parseMoney(openData[j][2]);
+      var costB = parseMoney(openData[j][3]);
+      var sA = parseMoney(openData[j][4]);
+      var sB = parseMoney(openData[j][5]);
+
+      // Compute TargetPnL from entry spread vs mean
+      var entrySpread = costA - costB;
+      var avgShares = (Math.abs(sA) + Math.abs(sB)) / 2;
+      var theoreticalMax = Math.abs(entrySpread - liveMean) * avgShares;
+      var targetPnL = Math.round(theoreticalMax * (DEFAULT_PROFIT_CAPTURE / 100) * 100) / 100;
+      if (targetPnL <= 0) targetPnL = ''; // Don't set meaningless target
+
+      // Write columns J-O (10-15 in 1-indexed sheet columns)
+      sheet.getRange(j + 1, 10, 1, 6).setValues([[
+        globalExitZ,           // J: TargetExitZ
+        DEFAULT_PROFIT_CAPTURE, // K: ProfitCapturePct
+        targetPnL,             // L: TargetPnL
+        DEFAULT_PARTIAL_AT,    // M: PartialAtPct
+        'backfill',            // N: SourcePortfolio
+        globalMaxHold          // O: MaxHoldDays
+      ]]);
+      backfilled++;
+    }
+
+    Logger.log('backfillExitTargets_: backfilled ' + backfilled + ' of ' + (openData.length - 1) + ' trades');
+    return { backfilled: backfilled, total: openData.length - 1 };
+  } catch (e) {
+    Logger.log('backfillExitTargets_ error: ' + e);
+    return { backfilled: 0, total: 0, error: e.toString() };
   }
 }
 
