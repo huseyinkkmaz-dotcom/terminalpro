@@ -400,6 +400,55 @@ td:last-child{border-radius:0 10px 10px 0;border-right:1px solid var(--border)}
 .exit-banner-action{background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.15);color:white;padding:6px 14px;border-radius:6px;font-size:10px;font-weight:900;cursor:pointer;text-transform:uppercase;letter-spacing:.5px;white-space:nowrap;transition:background .15s}
 .exit-banner-action:hover{background:rgba(255,255,255,.2)}
 @keyframes exitPulse{0%,100%{opacity:1}50%{opacity:.85}}
+/* ── Persistent Alert Tray ── */
+.alert-tray{position:sticky;top:0;z-index:1100;max-height:0;overflow:hidden;transition:max-height .4s cubic-bezier(.4,0,.2,1),opacity .3s;opacity:0;background:linear-gradient(180deg,rgba(7,11,20,.98) 0%,rgba(7,11,20,.95) 100%);backdrop-filter:blur(16px);border-bottom:1px solid transparent}
+.alert-tray.open{max-height:400px;opacity:1}
+.alert-tray.has-danger{border-bottom-color:rgba(239,68,68,.3);box-shadow:0 4px 24px rgba(239,68,68,.08)}
+.alert-tray.has-warning{border-bottom-color:rgba(245,158,11,.3);box-shadow:0 4px 24px rgba(245,158,11,.06)}
+.alert-tray.has-profit{border-bottom-color:rgba(16,185,129,.3);box-shadow:0 4px 24px rgba(16,185,129,.06)}
+.alert-tray-header{display:flex;align-items:center;justify-content:space-between;padding:8px 24px;border-bottom:1px solid rgba(255,255,255,.04)}
+.alert-tray-title{display:flex;align-items:center;gap:10px;font-size:10px;font-weight:900;text-transform:uppercase;letter-spacing:1.5px;color:var(--subtext)}
+.alert-tray-count{font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:700;padding:2px 8px;border-radius:6px;min-width:20px;text-align:center;line-height:1.4}
+.alert-tray-count.danger{background:rgba(239,68,68,.15);color:var(--high)}
+.alert-tray-count.warning{background:rgba(245,158,11,.15);color:var(--yellow)}
+.alert-tray-count.profit{background:rgba(16,185,129,.15);color:var(--low)}
+.alert-tray-actions{display:flex;align-items:center;gap:8px}
+.alert-tray-dismiss{background:none;border:1px solid rgba(255,255,255,.08);color:var(--subtext);padding:4px 12px;border-radius:4px;font-size:9px;font-weight:700;cursor:pointer;text-transform:uppercase;letter-spacing:.5px;transition:.15s}
+.alert-tray-dismiss:hover{border-color:rgba(255,255,255,.2);color:var(--text)}
+.alert-tray-close{background:none;border:none;color:var(--subtext);font-size:16px;cursor:pointer;padding:4px 8px;line-height:1;transition:.15s;border-radius:4px}
+.alert-tray-close:hover{color:var(--text);background:rgba(255,255,255,.05)}
+.alert-tray-items{padding:6px 16px 10px;display:flex;flex-direction:column;gap:4px;max-height:250px;overflow-y:auto}
+.alert-tray-items::-webkit-scrollbar{width:4px}
+.alert-tray-items::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
+.alert-tray-item{display:flex;align-items:center;gap:12px;padding:8px 12px;border-radius:8px;transition:background .15s;cursor:default}
+.alert-tray-item:hover{background:rgba(255,255,255,.02)}
+.alert-tray-item.danger{border-left:2px solid var(--high)}
+.alert-tray-item.warning{border-left:2px solid var(--yellow)}
+.alert-tray-item.profit{border-left:2px solid var(--low)}
+.alert-tray-item-icon{font-size:14px;flex-shrink:0;width:20px;text-align:center}
+.alert-tray-item-body{flex:1;min-width:0}
+.alert-tray-item-top{display:flex;align-items:baseline;gap:8px}
+.alert-tray-item-pair{font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;color:var(--text);white-space:nowrap}
+.alert-tray-item-trigger{font-size:8px;font-weight:900;text-transform:uppercase;letter-spacing:.8px;padding:1px 6px;border-radius:3px}
+.alert-tray-item-trigger.danger{background:rgba(239,68,68,.12);color:var(--high)}
+.alert-tray-item-trigger.warning{background:rgba(245,158,11,.12);color:var(--yellow)}
+.alert-tray-item-trigger.profit{background:rgba(16,185,129,.12);color:var(--low)}
+.alert-tray-item-msg{font-size:10px;color:var(--subtext);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.alert-tray-item-meta{display:flex;gap:12px;font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--subtext);flex-shrink:0}
+.alert-tray-item-action{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.1);color:var(--text);padding:4px 10px;border-radius:4px;font-size:9px;font-weight:700;cursor:pointer;text-transform:uppercase;letter-spacing:.3px;transition:.15s;flex-shrink:0;white-space:nowrap}
+.alert-tray-item-action:hover{background:rgba(255,255,255,.12);border-color:rgba(255,255,255,.2)}
+.alert-tray-collapsed{display:none;position:sticky;top:0;z-index:1100;cursor:pointer;transition:background .15s}
+.alert-tray-collapsed.visible{display:flex;align-items:center;justify-content:center;gap:8px;padding:6px 20px}
+.alert-tray-collapsed.danger{background:rgba(239,68,68,.08);border-bottom:1px solid rgba(239,68,68,.2)}
+.alert-tray-collapsed.warning{background:rgba(245,158,11,.06);border-bottom:1px solid rgba(245,158,11,.15)}
+.alert-tray-collapsed.profit{background:rgba(16,185,129,.06);border-bottom:1px solid rgba(16,185,129,.15)}
+.alert-tray-collapsed:hover{filter:brightness(1.3)}
+.alert-tray-collapsed-text{font-size:9px;font-weight:900;text-transform:uppercase;letter-spacing:1px}
+.alert-tray-collapsed.danger .alert-tray-collapsed-text{color:var(--high)}
+.alert-tray-collapsed.warning .alert-tray-collapsed-text{color:var(--yellow)}
+.alert-tray-collapsed.profit .alert-tray-collapsed-text{color:var(--low)}
+@keyframes traySlideIn{from{transform:translateY(-100%);opacity:0}to{transform:translateY(0);opacity:1}}
+@keyframes trayPulse{0%,100%{opacity:1}50%{opacity:.7}}
 .exit-badge{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:10px;font-size:9px;font-weight:900;text-transform:uppercase;letter-spacing:.5px;vertical-align:middle;margin-left:6px}
 .exit-badge.danger{background:rgba(239,68,68,.15);color:var(--high)}
 .exit-badge.warning{background:rgba(245,158,11,.15);color:var(--yellow)}
@@ -520,6 +569,25 @@ th .th-hint{font-weight:400;font-size:8px;letter-spacing:0;text-transform:none;c
 <div id="regimeBanner" style="display:none;background:var(--card);border-bottom:1px solid var(--border);padding:6px 20px;font-size:10px;font-weight:900;text-align:center;letter-spacing:1px;text-transform:uppercase">
 <span id="regimeLabel" style="color:var(--subtext)">REGIME: —</span>
 <span id="regimeDetail" style="color:var(--subtext);margin-left:12px;font-weight:400"></span>
+</div>
+<!-- ═══ PERSISTENT ALERT TRAY ═══ -->
+<div id="alertTray" class="alert-tray">
+<div class="alert-tray-header">
+<div class="alert-tray-title">
+<span>&#9888; Exit Signals</span>
+<span id="alertTrayCount" class="alert-tray-count">0</span>
+</div>
+<div class="alert-tray-actions">
+<button class="alert-tray-dismiss" onclick="dismissAlertTray()" title="Dismiss all — signals reappear on next refresh if still active">Dismiss All</button>
+<button class="alert-tray-close" onclick="collapseAlertTray()" title="Minimize">&minus;</button>
+</div>
+</div>
+<div id="alertTrayItems" class="alert-tray-items"></div>
+</div>
+<div id="alertTrayCollapsed" class="alert-tray-collapsed" onclick="expandAlertTray()">
+<span style="font-size:12px">&#9888;</span>
+<span class="alert-tray-collapsed-text" id="alertTrayCollapsedText">0 exit signals</span>
+<span style="font-size:9px;color:var(--subtext)">&#9650;</span>
 </div>
 <div class="nav-bar">
 <div class="nav-item active" onclick="tab('alerts',this)">Market Alerts</div>
@@ -3537,8 +3605,12 @@ function checkExitSignalsClient() {
     var key = s.pairId + ':' + s.trigger;
     if (!_prevExitSignalIds.has(key)) {
       fireExitNotification(s);
+      // New signal — remove from dismissed so tray shows it again
+      _alertTrayDismissedKeys.delete(key);
     }
   });
+  // Clear dismissed keys for signals that no longer exist
+  _alertTrayDismissedKeys.forEach(function(k) { if (!currentIds.has(k)) _alertTrayDismissedKeys.delete(k); });
   _prevExitSignalIds = currentIds;
 
   _exitSignals = signals;
@@ -3622,6 +3694,9 @@ function renderExitSignals() {
       else card.appendChild(banner);
     });
   });
+
+  // Update persistent alert tray
+  updateAlertTray();
 }
 
 // Browser Notification API
@@ -3643,6 +3718,140 @@ function fireExitNotification(signal) {
       requireInteraction: signal.severity === 'danger'
     });
   } catch (e) {}
+}
+
+// ── PERSISTENT ALERT TRAY SYSTEM ──
+var _alertTrayDismissedKeys = new Set(); // dismissed signals (reset on new signals)
+var _alertTrayCollapsed = false;
+var _titleFlashTimer = null;
+var _originalTitle = 'Terminal Pro Vol 2';
+
+function updateAlertTray() {
+  var tray = document.getElementById('alertTray');
+  var collapsed = document.getElementById('alertTrayCollapsed');
+  var countEl = document.getElementById('alertTrayCount');
+  var itemsEl = document.getElementById('alertTrayItems');
+  var collapsedText = document.getElementById('alertTrayCollapsedText');
+  if (!tray || !collapsed) return;
+
+  // Filter out dismissed signals
+  var active = _exitSignals.filter(function(s) {
+    return !_alertTrayDismissedKeys.has(s.pairId + ':' + s.trigger);
+  });
+
+  // Determine severity class
+  var sevClass = active.some(function(s){return s.severity==='danger';}) ? 'danger' :
+                 active.some(function(s){return s.severity==='warning';}) ? 'warning' : 'profit';
+
+  // Update document title with badge count
+  updateTitleBadge(active.length, active);
+
+  if (active.length === 0) {
+    tray.classList.remove('open','has-danger','has-warning','has-profit');
+    collapsed.classList.remove('visible','danger','warning','profit');
+    stopTitleFlash();
+    return;
+  }
+
+  // Update count badge
+  countEl.textContent = active.length;
+  countEl.className = 'alert-tray-count ' + sevClass;
+
+  // Update collapsed bar
+  collapsedText.textContent = active.length + ' exit signal' + (active.length > 1 ? 's' : '');
+  collapsed.className = 'alert-tray-collapsed ' + sevClass + (_alertTrayCollapsed ? ' visible' : '');
+
+  // Severity border on tray
+  tray.className = 'alert-tray' + (_alertTrayCollapsed ? '' : ' open') + ' has-' + sevClass;
+
+  // Build tray items
+  var triggerLabels = {
+    'STATISTICAL_TARGET':'Target Reached','TIME_STOP':'Time Stop',
+    'STOP_LOSS':'Stop Loss','PARTIAL_PROFIT':'Take Partial',
+    'FULL_TARGET':'Target Hit','STAGNATION':'Stagnant'
+  };
+  var icons = {danger:'&#9888;',warning:'&#9200;',profit:'&#9989;'};
+
+  var h = '';
+  active.forEach(function(s) {
+    var si = String(s.pairId).replace(/'/g, "\\'");
+    h += '<div class="alert-tray-item ' + s.severity + '">';
+    h += '<div class="alert-tray-item-icon">' + (icons[s.severity]||'&#9888;') + '</div>';
+    h += '<div class="alert-tray-item-body">';
+    h += '<div class="alert-tray-item-top">';
+    h += '<span class="alert-tray-item-pair">' + s.pairId + '</span>';
+    h += '<span class="alert-tray-item-trigger ' + s.severity + '">' + (triggerLabels[s.trigger]||s.trigger) + '</span>';
+    h += '</div>';
+    h += '<div class="alert-tray-item-msg">' + s.message + '</div>';
+    h += '</div>';
+    h += '<div class="alert-tray-item-meta">';
+    h += '<span>' + s.currentZ.toFixed(2) + '\u03C3</span>';
+    h += '<span>' + (s.unrealizedPnl >= 0 ? '+' : '') + parseFloat(s.unrealizedPnl).toFixed(0) + '$</span>';
+    h += '</div>';
+    h += '<button class="alert-tray-item-action" onclick="openCloseModal(\'' + si + '\',null)">Close</button>';
+    h += '</div>';
+  });
+  itemsEl.innerHTML = h;
+
+  // Start title flash for danger/warning
+  if (active.some(function(s){return s.severity==='danger'||s.severity==='warning';})) {
+    startTitleFlash(active);
+  } else {
+    stopTitleFlash();
+  }
+}
+
+function dismissAlertTray() {
+  _exitSignals.forEach(function(s) {
+    _alertTrayDismissedKeys.add(s.pairId + ':' + s.trigger);
+  });
+  updateAlertTray();
+}
+
+function collapseAlertTray() {
+  _alertTrayCollapsed = true;
+  updateAlertTray();
+}
+
+function expandAlertTray() {
+  _alertTrayCollapsed = false;
+  updateAlertTray();
+}
+
+function updateTitleBadge(count, signals) {
+  if (count === 0) {
+    document.title = _originalTitle;
+    return;
+  }
+  document.title = '(' + count + ') ' + _originalTitle;
+}
+
+function startTitleFlash(signals) {
+  if (_titleFlashTimer) return; // already flashing
+  var dangerSignals = signals.filter(function(s){return s.severity==='danger';});
+  var urgentSignal = dangerSignals.length > 0 ? dangerSignals[0] : signals[0];
+  var flashText = '\u26A0 EXIT NOW \u2014 ' + urgentSignal.pairId;
+  var count = signals.length;
+  var isFlash = false;
+  _titleFlashTimer = setInterval(function() {
+    isFlash = !isFlash;
+    document.title = isFlash ? flashText : '(' + count + ') ' + _originalTitle;
+  }, 1500);
+}
+
+function stopTitleFlash() {
+  if (_titleFlashTimer) {
+    clearInterval(_titleFlashTimer);
+    _titleFlashTimer = null;
+  }
+  var active = _exitSignals.filter(function(s) {
+    return !_alertTrayDismissedKeys.has(s.pairId + ':' + s.trigger);
+  });
+  if (active.length > 0) {
+    document.title = '(' + active.length + ') ' + _originalTitle;
+  } else {
+    document.title = _originalTitle;
+  }
 }
 
 // ── PORTFOLIO EXIT TRACKING (legacy backtest-based) ──
