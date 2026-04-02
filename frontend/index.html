@@ -534,6 +534,14 @@ th .th-hint{font-weight:400;font-size:8px;letter-spacing:0;text-transform:none;c
 <div class="live-switch"><span class="switch-label">Live (5m)</span><label><input type="checkbox" class="switch-input" id="autoRefresh" onchange="toggleLive()"><div class="switch-slider"></div></label></div>
 <div class="conn-dot loading" id="connDot" title="API Status"></div>
 </div>
+<div id="pairSweepBar" style="background:var(--card);border-bottom:1px solid var(--border);padding:10px 20px;display:flex;align-items:center;justify-content:center;gap:10px;position:sticky;top:54px;z-index:999;backdrop-filter:blur(10px)">
+<span style="font-size:9px;font-weight:900;color:var(--subtext);text-transform:uppercase;letter-spacing:1.5px;white-space:nowrap">Pair Sweep</span>
+<input type="text" id="sweepTickerA" placeholder="Ticker A" style="width:100px;padding:7px 12px;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:6px;outline:none;font-size:12px;font-family:'JetBrains Mono',monospace;text-transform:uppercase" onkeydown="if(event.key==='Enter')runPairSweep()">
+<input type="text" id="sweepTickerB" placeholder="Ticker B" style="width:100px;padding:7px 12px;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:6px;outline:none;font-size:12px;font-family:'JetBrains Mono',monospace;text-transform:uppercase" onkeydown="if(event.key==='Enter')runPairSweep()">
+<input type="number" id="sweepMaxHold" value="60" min="10" max="120" title="Max Hold Days" style="width:55px;padding:7px 8px;background:var(--bg);border:1px solid var(--border);color:var(--subtext);border-radius:6px;outline:none;font-size:11px;text-align:center" onkeydown="if(event.key==='Enter')runPairSweep()">
+<button onclick="runPairSweep()" style="padding:7px 18px;background:var(--accent);color:#fff;border:none;border-radius:6px;font-size:10px;font-weight:900;text-transform:uppercase;letter-spacing:1px;cursor:pointer;transition:.2s;white-space:nowrap" onmouseover="this.style.opacity='0.85'" onmouseout="this.style.opacity='1'">Sweep</button>
+<div id="sweepResultWrap" style="display:none;margin-left:10px;flex:1;max-width:800px"></div>
+</div>
 <div class="container">
 <div id="alerts" class="tab-content active" data-mode="intra">
 <div class="strategy-switch"><div class="strat-pill intra active" onclick="switchMode('intra',this)">Intra-Company</div><div class="strat-pill credit" onclick="switchMode('credit',this)">Credit Arb</div></div>
@@ -2785,6 +2793,43 @@ var body=document.getElementById('osPanelBody');
 var arrow=document.getElementById('osPanelArrow');
 if(body.style.display==='none'){body.style.display='block';arrow.style.transform='rotate(90deg)';}
 else{body.style.display='none';arrow.style.transform='rotate(0deg)';}
+}
+async function runPairSweep(){
+var tA=(document.getElementById('sweepTickerA').value||'').toUpperCase().trim();
+var tB=(document.getElementById('sweepTickerB').value||'').toUpperCase().trim();
+var maxHold=parseInt(document.getElementById('sweepMaxHold').value)||60;
+var wrap=document.getElementById('sweepResultWrap');
+if(!tA||!tB){wrap.style.display='flex';wrap.innerHTML='<span style="color:var(--high);font-size:11px;font-weight:700">Enter both tickers</span>';return;}
+wrap.style.display='flex';wrap.innerHTML='<span style="color:var(--subtext);font-size:11px">Sweeping '+tA+' / '+tB+'...</span>';
+try{
+var res=await apiGet('sweepPair',{tA:tA,tB:tB,maxHold:maxHold},60000);
+var d=res.sweepResult;
+if(!d||d.error){wrap.innerHTML='<span style="color:var(--high);font-size:11px;font-weight:700">'+((d&&d.error)||'No result')+'</span>';return;}
+if(!d.best){wrap.innerHTML='<span style="color:var(--yellow);font-size:11px;font-weight:700">No valid combos found (need 3+ trades per combo). History: '+d.historyDays+' days</span>';return;}
+var b=d.best;
+var zColor=d.currentZ!==null?(Math.abs(d.currentZ)>=1.8?'var(--high)':Math.abs(d.currentZ)>=1.0?'var(--yellow)':'var(--low)'):'var(--subtext)';
+wrap.innerHTML=''
++'<div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">'
++'<div style="font-size:10px;color:var(--subtext);line-height:1.6">'
++'<span style="font-weight:900;color:var(--text)">'+d.tA+' / '+d.tB+'</span>'
++'<span style="margin-left:8px;color:'+zColor+';font-family:\'JetBrains Mono\',monospace">Z: '+(d.currentZ!==null?d.currentZ:'—')+'</span>'
++'<span style="margin-left:6px;color:var(--subtext);font-size:9px">('+d.historyDays+'d hist)</span>'
++'</div>'
++'<div style="display:flex;gap:12px;flex-wrap:wrap">'
++sweepStat('Entry Z',b.entryZ,'var(--accent)')
++sweepStat('Exit Z',b.exitZ,'var(--low)')
++sweepStat('Avg Hold',b.avgHold+'d','var(--text)')
++sweepStat('Trades',b.trades,'var(--text)')
++sweepStat('Win Rate',b.winRate+'%',b.winRate>=60?'var(--low)':b.winRate>=45?'var(--yellow)':'var(--high)')
++sweepStat('Avg P&L','$'+b.avgPnl,b.avgPnl>=0?'var(--low)':'var(--high)')
++sweepStat('PF',b.profitFactor,b.profitFactor>=1.5?'var(--low)':b.profitFactor>=1?'var(--yellow)':'var(--high)')
++'</div>'
++'<button onclick="document.getElementById(\'sweepResultWrap\').style.display=\'none\'" style="background:none;border:none;color:var(--subtext);cursor:pointer;font-size:14px;padding:0 4px" title="Close">&times;</button>'
++'</div>';
+}catch(err){wrap.innerHTML='<span style="color:var(--high);font-size:11px;font-weight:700">Error: '+err.message+'</span>';}
+}
+function sweepStat(label,val,color){
+return '<div style="text-align:center;min-width:55px"><div style="font-size:9px;color:var(--subtext);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:2px">'+label+'</div><div style="font-size:13px;font-weight:900;color:'+color+';font-family:\'JetBrains Mono\',monospace">'+val+'</div></div>';
 }
 async function runOptimalSweep(){
 var btn=document.getElementById('osRunBtn');

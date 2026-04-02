@@ -172,6 +172,12 @@ function doGet(e) {
       var osMode = (e && e.parameter && e.parameter.mode) ? e.parameter.mode : 'all';
       result = { ok: true, sweepData: runOptimalSweep_(osMaxHold, osMode) };
     }
+    else if (action === 'sweepPair') {
+      var spTA = (e && e.parameter && e.parameter.tA) ? e.parameter.tA : '';
+      var spTB = (e && e.parameter && e.parameter.tB) ? e.parameter.tB : '';
+      var spMaxHold = parseInt((e && e.parameter && e.parameter.maxHold) || 60);
+      result = { ok: true, sweepResult: sweepSinglePair_(spTA, spTB, spMaxHold) };
+    }
     else if (action === 'getExitAlerts') {
       result = { ok: true, exitAlerts: getExitAlerts_() };
     }
@@ -4006,6 +4012,125 @@ function runSensitivitySweep_(maxHold, mode, pairId) {
     };
   } catch(e) {
     console.error('runSensitivitySweep_ error: ' + e);
+    return { error: e.toString() };
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// SINGLE PAIR SWEEP — parameter optimization for a user-specified pair
+// ═══════════════════════════════════════════════════════════════════
+function sweepSinglePair_(tA, tB, maxHold) {
+  try {
+    tA = (tA || '').toUpperCase().trim();
+    tB = (tB || '').toUpperCase().trim();
+    if (!tA || !tB) return { error: 'Both tA and tB are required' };
+    maxHold = maxHold || 60;
+
+    var ss = SpreadsheetApp.getActive();
+    var histMap = readTickerHistMap_(ss);
+    if (Object.keys(histMap).length === 0) return { error: 'No history data available' };
+
+    var histA = histMap[tA];
+    var histB = histMap[tB];
+    if (!histA) return { error: 'No history for ticker ' + tA };
+    if (!histB) return { error: 'No history for ticker ' + tB };
+
+    var WINDOW = 30;
+    var len = Math.min(histA.length, histB.length);
+    if (len < WINDOW + 5) return { error: 'Insufficient history (' + len + ' days). Need at least ' + (WINDOW + 5) + '.' };
+
+    var pA = histA.slice(histA.length - len);
+    var pB = histB.slice(histB.length - len);
+
+    // Compute rolling Z-score series
+    var zArr = new Array(len);
+    for (var day = WINDOW; day < len; day++) {
+      var sumSpr = 0, sumSprSq = 0;
+      for (var w = day - WINDOW; w < day; w++) {
+        var spr = pA[w] - pB[w];
+        sumSpr += spr;
+        sumSprSq += spr * spr;
+      }
+      var rollMean = sumSpr / WINDOW;
+      var rollVar = (sumSprSq / WINDOW) - (rollMean * rollMean);
+      var rollStdev = rollVar > 0 ? Math.sqrt(rollVar * WINDOW / (WINDOW - 1)) : 0.001;
+      zArr[day] = (pA[day] - pB[day] - rollMean) / rollStdev;
+    }
+
+    // Current Z (last value)
+    var currentZ = zArr[len - 1] !== undefined ? parseFloat(zArr[len - 1].toFixed(2)) : null;
+
+    // Sweep all entry/exit combos
+    var entryGrid = [1.5, 1.8, 2.0, 2.2, 2.5, 2.8, 3.0];
+    var exitGrid  = [0.0, 0.25, 0.5, 0.75, 1.0, 1.25, 1.5];
+    var MIN_TRADES = 3;
+    var bestAvgPnl = -Infinity;
+    var bestCombo = null;
+    var allCombos = [];
+
+    for (var ei = 0; ei < entryGrid.length; ei++) {
+      var zThreshold = entryGrid[ei];
+      for (var xi = 0; xi < exitGrid.length; xi++) {
+        var exitZ = exitGrid[xi];
+        if (exitZ >= zThreshold) continue;
+
+        var trades = 0, wins = 0, totalPnl = 0, grossWin = 0, grossLoss = 0, holdSum = 0;
+        var openEntry = null;
+        for (var day = WINDOW; day < len; day++) {
+          var z = zArr[day];
+          if (z === undefined) continue;
+          if (!openEntry) {
+            if (Math.abs(z) >= zThreshold) {
+              openEntry = { day: day, z: z, dirA: z > 0 ? -1 : 1, dirB: z > 0 ? 1 : -1, pA: pA[day], pB: pB[day] };
+            }
+          } else {
+            var hold = day - openEntry.day;
+            if (Math.abs(z) <= exitZ || hold >= maxHold) {
+              var pnl = ((pA[day] - openEntry.pA) * openEntry.dirA + (pB[day] - openEntry.pB) * openEntry.dirB) * 100;
+              trades++;
+              totalPnl += pnl;
+              holdSum += hold;
+              if (pnl > 0) { wins++; grossWin += pnl; } else { grossLoss += Math.abs(pnl); }
+              openEntry = null;
+            }
+          }
+        }
+
+        if (trades >= MIN_TRADES) {
+          var avgPnl = totalPnl / trades;
+          var combo = {
+            entryZ: zThreshold,
+            exitZ: exitZ,
+            avgPnl: parseFloat(avgPnl.toFixed(2)),
+            winRate: parseFloat((wins / trades * 100).toFixed(1)),
+            trades: trades,
+            avgHold: parseFloat((holdSum / trades).toFixed(1)),
+            totalPnl: parseFloat(totalPnl.toFixed(2)),
+            profitFactor: grossLoss > 0 ? parseFloat((grossWin / grossLoss).toFixed(2)) : (grossWin > 0 ? 99.9 : 0)
+          };
+          allCombos.push(combo);
+          if (avgPnl > bestAvgPnl) {
+            bestAvgPnl = avgPnl;
+            bestCombo = combo;
+          }
+        }
+      }
+    }
+
+    // Sort all combos by avgPnl descending, return top 5
+    allCombos.sort(function(a, b) { return b.avgPnl - a.avgPnl; });
+
+    return {
+      tA: tA,
+      tB: tB,
+      currentZ: currentZ,
+      historyDays: len,
+      maxHold: maxHold,
+      best: bestCombo,
+      topCombos: allCombos.slice(0, 5)
+    };
+  } catch(e) {
+    console.error('sweepSinglePair_ error: ' + e);
     return { error: e.toString() };
   }
 }
