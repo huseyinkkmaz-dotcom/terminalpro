@@ -1445,6 +1445,7 @@ function renderModelPortfolios(mp){
   document.getElementById('mpEmpty').style.display='none';
   var grid=document.getElementById('mpGrid');
   grid.style.display='grid';
+  window._mpExitParams=[];
   var h='';
   portfolios.forEach(function(p,idx){
     var pairs=p.pairs||[];
@@ -1567,11 +1568,12 @@ function renderModelPortfolios(mp){
       }
       h+='<td style="padding:8px;text-align:center;font-size:9px"><span style="color:var(--low);font-weight:900">L:'+((pz>0)?pr.tB:pr.tA)+'</span> <span style="color:var(--subtext)">/</span> <span style="color:var(--high);font-weight:900">S:'+((pz>0)?pr.tA:pr.tB)+'</span></td>';
       // Enter Trade button with exit params from model portfolio
-      var _mpEp=JSON.stringify({targetExitZ:parseFloat(pr.optExit||0.5).toFixed(2),profitCapturePct:pc!=null?pc.toFixed(0):'60',partialAtPct:'50',sourcePortfolio:'MP#'+p.rank,maxHoldDays:pDays||60}).replace(/'/g,'\\x27');
+      var _epIdx=window._mpExitParams.length;
+      window._mpExitParams.push({targetExitZ:parseFloat(pr.optExit||0.5).toFixed(2),profitCapturePct:pc!=null?pc.toFixed(0):'60',partialAtPct:'50',sourcePortfolio:'MP#'+p.rank,maxHoldDays:pDays||60});
       var _prTa=(pr.tA||'').replace(/'/g,"\\'");
       var _prTb=(pr.tB||'').replace(/'/g,"\\'");
       var _prId=(pr.id||'').replace(/'/g,"\\'");
-      h+='<td style="padding:8px;text-align:center"><button onclick="openModal(\''+_prId+'\',\''+_prTa+'\',\''+_prTb+'\',JSON.parse(\''+_mpEp+'\'))" style="background:var(--accent);color:#000;border:none;border-radius:4px;padding:4px 10px;font-size:9px;font-weight:900;cursor:pointer;text-transform:uppercase">Trade</button></td>';
+      h+='<td style="padding:8px;text-align:center"><button onclick="openModal(\''+_prId+'\',\''+_prTa+'\',\''+_prTb+'\',window._mpExitParams['+_epIdx+'])" style="background:var(--accent);color:#000;border:none;border-radius:4px;padding:4px 10px;font-size:9px;font-weight:900;cursor:pointer;text-transform:uppercase">Trade</button></td>';
       h+='</tr>';
     });
     h+='</tbody></table>';
