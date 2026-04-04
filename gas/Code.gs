@@ -14,6 +14,12 @@
  *   W(22):CurVol  X(23):VolSpike
  */
 // ============================================================
+// CONSTANTS
+// ============================================================
+var MIN_STDEV = 0.001; // Minimum meaningful standard deviation — used across alerts, backtests, and basket metrics
+var MIN_WIN_RATE_SAMPLES = 5; // Minimum trigger events required for a win rate to be considered reliable
+
+// ============================================================
 // ROUTING
 // ============================================================
 function doGet(e) {
@@ -494,7 +500,7 @@ function getAlertData(mode) {
       // 2) HistCount >= 40 — catches new tickers with too little data (wild Z-scores)
       var stdev = parseFloat(row[11]) || 0;
       var histCount = parseFloat(row[16]) || 0;
-      if (stdev <= 0.001 || histCount < 40) { _diag.noHistory++; continue; }
+      if (stdev <= MIN_STDEV || histCount < 40) { _diag.noHistory++; continue; }
 
       // FILTER: coupon must exist (exclude variable/reset)
       var couponA = row[8];
@@ -904,7 +910,7 @@ function getBasketAnalytics() {
         var std = Math.sqrt(sq / denom);
         var current = basketValues[basketValues.length - 1];
         rollingZ[n + 'd'] = {
-          z: std > 0.0001 ? parseFloat(((current - mean) / std).toFixed(2)) : 0,
+          z: std > MIN_STDEV ? parseFloat(((current - mean) / std).toFixed(2)) : 0,
           mean: parseFloat(mean.toFixed(4)),
           std: parseFloat(std.toFixed(4)),
           dataPoints: slice.length
@@ -1050,7 +1056,7 @@ function computeBasketMetrics_(legs, histMap, customWindows) {
       for (var k = 0; k < slice.length; k++) sq += (slice[k] - mean) * (slice[k] - mean);
       var denom = slice.length > 1 ? slice.length - 1 : 1;
       var std = Math.sqrt(sq / denom);
-      var z = std > 0.0001 ? (currentValue - mean) / std : 0;
+      var z = std > MIN_STDEV ? (currentValue - mean) / std : 0;
       var expectedProfit = mean - currentValue; // positive = portfolio should revert UP (per-share)
       rollingZ[n + 'd'] = {
         z: parseFloat(z.toFixed(2)),
@@ -1127,7 +1133,7 @@ function computeBasketMAE_(dailyValues, rollingZ, totalWeight) {
 
   var mean = rz.mean;
   var std = rz.std;
-  if (std < 0.0001) return result;
+  if (std < MIN_STDEV) return result;
 
   // Track the worst deviation from mean across the entire series
   var worstMae = 0;
@@ -1486,9 +1492,10 @@ function computeHistoricalProbabilities_(dailyValues, refValue, rollingZ, totalW
     widenCountByWindow[wKey] = { widenCount: widenCount, eligible: eligible };
 
     result.winRates[wKey] = {
-      rate: eligible > 0 ? parseFloat((wins / eligible * 100).toFixed(1)) : 0,
+      rate: eligible >= MIN_WIN_RATE_SAMPLES ? parseFloat((wins / eligible * 100).toFixed(1)) : 0,
       wins: wins,
-      eligible: eligible
+      eligible: eligible,
+      insufficient: eligible < MIN_WIN_RATE_SAMPLES
     };
   }
 
@@ -1699,9 +1706,10 @@ function computeHistoricalProbabilitiesWide_(dailyValues, refValue, rollingZ, to
     }
     widenCountByWindow[wKey] = { widenCount: widenCount, eligible: eligible };
     result.winRates[wKey] = {
-      rate: eligible > 0 ? parseFloat((wins / eligible * 100).toFixed(1)) : 0,
+      rate: eligible >= MIN_WIN_RATE_SAMPLES ? parseFloat((wins / eligible * 100).toFixed(1)) : 0,
       wins: wins,
-      eligible: eligible
+      eligible: eligible,
+      insufficient: eligible < MIN_WIN_RATE_SAMPLES
     };
   }
 
@@ -2062,9 +2070,9 @@ function getPortfolioAnalytics(mode, legsJson) {
         var wrObj30 = pairProb.winRates && pairProb.winRates['30d'] ? pairProb.winRates['30d'] : null;
         var wrObj60 = pairProb.winRates && pairProb.winRates['60d'] ? pairProb.winRates['60d'] : null;
         var wrObj90 = pairProb.winRates && pairProb.winRates['90d'] ? pairProb.winRates['90d'] : null;
-        var wr30 = wrObj30 && wrObj30.eligible >= 2 ? wrObj30.rate : null;
-        var wr60 = wrObj60 && wrObj60.eligible >= 2 ? wrObj60.rate : null;
-        var wr90 = wrObj90 && wrObj90.eligible >= 2 ? wrObj90.rate : null;
+        var wr30 = wrObj30 && !wrObj30.insufficient ? wrObj30.rate : null;
+        var wr60 = wrObj60 && !wrObj60.insufficient ? wrObj60.rate : null;
+        var wr90 = wrObj90 && !wrObj90.insufficient ? wrObj90.rate : null;
         var ep30 = pairRZ['30d'] && !pairRZ['30d'].insufficient ? pairRZ['30d'].expectedProfit : null;
         var ep60 = pairRZ['60d'] && !pairRZ['60d'].insufficient ? pairRZ['60d'].expectedProfit : null;
         var ep90 = pairRZ['90d'] && !pairRZ['90d'].insufficient ? pairRZ['90d'].expectedProfit : null;
@@ -3113,7 +3121,8 @@ function getJournalAnalytics_() {
     var avgLoss = losses > 0 ? pnls.filter(function(p){return p<=0;}).reduce(function(a,b){return a+b;},0) / losses : 0;
     var grossProfits = pnls.filter(function(p){return p>0;}).reduce(function(a,b){return a+b;},0);
     var grossLosses = Math.abs(pnls.filter(function(p){return p<=0;}).reduce(function(a,b){return a+b;},0));
-    var profitFactor = grossLosses > 0 ? parseFloat((grossProfits / grossLosses).toFixed(2)) : (grossProfits > 0 ? 99.99 : 0);
+    // When no losses, scale PF cap by sample size (2 trades = PF 2.0, 10+ trades = PF 10.0) to avoid over-trusting tiny all-win samples
+    var profitFactor = grossLosses > 0 ? parseFloat((grossProfits / grossLosses).toFixed(2)) : (grossProfits > 0 ? Math.min(totalTrades, 10) : 0);
 
     // Expectancy = (WinRate × AvgWin) - (LossRate × |AvgLoss|)
     var expectancy = (winRate/100 * avgWin) - ((1 - winRate/100) * Math.abs(avgLoss));
@@ -3202,7 +3211,7 @@ function getDividendCapture_() {
         if (priceA <= 0 || priceB <= 0) continue;
         var mean = parseFloat(row[10]) || 0;
         var stdev = parseFloat(row[11]) || 0;
-        if (stdev <= 0.001) continue;
+        if (stdev <= MIN_STDEV) continue;
         var z = parseFloat(row[12]) || 0;
         var yieldA = parseFloat(row[6]) || 0;
         var yieldB = parseFloat(row[7]) || 0;
@@ -3320,7 +3329,7 @@ function runBacktest_(zThreshold, exitZ, maxHold, mode) {
         var cid = cleanId(lvlData[li][0]);
         var mn = parseFloat(lvlData[li][1]) || 0;
         var sd = parseFloat(lvlData[li][2]) || 0;
-        if (sd > 0.001) statsMap[cid] = { mean: mn, stdev: sd };
+        if (sd > MIN_STDEV) statsMap[cid] = { mean: mn, stdev: sd };
       }
     }
 
@@ -3371,8 +3380,10 @@ function runBacktest_(zThreshold, exitZ, maxHold, mode) {
         }
         var rollMean = sumSpr / WINDOW;
         var rollVar = (sumSprSq / WINDOW) - (rollMean * rollMean);
-        var rollStdev = rollVar > 0 ? Math.sqrt(rollVar * WINDOW / (WINDOW - 1)) : 0.001;
+        var rollStdev = rollVar > 0 ? Math.sqrt(rollVar * WINDOW / (WINDOW - 1)) : 0;
         var spread = pricesA[day] - pricesB[day];
+        // Skip days with zero variance — no meaningful Z-score (prevents phantom signals)
+        if (rollStdev <= MIN_STDEV) { if (openTrade) { /* keep trade open, just skip signal */ } continue; }
         var zScore = (spread - rollMean) / rollStdev;
 
         if (!openTrade) {
@@ -3940,8 +3951,9 @@ function runSensitivitySweep_(maxHold, mode, pairId) {
         }
         var rollMean = sumSpr / WINDOW;
         var rollVar = (sumSprSq / WINDOW) - (rollMean * rollMean);
-        var rollStdev = rollVar > 0 ? Math.sqrt(rollVar * WINDOW / (WINDOW - 1)) : 0.001;
-        zArr[day] = (pA[day] - pB[day] - rollMean) / rollStdev;
+        var rollStdev = rollVar > 0 ? Math.sqrt(rollVar * WINDOW / (WINDOW - 1)) : 0;
+        // Zero variance → neutral Z (no phantom signal)
+        zArr[day] = rollStdev > MIN_STDEV ? (pA[day] - pB[day] - rollMean) / rollStdev : 0;
       }
       zSeriesList.push({ z: zArr, pA: pA, pB: pB, len: len, start: WINDOW });
     }
@@ -4056,8 +4068,8 @@ function sweepSinglePair_(tA, tB) {
       }
       var rollMean = sumSpr / WINDOW;
       var rollVar = (sumSprSq / WINDOW) - (rollMean * rollMean);
-      var rollStdev = rollVar > 0 ? Math.sqrt(rollVar * WINDOW / (WINDOW - 1)) : 0.001;
-      zArr[day] = (pA[day] - pB[day] - rollMean) / rollStdev;
+      var rollStdev = rollVar > 0 ? Math.sqrt(rollVar * WINDOW / (WINDOW - 1)) : 0;
+      zArr[day] = rollStdev > MIN_STDEV ? (pA[day] - pB[day] - rollMean) / rollStdev : 0;
     }
 
     // Current Z: look up from WebCache/WebCacheCredit for exact match with alerts
@@ -4120,7 +4132,7 @@ function sweepSinglePair_(tA, tB) {
               trades: trades,
               avgHold: parseFloat((holdSum / trades).toFixed(1)),
               totalPnl: parseFloat(totalPnl.toFixed(2)),
-              profitFactor: grossLoss > 0 ? parseFloat((grossWin / grossLoss).toFixed(2)) : (grossWin > 0 ? 99.9 : 0)
+              profitFactor: grossLoss > 0 ? parseFloat((grossWin / grossLoss).toFixed(2)) : (grossWin > 0 ? Math.min(trades, 10) : 0)
             };
             allCombos.push(combo);
             if (avgPnl > bestAvgPnl) {
@@ -4247,8 +4259,8 @@ function runOptimalSweep_(maxHold, mode) {
         }
         var rollMean = sumSpr / WINDOW;
         var rollVar = (sumSprSq / WINDOW) - (rollMean * rollMean);
-        var rollStdev = rollVar > 0 ? Math.sqrt(rollVar * WINDOW / (WINDOW - 1)) : 0.001;
-        zArr[day] = (pA[day] - pB[day] - rollMean) / rollStdev;
+        var rollStdev = rollVar > 0 ? Math.sqrt(rollVar * WINDOW / (WINDOW - 1)) : 0;
+        zArr[day] = rollStdev > MIN_STDEV ? (pA[day] - pB[day] - rollMean) / rollStdev : 0;
       }
 
       // Sweep all entry/exit combos, find the one with best avgPnl
@@ -4295,7 +4307,7 @@ function runOptimalSweep_(maxHold, mode) {
                 trades: trades,
                 avgHold: parseFloat((holdSum / trades).toFixed(1)),
                 totalPnl: parseFloat(totalPnl.toFixed(2)),
-                profitFactor: grossLoss > 0 ? parseFloat((grossWin / grossLoss).toFixed(2)) : (grossWin > 0 ? 99.9 : 0)
+                profitFactor: grossLoss > 0 ? parseFloat((grossWin / grossLoss).toFixed(2)) : (grossWin > 0 ? Math.min(trades, 10) : 0)
               };
             }
           }
@@ -5930,8 +5942,8 @@ function miniSweepSinglePair_(tA, tB, histMap, maxHold) {
     }
     var rollMean = sumSpr / WINDOW;
     var rollVar = (sumSprSq / WINDOW) - (rollMean * rollMean);
-    var rollStdev = rollVar > 0 ? Math.sqrt(rollVar * WINDOW / (WINDOW - 1)) : 0.001;
-    zArr[day] = (pA[day] - pB[day] - rollMean) / rollStdev;
+    var rollStdev = rollVar > 0 ? Math.sqrt(rollVar * WINDOW / (WINDOW - 1)) : 0;
+    zArr[day] = rollStdev > MIN_STDEV ? (pA[day] - pB[day] - rollMean) / rollStdev : 0;
   }
 
   // ── Anti-overfitting constants ──

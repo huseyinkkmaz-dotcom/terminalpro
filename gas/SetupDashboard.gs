@@ -84,7 +84,7 @@ function setupAllBatched() {
         statsF.push([
           '=Pairs!A' + (i + 2),
           '=IFERROR(AVERAGE(G' + r + ':' + r + '), 0)',
-          '=IFERROR(STDEV(G' + r + ':' + r + '), 0.001)',
+          '=IFERROR(STDEV(G' + r + ':' + r + '), 0)',
           '=IFERROR(PERCENTILE(G' + r + ':' + r + ', 0.05), 0)',
           '=IFERROR(PERCENTILE(G' + r + ':' + r + ', 0.95), 0)',
           '=COUNTA(G' + r + ':' + r + ')'
@@ -203,24 +203,7 @@ function setupAllBatched() {
     // --- PHASE 6: Finalize + populate WebCache ---
     if (state.phase === 6) {
       Logger.log('Phase 6: Finalizing...');
-      // Install triggers only if they don't already exist (createAutoTrigger may have set them)
-      var existingTriggers = {};
-      var triggers = ScriptApp.getProjectTriggers();
-      for (var i = 0; i < triggers.length; i++) {
-        existingTriggers[triggers[i].getHandlerFunction()] = true;
-      }
-      if (!existingTriggers['snapshotZScores']) {
-        ScriptApp.newTrigger('snapshotZScores').timeBased().everyHours(1).create();
-        Logger.log('Installed snapshotZScores trigger.');
-      }
-      if (!existingTriggers['dailyCreditRefresh']) {
-        ScriptApp.newTrigger('dailyCreditRefresh').timeBased().atHour(5).everyDays(1).create();
-        Logger.log('Installed dailyCreditRefresh trigger.');
-      }
-      if (!existingTriggers['updateLivePrices']) {
-        ScriptApp.newTrigger('updateLivePrices').timeBased().everyMinutes(10).create();
-        Logger.log('Installed updateLivePrices trigger.');
-      }
+      // Triggers are installed by createAutoTrigger() — not duplicated here.
       // Populate WebCache immediately so frontend has data right away
       SpreadsheetApp.flush();
       Utilities.sleep(3000); // Brief pause for GOOGLEFINANCE formula recalculation
@@ -1091,92 +1074,11 @@ function updateLivePrices() {
 // ============================================================
 /** Returns the number of pairs generated */
 function generateCreditPairsBatched_(ss) {
-  var master = ss.getSheetByName('Master');
-  if (!master) return 0;
-  var data = master.getDataRange().getValues();
-  if (data.length < 2) return 0;
-
-  // Build company map from Pairs sheet (union-find)
-  var companyOf = {};
-  var intraPairs = {};
-  var pairsSheet = ss.getSheetByName('Pairs');
-  if (pairsSheet) {
-    var pData = pairsSheet.getDataRange().getValues();
-    for (var i = 1; i < pData.length; i++) {
-      var ptA = String(pData[i][1]).trim().toUpperCase();
-      var ptB = String(pData[i][2]).trim().toUpperCase();
-      if (!ptA || !ptB) continue;
-      intraPairs[cleanId_(ptA) + "_" + cleanId_(ptB)] = true;
-      intraPairs[cleanId_(ptB) + "_" + cleanId_(ptA)] = true;
-      var labelA = companyOf[ptA], labelB = companyOf[ptB];
-      if (labelA && labelB) {
-        if (labelA !== labelB) { for (var t in companyOf) { if (companyOf[t] === labelB) companyOf[t] = labelA; } }
-      } else if (labelA) { companyOf[ptB] = labelA; }
-      else if (labelB) { companyOf[ptA] = labelB; }
-      else { var lbl = ptA.replace(/-.*/, ''); companyOf[ptA] = lbl; companyOf[ptB] = lbl; }
-    }
-  }
-
-  // Group by credit rating
-  // FIX: String(undefined) returns "undefined" (truthy) — must guard against it.
-  // Also exclude "Non-Rated" tickers entirely from credit arb pairing.
-  var groups = {};
-  for (var i = 1; i < data.length; i++) {
-    var ticker = String(data[i][0]).trim();
-    var coupon = data[i][2];
-    var curYield = data[i][3];
-    var rawRating = data[i][4];
-    var rating = (rawRating != null && rawRating !== '') ? String(rawRating).trim() : '';
-    if (rating === 'undefined' || rating === 'null') rating = '';
-    if (!ticker) continue;
-    if (coupon === "" || coupon === null || coupon === undefined) continue;
-    if (curYield === "" || curYield === null || curYield === undefined) continue;
-    var upper = ticker.toUpperCase();
-    if (!companyOf[upper]) companyOf[upper] = upper.replace(/-.*/, '');
-    // Skip non-rated tickers entirely — too much noise in cross-rating comparison
-    if (!rating || rating === 'Non-Rated' || rating === 'NR') continue;
-    if (!groups[rating]) groups[rating] = [];
-    groups[rating].push(ticker);
-  }
-
-  // Same-rating pairs (with dedup map)
-  var allPairs = [];
-  var seen = {};
-  for (var rating in groups) {
-    var tickers = groups[rating];
-    if (tickers.length < 2) continue;
-    tickers.sort();
-    for (var a = 0; a < tickers.length; a++) {
-      for (var b = a + 1; b < tickers.length; b++) {
-        var tA = tickers[a], tB = tickers[b];
-        if (intraPairs[cleanId_(tA) + "_" + cleanId_(tB)]) continue;
-        var coA = companyOf[tA.toUpperCase()] || tA.toUpperCase().replace(/-.*/, '');
-        var coB = companyOf[tB.toUpperCase()] || tB.toUpperCase().replace(/-.*/, '');
-        if (coA === coB) continue;
-        var key = tA + "|" + tB;
-        if (seen[key]) continue;
-        seen[key] = true;
-        allPairs.push([key, tA, tB, "CreditArb:" + rating]);
-      }
-    }
-  }
-
-  // Cross-rating pairs (OTHER sector) — matches generateCreditPairs() and dailyCreditRefresh()
-  var crossPairs = generateCrossRatingPairs_(groups, companyOf, intraPairs, seen);
-  allPairs = allPairs.concat(crossPairs);
-
-  // No pair cap needed — computeCreditCache() handles all pairs via ticker-level GOOGLEFINANCE
-  // (stats computed in GAS memory, not via per-pair sheet formulas)
-
-  // Write to CreditPairs sheet
-  var cpSheet = getOrCreateSheet_(ss, 'CreditPairs');
-  cpSheet.getRange(1, 1, 1, 4).setValues([['PairID', 'TickerA', 'TickerB', 'Sector']]);
-  cpSheet.getRange(1, 1, 1, 4).setFontWeight('bold').setBackground('#2d1a2e').setFontColor('#ffffff');
-  if (allPairs.length > 0) {
-    cpSheet.getRange(2, 1, allPairs.length, 4).setValues(allPairs);
-    SpreadsheetApp.flush();
-  }
-  return allPairs.length;
+  var result = generateCreditPairData_(ss);
+  if (result.allPairs.length === 0) return 0;
+  writeCreditPairsToSheet_(ss, result.allPairs);
+  SpreadsheetApp.flush();
+  return result.allPairs.length;
 }
 
 // ============================================================
@@ -1212,7 +1114,7 @@ function setupDashboard() {
     statsF.push([
       '=Pairs!A' + (i + 2),
       '=IFERROR(AVERAGE(G' + r + ':' + r + '), 0)',
-      '=IFERROR(STDEV(G' + r + ':' + r + '), 0.001)',
+      '=IFERROR(STDEV(G' + r + ':' + r + '), 0)',
       '=IFERROR(PERCENTILE(G' + r + ':' + r + ', 0.05), 0)',
       '=IFERROR(PERCENTILE(G' + r + ':' + r + ', 0.95), 0)',
       '=COUNTA(G' + r + ':' + r + ')'
@@ -1335,72 +1237,9 @@ function generateCreditPairs() {
   var data = master.getDataRange().getValues();
   if (data.length < 2) { showMsg_('ERROR: Master sheet is empty.'); return; }
 
-  var companyOf = {};
-  var intraPairs = {};
-  var pairsSheet = ss.getSheetByName('Pairs');
-  if (pairsSheet) {
-    var pData = pairsSheet.getDataRange().getValues();
-    for (var i = 1; i < pData.length; i++) {
-      var ptA = String(pData[i][1]).trim().toUpperCase();
-      var ptB = String(pData[i][2]).trim().toUpperCase();
-      if (!ptA || !ptB) continue;
-      intraPairs[cleanId_(ptA) + "_" + cleanId_(ptB)] = true;
-      intraPairs[cleanId_(ptB) + "_" + cleanId_(ptA)] = true;
-      var labelA = companyOf[ptA], labelB = companyOf[ptB];
-      if (labelA && labelB) {
-        if (labelA !== labelB) { for (var t in companyOf) { if (companyOf[t] === labelB) companyOf[t] = labelA; } }
-      } else if (labelA) { companyOf[ptB] = labelA; }
-      else if (labelB) { companyOf[ptA] = labelB; }
-      else { var lbl = ptA.replace(/-.*/, ''); companyOf[ptA] = lbl; companyOf[ptB] = lbl; }
-    }
-  }
-
-  var groups = {};
-  for (var i = 1; i < data.length; i++) {
-    var ticker = String(data[i][0]).trim();
-    var coupon = data[i][2]; var curYield = data[i][3];
-    var rawRating = data[i][4];
-    var rating = (rawRating != null && rawRating !== '') ? String(rawRating).trim() : '';
-    if (rating === 'undefined' || rating === 'null') rating = '';
-    if (!ticker) continue;
-    if (coupon === "" || coupon === null || coupon === undefined) continue;
-    if (curYield === "" || curYield === null || curYield === undefined) continue;
-    var upper = ticker.toUpperCase();
-    if (!companyOf[upper]) companyOf[upper] = upper.replace(/-.*/, '');
-    if (!rating || rating === 'Non-Rated' || rating === 'NR') continue;
-    if (!groups[rating]) groups[rating] = [];
-    groups[rating].push(ticker);
-  }
-
-  // Same-rating pairs
-  var allPairs = [];
-  var seen = {};
-  for (var rating in groups) {
-    var tickers = groups[rating];
-    if (tickers.length < 2) continue;
-    tickers.sort();
-    for (var a = 0; a < tickers.length; a++) {
-      for (var b = a + 1; b < tickers.length; b++) {
-        var tA = tickers[a], tB = tickers[b];
-        if (intraPairs[cleanId_(tA) + "_" + cleanId_(tB)]) continue;
-        var coA = companyOf[tA.toUpperCase()] || tA.toUpperCase().replace(/-.*/, '');
-        var coB = companyOf[tB.toUpperCase()] || tB.toUpperCase().replace(/-.*/, '');
-        if (coA === coB) continue;
-        var key = tA + "|" + tB;
-        seen[key] = true;
-        allPairs.push([key, tA, tB, "CreditArb:" + rating]);
-      }
-    }
-  }
-
-  // Cross-rating pairs (OTHER sector)
-  var crossPairs = generateCrossRatingPairs_(groups, companyOf, intraPairs, seen);
-  allPairs = allPairs.concat(crossPairs);
-
-  var cpSheet = getOrCreateSheet_(ss, 'CreditPairs');
-  cpSheet.getRange(1, 1, 1, 4).setValues([['PairID', 'TickerA', 'TickerB', 'Sector']]);
-  cpSheet.getRange(1, 1, 1, 4).setFontWeight('bold').setBackground('#2d1a2e').setFontColor('#ffffff');
-  if (allPairs.length > 0) { cpSheet.getRange(2, 1, allPairs.length, 4).setValues(allPairs); }
+  var result = generateCreditPairData_(ss);
+  var allPairs = result.allPairs;
+  writeCreditPairsToSheet_(ss, allPairs);
 
   var summary = [];
   var ratingCounts = {};
@@ -1526,7 +1365,7 @@ function snapshotZScores() {
     var totalRows = logSheet.getLastRow();
     if (totalRows > 25000) { logSheet.deleteRows(2, totalRows - 20000); }
   } catch (e) {
-    console.error("snapshotZScores error: " + e);
+    Logger.log("snapshotZScores error: " + e);
   }
 }
 
@@ -1536,76 +1375,9 @@ function snapshotZScores() {
 function dailyCreditRefresh() {
   try {
     var ss = SpreadsheetApp.getActive();
-    var master = ss.getSheetByName('Master');
-    if (!master) return;
-    var data = master.getDataRange().getValues();
-    if (data.length < 2) return;
-
-    var companyOf = {};
-    var intraPairs = {};
-    var pairsSheet = ss.getSheetByName('Pairs');
-    if (pairsSheet) {
-      var pData = pairsSheet.getDataRange().getValues();
-      for (var i = 1; i < pData.length; i++) {
-        var ptA = String(pData[i][1]).trim().toUpperCase();
-        var ptB = String(pData[i][2]).trim().toUpperCase();
-        if (!ptA || !ptB) continue;
-        intraPairs[cleanId_(ptA) + "_" + cleanId_(ptB)] = true;
-        intraPairs[cleanId_(ptB) + "_" + cleanId_(ptA)] = true;
-        var labelA = companyOf[ptA], labelB = companyOf[ptB];
-        if (labelA && labelB) {
-          if (labelA !== labelB) { for (var t in companyOf) { if (companyOf[t] === labelB) companyOf[t] = labelA; } }
-        } else if (labelA) { companyOf[ptB] = labelA; }
-        else if (labelB) { companyOf[ptA] = labelB; }
-        else { var lbl = ptA.replace(/-.*/, ''); companyOf[ptA] = lbl; companyOf[ptB] = lbl; }
-      }
-    }
-
-    var groups = {};
-    for (var i = 1; i < data.length; i++) {
-      var ticker = String(data[i][0]).trim();
-      var coupon = data[i][2]; var curYield = data[i][3];
-      var rawRating = data[i][4];
-      var rating = (rawRating != null && rawRating !== '') ? String(rawRating).trim() : '';
-      if (rating === 'undefined' || rating === 'null') rating = '';
-      if (!ticker) continue;
-      if (coupon === "" || coupon === null || coupon === undefined) continue;
-      if (curYield === "" || curYield === null || curYield === undefined) continue;
-      var upper = ticker.toUpperCase();
-      if (!companyOf[upper]) companyOf[upper] = upper.replace(/-.*/, '');
-      if (!rating || rating === 'Non-Rated' || rating === 'NR') continue;
-      if (!groups[rating]) groups[rating] = [];
-      groups[rating].push(ticker);
-    }
-
-    // Same-rating pairs
-    var allPairs = [];
-    var seen = {};
-    for (var rating in groups) {
-      var tickers = groups[rating];
-      if (tickers.length < 2) continue;
-      tickers.sort();
-      for (var a = 0; a < tickers.length; a++) {
-        for (var b = a + 1; b < tickers.length; b++) {
-          var tA = tickers[a], tB = tickers[b];
-          if (intraPairs[cleanId_(tA) + "_" + cleanId_(tB)]) continue;
-          var coA = companyOf[tA.toUpperCase()] || tA.toUpperCase().replace(/-.*/, '');
-          var coB = companyOf[tB.toUpperCase()] || tB.toUpperCase().replace(/-.*/, '');
-          if (coA === coB) continue;
-          var key = tA + "|" + tB;
-          seen[key] = true;
-          allPairs.push([key, tA, tB, "CreditArb:" + rating]);
-        }
-      }
-    }
-
-    // Cross-rating pairs (OTHER sector)
-    var crossPairs = generateCrossRatingPairs_(groups, companyOf, intraPairs, seen);
-    allPairs = allPairs.concat(crossPairs);
-
-    var cpSheet = getOrCreateSheet_(ss, 'CreditPairs');
-    cpSheet.getRange(1, 1, 1, 4).setValues([['PairID', 'TickerA', 'TickerB', 'Sector']]);
-    if (allPairs.length > 0) { cpSheet.getRange(2, 1, allPairs.length, 4).setValues(allPairs); }
+    var result = generateCreditPairData_(ss);
+    var allPairs = result.allPairs;
+    writeCreditPairsToSheet_(ss, allPairs);
     Logger.log('dailyCreditRefresh: wrote ' + allPairs.length + ' pairs to CreditPairs.');
 
     // Refresh TickerData + TickerHistory (picks up any new tickers added to Master)
@@ -1614,16 +1386,109 @@ function dailyCreditRefresh() {
     SpreadsheetApp.flush();
 
     // Compute credit cache immediately (pair stats from ticker-level data)
-    // Note: TickerHistory GOOGLEFINANCE may need a moment to resolve for new tickers.
-    // The 10-minute updateLivePrices trigger will recompute anyway.
     Utilities.sleep(3000);
     SpreadsheetApp.flush();
     computeCreditCache();
 
     Logger.log('dailyCreditRefresh: complete. ' + allPairs.length + ' credit pairs, ' + tickers.length + ' tickers.');
   } catch (e) {
-    console.error("dailyCreditRefresh error: " + e);
+    Logger.log("dailyCreditRefresh error: " + e);
   }
+}
+
+// ============================================================
+// CREDIT PAIR GENERATION (shared logic)
+// ============================================================
+
+/**
+ * Generates credit arb pairs from Master + Pairs sheets.
+ * Returns { allPairs: [[key, tA, tB, sector], ...], companyOf: {}, intraPairs: {} }
+ */
+function generateCreditPairData_(ss) {
+  var master = ss.getSheetByName('Master');
+  if (!master) return { allPairs: [], companyOf: {}, intraPairs: {} };
+  var data = master.getDataRange().getValues();
+  if (data.length < 2) return { allPairs: [], companyOf: {}, intraPairs: {} };
+
+  // Build union-find company map from Pairs sheet
+  var companyOf = {};
+  var intraPairs = {};
+  var pairsSheet = ss.getSheetByName('Pairs');
+  if (pairsSheet) {
+    var pData = pairsSheet.getDataRange().getValues();
+    for (var i = 1; i < pData.length; i++) {
+      var ptA = String(pData[i][1]).trim().toUpperCase();
+      var ptB = String(pData[i][2]).trim().toUpperCase();
+      if (!ptA || !ptB) continue;
+      intraPairs[cleanId_(ptA) + "_" + cleanId_(ptB)] = true;
+      intraPairs[cleanId_(ptB) + "_" + cleanId_(ptA)] = true;
+      var labelA = companyOf[ptA], labelB = companyOf[ptB];
+      if (labelA && labelB) {
+        if (labelA !== labelB) { for (var t in companyOf) { if (companyOf[t] === labelB) companyOf[t] = labelA; } }
+      } else if (labelA) { companyOf[ptB] = labelA; }
+      else if (labelB) { companyOf[ptA] = labelB; }
+      else { var lbl = ptA.replace(/-.*/, ''); companyOf[ptA] = lbl; companyOf[ptB] = lbl; }
+    }
+  }
+
+  // Group tickers by credit rating
+  var groups = {};
+  for (var i = 1; i < data.length; i++) {
+    var ticker = String(data[i][0]).trim();
+    var coupon = data[i][2]; var curYield = data[i][3];
+    var rawRating = data[i][4];
+    var rating = (rawRating != null && rawRating !== '') ? String(rawRating).trim() : '';
+    if (rating === 'undefined' || rating === 'null') rating = '';
+    if (!ticker) continue;
+    if (coupon === "" || coupon === null || coupon === undefined) continue;
+    if (curYield === "" || curYield === null || curYield === undefined) continue;
+    var upper = ticker.toUpperCase();
+    if (!companyOf[upper]) companyOf[upper] = upper.replace(/-.*/, '');
+    if (!rating || rating === 'Non-Rated' || rating === 'NR') continue;
+    if (!groups[rating]) groups[rating] = [];
+    groups[rating].push(ticker);
+  }
+
+  // Same-rating pairs with dedup
+  var allPairs = [];
+  var seen = {};
+  for (var rating in groups) {
+    var tickers = groups[rating];
+    if (tickers.length < 2) continue;
+    tickers.sort();
+    for (var a = 0; a < tickers.length; a++) {
+      for (var b = a + 1; b < tickers.length; b++) {
+        var tA = tickers[a], tB = tickers[b];
+        if (intraPairs[cleanId_(tA) + "_" + cleanId_(tB)]) continue;
+        var coA = companyOf[tA.toUpperCase()] || tA.toUpperCase().replace(/-.*/, '');
+        var coB = companyOf[tB.toUpperCase()] || tB.toUpperCase().replace(/-.*/, '');
+        if (coA === coB) continue;
+        var key = tA + "|" + tB;
+        if (seen[key]) continue;
+        seen[key] = true;
+        allPairs.push([key, tA, tB, "CreditArb:" + rating]);
+      }
+    }
+  }
+
+  // Cross-rating pairs
+  var crossPairs = generateCrossRatingPairs_(groups, companyOf, intraPairs, seen);
+  allPairs = allPairs.concat(crossPairs);
+
+  return { allPairs: allPairs, companyOf: companyOf, intraPairs: intraPairs };
+}
+
+/**
+ * Writes credit pairs to CreditPairs sheet.
+ */
+function writeCreditPairsToSheet_(ss, allPairs) {
+  var cpSheet = getOrCreateSheet_(ss, 'CreditPairs');
+  cpSheet.getRange(1, 1, 1, 4).setValues([['PairID', 'TickerA', 'TickerB', 'Sector']]);
+  cpSheet.getRange(1, 1, 1, 4).setFontWeight('bold').setBackground('#2d1a2e').setFontColor('#ffffff');
+  if (allPairs.length > 0) {
+    cpSheet.getRange(2, 1, allPairs.length, 4).setValues(allPairs);
+  }
+  return allPairs.length;
 }
 
 // ============================================================
