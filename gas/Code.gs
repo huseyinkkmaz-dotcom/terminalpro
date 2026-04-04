@@ -2965,7 +2965,7 @@ function analyzeSinglePair_(tA, tB, priceA, priceB, currentZ, customWindows) {
 function runNightlyScreener() {
   var startTime = new Date().getTime();
   var MAX_MS = 300000; // 5 min safety (GAS limit = 6 min)
-  var MAX_PAIRS = 20;
+  var MAX_PAIRS = 50;
   try {
     var ss = SpreadsheetApp.getActive();
     var histMap = readTickerHistMap_(ss);

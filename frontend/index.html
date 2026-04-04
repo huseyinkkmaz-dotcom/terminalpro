@@ -836,8 +836,9 @@ Optimized baskets from <strong style="color:var(--text)">sweep-validated backtes
 <div class="bt-sub-pill" onclick="switchBtSub('backtest',this)" style="padding:12px 28px;cursor:pointer;font-size:10px;font-weight:900;text-transform:uppercase;letter-spacing:1px;color:var(--subtext);background:var(--card);border-right:1px solid var(--border);transition:.2s">Backtest</div>
 <div class="bt-sub-pill" onclick="switchBtSub('heatmap',this)" style="padding:12px 28px;cursor:pointer;font-size:10px;font-weight:900;text-transform:uppercase;letter-spacing:1px;color:var(--subtext);background:var(--card);transition:.2s">Heatmap</div>
 </div>
-<!-- ── SWEEP SUB-TAB ── -->
+<!-- ─�� SWEEP SUB-TAB ── -->
 <div id="btSubSweep">
+<div style="margin-bottom:16px;font-size:11px;color:var(--subtext);line-height:1.6;max-width:700px">Auto-optimizes entry/exit Z-scores for each <strong style="color:var(--text)">currently dislocated pair</strong> (|Z| &ge; 1.8). Finds the parameter combo with best historical avg PnL per pair.</div>
 <div id="osPanel" style="margin-bottom:30px">
 <div style="padding:20px;background:rgba(168,85,247,.03);border-radius:8px;border:1px solid rgba(168,85,247,.15);border-left:2px solid #a855f7">
 <div style="display:flex;gap:15px;align-items:flex-end;margin-bottom:18px;flex-wrap:wrap">
@@ -852,6 +853,7 @@ Optimized baskets from <strong style="color:var(--text)">sweep-validated backtes
 <th style="width:30px">#</th>
 <th>Pair</th>
 <th>Mode</th>
+<th>Direction</th>
 <th>Current Z</th>
 <th>Optimal Entry</th>
 <th>Optimal Exit</th>
@@ -860,6 +862,7 @@ Optimized baskets from <strong style="color:var(--text)">sweep-validated backtes
 <th>Trades</th>
 <th>Avg Hold</th>
 <th>Profit Factor</th>
+<th style="width:80px"></th>
 </tr></thead><tbody></tbody></table></div>
 </div>
 </div>
@@ -867,6 +870,7 @@ Optimized baskets from <strong style="color:var(--text)">sweep-validated backtes
 </div>
 <!-- ── BACKTEST SUB-TAB ── -->
 <div id="btSubBacktest" style="display:none">
+<div style="margin-bottom:16px;font-size:11px;color:var(--subtext);line-height:1.6;max-width:700px">Test <strong style="color:var(--text)">your specific Z-score parameters</strong> across all pairs. Shows aggregate performance, equity curve, and actionable entry signals for pairs currently in dislocation.</div>
 <!-- ── STANDARD BACKTEST CONTROLS ── -->
 <div style="display:flex;gap:15px;align-items:flex-end;margin-bottom:25px;flex-wrap:wrap">
 <div><label style="font-size:9px;font-weight:900;color:var(--subtext);text-transform:uppercase;display:block;margin-bottom:6px">Z Entry Threshold</label><input id="btZEntry" type="number" value="2.0" step="0.1" min="1.0" max="4.0" style="background:var(--card);border:1px solid var(--border);color:var(--text);padding:10px 14px;border-radius:6px;font-family:'JetBrains Mono';font-size:13px;width:90px"></div>
@@ -911,10 +915,15 @@ Optimized baskets from <strong style="color:var(--text)">sweep-validated backtes
 </div>
 <!-- ── HEATMAP SUB-TAB ── -->
 <div id="btSubHeatmap" style="display:none">
+<div style="margin-bottom:16px;font-size:11px;color:var(--subtext);line-height:1.6;max-width:700px">Visualize <strong style="color:var(--text)">win rate &amp; PnL across all entry/exit Z combinations</strong>. Shows which parameter zones are most profitable across your pair universe. Use "Specific Pair" to drill down.</div>
 <div id="hmPanel">
 <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:15px;flex-wrap:wrap;gap:10px">
 <h3 style="font-size:11px;font-weight:900;color:var(--accent);text-transform:uppercase;margin:0;display:flex;align-items:center;gap:8px"><span style="font-size:14px">&#9632;</span> Parameter Sensitivity Heatmap</h3>
 <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+<div style="display:flex;gap:8px;align-items:center">
+<div><label style="font-size:8px;font-weight:900;color:var(--subtext);text-transform:uppercase;display:block;margin-bottom:3px">Max Hold</label><input id="hmMaxHold" type="number" value="60" step="5" min="3" max="180" style="background:var(--bg);border:1px solid var(--border);color:var(--text);padding:6px 10px;border-radius:5px;font-family:'JetBrains Mono';font-size:11px;width:65px"></div>
+<div><label style="font-size:8px;font-weight:900;color:var(--subtext);text-transform:uppercase;display:block;margin-bottom:3px">Mode</label><select id="hmMode" style="background:var(--bg);border:1px solid var(--border);color:var(--text);padding:6px 10px;border-radius:5px;font-size:11px;width:90px"><option value="intra">Intra</option><option value="credit">Credit</option><option value="all">All</option></select></div>
+</div>
 <div class="hm-scope-toggle" id="hmScopeToggle">
 <button class="hm-scope-btn active" onclick="setHmScope('global')">Global Pool</button>
 <button class="hm-scope-btn" onclick="setHmScope('pair')">Specific Pair</button>
@@ -1387,7 +1396,7 @@ function sortBy(attr,abs){const tb=document.querySelector("#alertBody");const ro
 function toggleLive(){if(document.getElementById('autoRefresh').checked){refreshData();liveTimer=setInterval(()=>{if(document.getElementById('entryModal').style.display!=='block')refreshData();},300000);}else clearInterval(liveTimer);}
 async function refreshData(){try{setConnStatus("loading");const data=await apiGet("getData",{mode:currentMode});if(data&&data.ok){updateUI(data);setConnStatus("ok");}else setConnStatus("err");}catch(e){setConnStatus("err");}}
 // ── SCREENER CACHE ──
-async function loadScreenerCache(){try{var data=await apiGet('getScreenerData');if(data&&data.ok&&data.screenerData){screenerCache={};data.screenerData.forEach(function(s){screenerCache[cleanIdFE(s.id)]=s;});var ageEl=document.getElementById('screenerAge');if(ageEl&&data.screenerData.length>0){var ts=data.screenerData[0].ts;if(ts){var d=new Date(ts);var hrs=Math.round((Date.now()-d.getTime())/3600000);ageEl.innerText='Screener: '+data.screenerData.length+' pairs pre-analyzed'+(hrs>0?' ('+hrs+'h ago)':'');}}console.log('[TerminalPro] Screener cache loaded:',data.screenerData.length,'pairs');console.log('[Kelly Debug] Screener avgMae sample:',data.screenerData.slice(0,5).map(function(s){return s.id+': avgMae='+s.avgMae+' ep30='+s.ep30+' wr30='+s.wr30;}));}}catch(e){console.log('[TerminalPro] Screener cache unavailable');}}
+async function loadScreenerCache(){try{var data=await apiGet('getScreenerData');if(data&&data.ok&&data.screenerData){screenerCache={};data.screenerData.forEach(function(s){screenerCache[cleanIdFE(s.id)]=s;});var ageEl=document.getElementById('screenerAge');if(ageEl&&data.screenerData.length>0){var ts=data.screenerData[0].ts;if(ts){var d=new Date(ts);var hrs=Math.round((Date.now()-d.getTime())/3600000);ageEl.innerText='Screener: '+data.screenerData.length+' pairs analyzed'+(hrs>0?' ('+hrs+'h ago)':'');}}console.log('[TerminalPro] Screener cache loaded:',data.screenerData.length,'pairs');console.log('[Kelly Debug] Screener avgMae sample:',data.screenerData.slice(0,5).map(function(s){return s.id+': avgMae='+s.avgMae+' ep30='+s.ep30+' wr30='+s.wr30;}));}}catch(e){console.log('[TerminalPro] Screener cache unavailable');}}
 // ── MODEL PORTFOLIOS ──
 async function tabModelPortfolios(el){document.querySelectorAll('.tab-content').forEach(x=>x.classList.remove('active'));document.querySelectorAll('.nav-item').forEach(x=>x.classList.remove('active'));document.getElementById('modelPortfoliosTab').classList.add('active');el.classList.add('active');await loadModelPortfolios();}
 async function loadModelPortfolios(){
@@ -2987,10 +2996,19 @@ var pnlClr=r.avgPnl>=0?'var(--low)':'var(--high)';
 var wrClr=r.winRate>=60?'var(--low)':(r.winRate>=50?'var(--yellow)':'var(--high)');
 var pfClr=r.profitFactor>=1.5?'var(--low)':(r.profitFactor>=1?'var(--yellow)':'var(--high)');
 var modeBadge=r.mode==='intra'?'<span style="background:rgba(59,130,246,.15);color:#60a5fa;padding:2px 6px;border-radius:4px;font-size:9px;font-weight:900">INTRA</span>':'<span style="background:rgba(168,85,247,.15);color:#c084fc;padding:2px 6px;border-radius:4px;font-size:9px;font-weight:900">CREDIT</span>';
+// Direction: positive Z → short A / long B, negative Z → long A / short B
+var longTk,shortTk,dirLabel;
+if(r.currentZ>0){longTk=r.tB;shortTk=r.tA;dirLabel='SHORT SPREAD';}
+else{longTk=r.tA;shortTk=r.tB;dirLabel='LONG SPREAD';}
+var dirHtml='<div style="font-size:10px;line-height:1.5;white-space:nowrap"><div style="font-weight:900;font-size:9px;color:var(--subtext);text-transform:uppercase;letter-spacing:.5px;margin-bottom:2px">'+dirLabel+'</div><span style="color:var(--low);font-weight:700">L</span> <span style="font-weight:600">'+longTk+'</span> <span style="color:var(--subtext);margin:0 2px">&middot;</span> <span style="color:var(--high);font-weight:700">S</span> <span style="font-weight:600">'+shortTk+'</span></div>';
+// Enter trade button with sweep-derived exit params
+var _swEpJson=JSON.stringify({targetExitZ:r.optimalExitZ.toFixed(2),profitCapturePct:'60',partialAtPct:'50',sourcePortfolio:'sweep',maxHoldDays:Math.round(r.avgHold)||60}).replace(/'/g,'\\x27');
+var entBtn='<button onclick="openModal(\''+r.id.replace(/'/g,"\\'")+'\',\''+r.tA.replace(/'/g,"\\'")+'\',\''+r.tB.replace(/'/g,"\\'")+'\',JSON.parse(\''+_swEpJson+'\'))" style="background:var(--accent);color:#000;border:none;border-radius:5px;padding:6px 12px;font-size:9px;font-weight:900;cursor:pointer;text-transform:uppercase;letter-spacing:.5px;white-space:nowrap;transition:opacity .15s" onmouseenter="this.style.opacity=\'0.85\'" onmouseleave="this.style.opacity=\'1\'">&#9889; TRADE</button>';
 h+='<tr>';
 h+='<td style="color:var(--subtext);font-weight:900">'+(i+1)+'</td>';
 h+='<td style="font-weight:900;white-space:nowrap">'+r.tA+' / '+r.tB+'</td>';
 h+='<td>'+modeBadge+'</td>';
+h+='<td>'+dirHtml+'</td>';
 h+='<td style="font-family:JetBrains Mono;color:'+zClr+';font-weight:900">'+r.currentZ.toFixed(2)+'</td>';
 h+='<td style="font-family:JetBrains Mono;font-weight:700">'+r.optimalEntryZ.toFixed(1)+'</td>';
 h+='<td style="font-family:JetBrains Mono;font-weight:700">'+r.optimalExitZ.toFixed(2)+'</td>';
@@ -2999,6 +3017,7 @@ h+='<td style="color:'+wrClr+';font-weight:700">'+r.winRate+'%</td>';
 h+='<td>'+r.trades+'</td>';
 h+='<td>'+r.avgHold+'d</td>';
 h+='<td style="color:'+pfClr+';font-weight:700">'+r.profitFactor+'x</td>';
+h+='<td>'+entBtn+'</td>';
 h+='</tr>';
 }
 tb.innerHTML=h;
@@ -3272,8 +3291,8 @@ document.getElementById('hmLoading').style.display='block';
 document.getElementById('hmResult').style.display='none';
 try{
 var hmParams={
-maxHold:document.getElementById('btMaxHold').value,
-mode:document.getElementById('btMode').value
+maxHold:document.getElementById('hmMaxHold').value,
+mode:document.getElementById('hmMode').value
 };
 if(_hmScope==='pair'&&_hmSelectedPair){
 hmParams.pairId=_hmSelectedPair.id;
