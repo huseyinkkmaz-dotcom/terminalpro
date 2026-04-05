@@ -603,6 +603,7 @@ th .th-hint{font-weight:400;font-size:8px;letter-spacing:0;text-transform:none;c
 <div class="nav-item" onclick="tabHistory(this)">History</div>
 <div class="live-switch"><span class="switch-label">Live (5m)</span><label><input type="checkbox" class="switch-input" id="autoRefresh" onchange="toggleLive()"><div class="switch-slider"></div></label></div>
 <div class="conn-dot loading" id="connDot" title="API Status"></div>
+<div id="dataStaleness" style="font-size:9px;color:var(--subtext);margin-left:8px;font-family:JetBrains Mono;white-space:nowrap" title="Time since last WebCache update (GOOGLEFINANCE data is 15-min delayed)"></div>
 </div>
 <div id="pairSweepBar" style="background:var(--card);border-bottom:1px solid var(--border);padding:0;position:sticky;top:42px;z-index:999;backdrop-filter:blur(10px)">
 <div style="display:flex;align-items:center;justify-content:center;gap:10px;padding:6px 20px;cursor:pointer" onclick="var b=document.getElementById('sweepExpand');b.style.display=b.style.display==='none'?'flex':'none';">
@@ -634,7 +635,7 @@ th .th-hint{font-weight:400;font-size:8px;letter-spacing:0;text-transform:none;c
 <button class="filter-pill" id="divFilterBtn" onclick="toggleDivFilter(this)">&#128176; Ex-Div &le;7d</button>
 <span class="filter-label" style="margin-left:auto;font-size:8px" id="screenerAge"></span>
 </div>
-<table><thead><tr><th>Pair</th><th>Spread</th><th>Ex-Dividend<span class="th-hint">next date per leg</span></th><th class="sortable" onclick="sortProfit()">Edge<span class="th-hint">exp. profit + yield spread</span> &#8645;</th><th class="sortable" onclick="sortZ()">Z-Score &#8645;</th><th class="sortable" onclick="sortLiq()">Avg Liquidity &#8645;</th><th class="sortable" onclick="sortAge()">Days Active &#8645;</th><th>Velocity<span class="th-hint">&sigma;/day convergence</span></th><th>Signal</th><th style="text-align:right">Actions</th></tr></thead><tbody id="alertBody"></tbody></table>
+<table><thead><tr><th>Pair</th><th>Spread</th><th>Ex-Dividend<span class="th-hint">next date per leg</span></th><th class="sortable" onclick="sortProfit()">Edge<span class="th-hint">net profit (after costs)</span> &#8645;</th><th class="sortable" onclick="sortZ()">Z-Score &#8645;</th><th class="sortable" onclick="sortLiq()">Avg Liquidity &#8645;</th><th class="sortable" onclick="sortAge()">Days Active &#8645;</th><th>Velocity<span class="th-hint">&sigma;/day convergence</span></th><th>Quality<span class="th-hint">ADF / half-life / cost</span></th><th>Signal</th><th style="text-align:right">Actions</th></tr></thead><tbody id="alertBody"></tbody></table>
 </div>
 <div id="portfolio" class="tab-content">
 <div class="exposure-pill-box"><div class="exp-pill"><span class="exp-label">LONG</span><span class="exp-val-long" id="valLong">$0</span></div><div class="exp-pill"><span class="exp-label">SHORT</span><span class="exp-val-short" id="valShort">$0</span></div></div>
@@ -667,6 +668,13 @@ th .th-hint{font-weight:400;font-size:8px;letter-spacing:0;text-transform:none;c
 <div class="strat-mix-pill"><div class="strat-mix-label">Pairs</div><div class="strat-mix-val" style="color:var(--text)" id="stratTotal">0</div></div>
 <div class="strat-mix-pill"><div class="strat-mix-label">Intra / Credit</div><div class="strat-mix-val" style="color:var(--subtext);font-size:12px" id="stratRatio">0/0</div></div>
 </div>
+</div>
+<div class="health-section">
+<div class="health-section-title">Risk Metrics</div>
+<div class="strat-mix-row">
+<div class="strat-mix-pill"><div class="strat-mix-label">Max Drawdown</div><div class="strat-mix-val" id="maxDrawdown" style="color:var(--subtext)">—</div></div>
+</div>
+<div id="concWarning" style="display:none;font-size:10px;padding:6px 8px;margin-top:6px;background:rgba(245,158,11,.08);border:1px solid rgba(245,158,11,.3);border-radius:6px"></div>
 </div>
 </div>
 </div>
@@ -1034,71 +1042,97 @@ function sqPopulateCalc(idx){
     document.querySelectorAll('.nav-item').forEach(function(x){if(x.textContent.trim().indexOf('Analytics')!==-1)x.classList.add('active');});
   }
 }
-// ── COMPOSITE SETUP SCORE (0-100) — V2 ──
-// Refined scoring with spread symmetry, screener tiers, trend momentum,
-// and backtest-informed weights. Frontend-only, no API call.
+// ── COMPOSITE SETUP SCORE (0-100) — V3 (Quant-Audited) ──
+// Key changes from V2:
+// - ADF stationarity as hard gate (non-stationary pairs capped at 30)
+// - Half-life replaces arbitrary age sweet spot
+// - Transaction costs deducted from expected profit
+// - Removed correlated components (Z-mag + EP + age were triple-counting)
+// - Call risk penalty for above-par callables
+// - Log-ratio Z preferred over nominal Z
 function computeSetupScore(r, maxEP) {
   var score = 0;
-  var az = Math.abs(parseFloat(r.z) || 0);
-  var ep = parseFloat(r.expProfit) || 0;
+  var az = Math.abs(parseFloat(r.logRatioZ) || parseFloat(r.z) || 0); // prefer log-ratio Z
+  var ep = parseFloat(r.expProfit) || 0; // now net of transaction costs (from backend)
   var liq = parseFloat(r.liq) || 0;
   var age = parseInt(r.age) || 0;
   var yA = parseFloat(r.yA) || 0, yB = parseFloat(r.yB) || 0;
+  var adfPass = r.adfPass || false;
+  var halfLife = r.halfLife || null;
+  var halfLifeValid = r.halfLifeValid || false;
 
-  // 1. Z-Score magnitude (0-20): non-linear — sweet spot 2.0-2.8, plateau above (no penalty)
-  if (az >= 2.0 && az <= 2.8) score += 15 + (az - 2.0) / 0.8 * 5; // 15-20 in sweet spot
-  else if (az > 2.8 && az <= 3.5) score += 20; // plateau — strong but not overextended
-  else if (az > 3.5) score += 20; // extended — keep plateau, no penalty
-  else score += Math.max(0, (az - 1.8) / 0.2 * 5); // 1.8-2.0 ramp: 0-5pts
+  // ── GATE: Stationarity check ──
+  // Non-stationary pairs are fundamentally unreliable for mean reversion.
+  // Cap their score at 30 and add a warning flag.
+  var stationaryCap = adfPass ? 100 : 30;
 
-  // 2. Expected Profit (0-18): scaled to dataset max, slight cap to avoid outlier domination
-  if (maxEP > 0) score += Math.min(18, (ep / maxEP) * 18);
+  // 1. Z-Score magnitude (0-15): entry signal strength
+  //    Sweet spot is half-life dependent: if HL known, 2.0-2.5 is ideal
+  //    Extreme Z (>3.5) gets a slight penalty (structural break risk)
+  if (az >= 2.0 && az <= 3.0) score += 15;
+  else if (az > 3.0 && az <= 3.5) score += 12; // high but possibly structural
+  else if (az > 3.5) score += 8; // extreme — likely structural if no ADF pass
+  else score += Math.max(0, (az - 1.8) / 0.2 * 7); // 1.8-2.0 ramp: 0-7pts
 
-  // 3. Liquidity (0-12): tighter bands with smooth scaling
-  if (liq > 200000) score += 12;
-  else if (liq > 100000) score += 10;
-  else if (liq > 50000) score += 8;
-  else if (liq > 20000) score += 5;
-  else if (liq > 5000) score += 2;
-  else score += 0; // illiquid = dangerous
+  // 2. Net Expected Profit (0-15): already net of transaction costs from backend
+  //    No longer scaled to dataset max (removes instability)
+  //    Absolute thresholds: $0.50+ per share is meaningful for preferreds
+  if (ep >= 1.5) score += 15;
+  else if (ep >= 1.0) score += 12;
+  else if (ep >= 0.5) score += 8;
+  else if (ep >= 0.2) score += 4;
+  else score += 0; // sub-$0.20 net profit = not worth the risk
 
-  // 4. Volume Spike (0-5): institutional interest signal
-  if (r.volSpike) score += 5;
+  // 3. Liquidity (0-10): smooth log-scale
+  if (liq > 0) {
+    score += Math.min(10, Math.round(Math.log10(Math.max(1, liq / 1000)) * 3.3));
+  }
 
-  // 5. Z-Trend momentum (0-15): weighted recent convergence with velocity
+  // 4. Volume Spike (0-3): institutional interest signal (reduced from 5)
+  if (r.volSpike) score += 3;
+
+  // 5. Z-Trend momentum (0-12): convergence signal
   if (r.zTrend && r.zTrend.length >= 2) {
     var absVals = r.zTrend.map(function(v) { return Math.abs(parseFloat(v) || 0); });
-    var recent = absVals.slice(-4); // up to last 4 data points
+    var recent = absVals.slice(-4);
     var totalDelta = 0;
     for (var i = 1; i < recent.length; i++) {
-      var weight = i / (recent.length - 1); // more recent = heavier weight
-      totalDelta += (recent[i-1] - recent[i]) * weight; // positive = converging
+      var weight = i / (recent.length - 1);
+      totalDelta += (recent[i-1] - recent[i]) * weight;
     }
-    if (totalDelta > 0.3) score += 15; // strong convergence
-    else if (totalDelta > 0.1) score += 10; // moderate convergence
-    else if (totalDelta > -0.1) score += 5; // flat/neutral
-    else score += 0; // diverging = avoid
+    if (totalDelta > 0.3) score += 12;
+    else if (totalDelta > 0.1) score += 8;
+    else if (totalDelta > -0.1) score += 4;
+    else score += 0; // diverging
   }
 
-  // 6. Age curve (0-10): 3-10 days ideal, smooth falloff
-  if (age >= 3 && age <= 10) score += 10;
-  else if (age >= 1 && age <= 2) score += 6; // too fresh — might keep moving
-  else if (age >= 11 && age <= 21) score += 7; // aging but still viable
-  else if (age === 0) score += 3; // brand new — high uncertainty
-  else score += 1; // stale > 21 days — likely structural
+  // 6. Half-life quality (0-12): replaces arbitrary age curve
+  //    Ideal: half-life exists, is 3-30 days, and age is near 1-2× half-life
+  if (halfLifeValid && halfLife > 0) {
+    // Half-life in tradeable range
+    if (halfLife >= 3 && halfLife <= 30) score += 8;
+    else if (halfLife > 30 && halfLife <= 60) score += 4;
+    else score += 1; // very slow or very fast reversion
 
-  // 7. Yield carry (0-8): combined yield = income buffer during hold
+    // Age relative to half-life (is the trade ripe?)
+    if (halfLife > 0 && age > 0) {
+      var ageRatio = age / halfLife;
+      if (ageRatio >= 0.5 && ageRatio <= 2.0) score += 4; // in the sweet zone
+      else if (ageRatio > 2.0 && ageRatio <= 4.0) score += 2; // aging
+      // >4× half-life = likely structural, no bonus
+    }
+  } else {
+    // No half-life data: fall back to simple age heuristic (capped lower)
+    if (age >= 3 && age <= 15) score += 5;
+    else if (age >= 1 && age <= 2) score += 3;
+    else score += 1;
+  }
+
+  // 7. Yield carry (0-6): income buffer (reduced from 8)
   var avgY = (yA + yB) / 2;
-  score += Math.min(8, avgY / 7 * 8); // 7% yield → full points
+  score += Math.min(6, avgY / 7 * 6);
 
-  // 8. Spread symmetry bonus (0-5): legs near par ($25) trade better
-  var pA = parseFloat(r.pA) || 0, pB = parseFloat(r.pB) || 0;
-  if (pA > 0 && pB > 0) {
-    var ratio = Math.min(pA, pB) / Math.max(pA, pB); // 1.0 = perfectly symmetric
-    score += Math.round(ratio * 5); // near-par pairs score higher
-  }
-
-  // 9. Div proximity (penalty/bonus): context-dependent
+  // 8. Div proximity (penalty/bonus): context-dependent
   if (r.exDivA || r.exDivB) {
     var now = new Date();
     var checkDiv = function(dt) {
@@ -1107,48 +1141,47 @@ function computeSetupScore(r, maxEP) {
       return Math.max(0, (d - now) / 86400000);
     };
     var divDaysA = checkDiv(r.exDivA), divDaysB = checkDiv(r.exDivB);
-    // Penalty if short leg has upcoming div (you owe it)
     var z = parseFloat(r.z) || 0;
-    var shortLeg = z > 0 ? 'A' : 'B'; // Z>0 → short A, long B
+    var shortLeg = z > 0 ? 'A' : 'B';
     var shortDivDays = shortLeg === 'A' ? divDaysA : divDaysB;
     var longDivDays = shortLeg === 'A' ? divDaysB : divDaysA;
-    if (shortDivDays <= 10) score -= 5; // short leg div = cost
-    if (longDivDays <= 10 && longDivDays < shortDivDays) score += 3; // long leg div = income bonus
+    if (shortDivDays <= 10) score -= 5;
+    if (longDivDays <= 10 && longDivDays < shortDivDays) score += 3;
   }
 
-  // 10. Screener tiered bonus (0-7): granular win rate scaling
+  // 9. Call risk penalty (-8): above-par callable preferred has asymmetric downside
+  if (r.callRiskA && r.callRiskA.abovePar) score -= Math.min(4, Math.round(r.callRiskA.premium * 2));
+  if (r.callRiskB && r.callRiskB.abovePar) score -= Math.min(4, Math.round(r.callRiskB.premium * 2));
+
+  // 10. Screener bonus (0-5): reduced from 7, requires sufficient samples
   var scr = screenerCache[cleanIdFE(r.id)];
   if (scr && scr.wr30 !== null) {
-    if (scr.wr30 >= 75) score += 7;
-    else if (scr.wr30 >= 65) score += 5;
-    else if (scr.wr30 >= 55) score += 3;
-    else if (scr.wr30 >= 45) score += 1;
-    // <45% win rate = no bonus (already risky)
+    if (scr.wr30 >= 70) score += 5;
+    else if (scr.wr30 >= 60) score += 3;
+    else if (scr.wr30 >= 50) score += 1;
   }
 
-  // 10b. Robustness modifier (-5 to +5): from screener anti-overfitting score
+  // 10b. Robustness modifier (-5 to +5)
   if (scr && scr.robustness !== undefined) {
-    if (scr.robustness >= 60) score += 5;          // high robustness = trusted signal
-    else if (scr.robustness >= 45) score += 2;      // moderate robustness
-    else if (scr.robustness < 25) score -= 5;        // low robustness = likely overfit
-    else if (scr.robustness < 35) score -= 2;        // below average
-    // Flag penalties from backend
+    if (scr.robustness >= 60) score += 5;
+    else if (scr.robustness >= 45) score += 2;
+    else if (scr.robustness < 25) score -= 5;
+    else if (scr.robustness < 35) score -= 2;
     if (scr.robustnessFlags && scr.robustnessFlags.indexOf('SUSPICIOUS_WR') !== -1) score -= 3;
     if (scr.robustnessFlags && scr.robustnessFlags.indexOf('NOISE_LEVEL') !== -1) score -= 3;
   }
 
-  // 11. Regime awareness (0-3): if macro regime data is loaded
+  // 11. Regime awareness (0-3)
   if (window._regimeData && window._regimeData.regime) {
     var reg = window._regimeData.regime;
-    // Mean-reverting regime boosts all pair trades
     if (reg === 'MEAN_REVERT') score += 3;
-    // Trending regime = pairs are riskier
     else if (reg === 'TRENDING') score -= 2;
-    // Volatile regime = wider Z thresholds needed, slight penalty for borderline Z
     else if (reg === 'VOLATILE' && az < 2.2) score -= 1;
   }
 
-  return Math.max(0, Math.min(100, Math.round(score)));
+  // Apply stationarity cap: non-stationary pairs max out at 30
+  var finalScore = Math.max(0, Math.min(stationaryCap, Math.round(score)));
+  return finalScore;
 }
 function cleanIdFE(id) { return String(id).replace(/[^a-zA-Z0-9]/g, '').toUpperCase(); }
 // ── ROBUSTNESS HELPERS (frontend mirror of backend logic for display) ──
@@ -1678,8 +1711,8 @@ var sec={};ad.forEach(function(r){if(r.sec)sec[r.sec]=(sec[r.sec]||0)+1;});if(ac
 var h='';var rowIdx=0;ad.forEach(function(r){var z=parseFloat(r.z),az=Math.abs(z);var act=az>=3?{l:"EXTREME / GIFT",c:ac}:(az>=2.2?{l:"STRONG ENTRY",c:"white"}:{l:"EARLY SETUP",c:"var(--subtext)"});var url="https://www.tradingview.com/chart/?symbol="+fmt(r.tA)+"-"+fmt(r.tB);var al=parseFloat(r.liq)||0;var lc=al>50000?'dot-green':(al>20000?'dot-yellow':'dot-red');var lt=al>1000?(al/1000).toFixed(0)+'k':al.toFixed(0);var sp=r.volSpike?'<div class="vol-spike-tag">HIGH VOL</div>':'';var tr=buildTrend(r.zTrend);var ag=parseInt(r.age)||0;var at=ag>0?ag+'d':'NEW';var sa=String(r.tA).replace(/'/g,"\\'"),sb=String(r.tB).replace(/'/g,"\\'"),si=String(r.id).replace(/'/g,"\\'");var lk=isCr?'pair-link credit':'pair-link';
 var starCid=si.replace(/[^a-zA-Z0-9]/g,'').toUpperCase();var starSaved=watchlistIds.has(starCid);var starIcon=starSaved?'&#9733;':'&#9734;';var starCls=starSaved?'star-btn saved':'star-btn';
 var divTd='<td><div style="display:flex;flex-direction:column;gap:3px"><div class="mono-data" style="color:var(--subtext);font-size:10px">'+r.tA+': —</div><div class="mono-data" style="color:var(--subtext);font-size:10px">'+r.tB+': —</div></div></td>';
-var fmtDiv=function(dt,ticker){if(!dt)return'<div class="mono-data" style="color:var(--subtext);font-size:10px">'+ticker+': —</div>';var dd=new Date(dt+'T00:00:00');var dMon=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][dd.getMonth()];var dStr=dMon+' '+dd.getDate();return'<div class="mono-data" style="color:white;font-size:10px;font-weight:700">'+ticker+': '+dStr+'</div>';};
-if(r.exDivA||r.exDivB){divTd='<td><div style="display:flex;flex-direction:column;gap:3px">'+fmtDiv(r.exDivA,r.tA)+fmtDiv(r.exDivB,r.tB)+'</div></td>';}
+var fmtDiv=function(dt,ticker,isEst){if(!dt)return'<div class="mono-data" style="color:var(--subtext);font-size:10px">'+ticker+': —</div>';var dd=new Date(dt+'T00:00:00');var dMon=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][dd.getMonth()];var dStr=dMon+' '+dd.getDate();var estTag=isEst?'<span style="color:var(--yellow);font-size:7px;font-weight:900;margin-left:3px" title="Projected quarterly estimate, not confirmed by exchange">EST</span>':'';return'<div class="mono-data" style="color:white;font-size:10px;font-weight:700">'+ticker+': '+dStr+estTag+'</div>';};
+if(r.exDivA||r.exDivB){divTd='<td><div style="display:flex;flex-direction:column;gap:3px">'+fmtDiv(r.exDivA,r.tA,r.exDivAEst)+fmtDiv(r.exDivB,r.tB,r.exDivBEst)+'</div></td>';}
 var ep=r.expProfit||'0.00';
 // Screener badge
 var scrData=screenerCache[cleanIdFE(r.id)];
@@ -1713,8 +1746,13 @@ h+='<td><div class="instr-main"><a href="'+url+'" target="_blank" class="'+lk+'"
 h+='<td><div class="mono-data">$'+r.spr+'</div></td>';
 // Ex-Div
 h+=divTd;
-// Edge: exp profit + yield spread subscript
-h+='<td><div class="mono-data" style="color:var(--low)">$'+ep+'</div><div style="font-size:9px;color:var(--subtext);font-family:JetBrains Mono;margin-top:2px">'+yieldSpread+'% spread</div></td>';
+// Edge: net profit (after costs) + gross profit + yield spread
+var grossEP=r.grossExpProfit||ep;
+var netEPVal=parseFloat(ep)||0;
+var epClr=netEPVal>0.5?'var(--low)':netEPVal>0?'var(--yellow)':'var(--high)';
+h+='<td><div class="mono-data" style="color:'+epClr+'">$'+ep+'<span style="font-size:8px;color:var(--subtext);margin-left:3px">net</span></div>';
+if(grossEP!==ep){h+='<div style="font-size:9px;color:var(--subtext);font-family:JetBrains Mono;margin-top:1px">$'+grossEP+' gross</div>';}
+h+='<div style="font-size:9px;color:var(--subtext);font-family:JetBrains Mono;margin-top:2px">'+yieldSpread+'% spread</div></td>';
 // Z-Score — visual anchor with scaled background
 h+='<td style="background:'+zBg+'"><div class="mono-data" style="font-size:16px;font-weight:900;color:var(--accent)">'+z.toFixed(2)+'&sigma;</div>'+sp+'</td>';
 // Liquidity
@@ -1723,6 +1761,24 @@ h+='<td><div style="display:flex;align-items:center;gap:4px"><span class="dot '+
 h+='<td><div class="mono-data" style="font-size:11px">'+at+'</div></td>';
 // Velocity
 h+='<td><div class="mono-data" style="font-size:11px;color:'+velClr+'">'+velocity+'</div></td>';
+// Quality — ADF, half-life, transaction costs, call risk
+var adfOk=r.adfPass;var hlVal=r.halfLife;var hlValid=r.halfLifeValid;
+var txnC=parseFloat(r.txnCost)||0;var callA=r.callRiskA;var callB=r.callRiskB;
+var qParts=[];
+// ADF badge
+if(adfOk){qParts.push('<span style="color:var(--low);font-size:9px;font-weight:900" title="ADF test passed: spread is stationary ('+r.adfConf+')">&#10003; ADF</span>');}
+else{qParts.push('<span style="color:var(--high);font-size:9px;font-weight:900" title="ADF test FAILED: spread may not be stationary. Z-score unreliable.">&#10007; ADF</span>');}
+// Half-life
+if(hlValid&&hlVal){qParts.push('<span style="color:var(--accent);font-size:9px;font-weight:700" title="OU half-life: '+hlVal+' trading days">HL:'+hlVal+'d</span>');}
+else{qParts.push('<span style="color:var(--subtext);font-size:9px" title="Half-life could not be computed">HL:—</span>');}
+// Transaction cost
+if(txnC>0){qParts.push('<span style="color:var(--yellow);font-size:9px;font-family:JetBrains Mono" title="Estimated round-trip cost per share: $'+txnC.toFixed(2)+'">$'+txnC.toFixed(2)+' cost</span>');}
+// Call risk
+if(callA){qParts.push('<span style="color:var(--high);font-size:8px;font-weight:900" title="'+r.tA+' is $'+callA.premium+' above par ($25) — call risk">'+r.tA+' CALLABLE</span>');}
+if(callB){qParts.push('<span style="color:var(--high);font-size:8px;font-weight:900" title="'+r.tB+' is $'+callB.premium+' above par ($25) — call risk">'+r.tB+' CALLABLE</span>');}
+// Log-ratio Z
+if(r.logRatioZ&&Math.abs(r.logRatioZ-parseFloat(r.z))>0.3){qParts.push('<span style="color:var(--purple);font-size:8px" title="Log-ratio Z differs significantly from nominal Z">LR:'+r.logRatioZ+'&sigma;</span>');}
+h+='<td><div style="display:flex;flex-direction:column;gap:2px">'+qParts.join('')+'</div></td>';
 // Signal
 h+='<td><div class="action-tag'+actCls+'" style="color:'+act.c+';border-color:'+act.c+'">'+act.l+'</div></td>';
 // Actions column (right-aligned)
@@ -1730,6 +1786,9 @@ h+='<td style="text-align:right"><div style="display:flex;gap:3px;justify-conten
 h+='</tr>';rowIdx++;});
 document.getElementById('alertBody').innerHTML=h;applyFilters();}
 function updateUI(data){if(!data)return;renderAlerts(data.alertData);renderMacro(data.macroData);
+// Update data staleness indicator
+if(data.cacheTimestamp){var ct=new Date(data.cacheTimestamp);var mins=Math.round((Date.now()-ct.getTime())/60000);var staleEl=document.getElementById('dataStaleness');if(staleEl){var staleClr=mins>30?'var(--high)':mins>15?'var(--yellow)':'var(--subtext)';staleEl.style.color=staleClr;staleEl.innerText='Data: '+(mins<1?'<1m':mins+'m')+' ago'+(mins>15?' (stale)':'');staleEl.title='WebCache updated: '+ct.toLocaleString()+'. GOOGLEFINANCE adds ~15min delay on top.';}}
+
 // Store ALL valid pairs for sweep search (includes non-alerting pairs)
 if(data.allPairs){data.allPairs.forEach(function(p){var key=(p.tA+'|'+p.tB).toUpperCase().replace(/[^A-Z0-9|]/g,'');if(!window._allPairsMap[key])window._allPairsMap[key]=p;});}
 window._lastPortfolioData=data.portfolioData||[];
@@ -1843,7 +1902,12 @@ var bd=data.basketData;if(!bd.rollingZ)return;
 var windows=['30d','60d','90d'];var ids=['rz30','rz60','rz90'];var subIds=['rzSub30','rzSub60','rzSub90'];
 for(var i=0;i<windows.length;i++){var w=bd.rollingZ[windows[i]];var el=document.getElementById(ids[i]);var sub=document.getElementById(subIds[i]);
 if(!w||w.insufficient){el.innerText='—';el.style.color='var(--subtext)';sub.innerText=w?w.dataPoints+'d data':'no data';}
-else{el.innerText=(w.z>=0?'+':'')+w.z.toFixed(2)+'σ';var s=healthZColor(w.z);el.style.color=s.c;sub.innerText=w.dataPoints+'d window';}}}catch(e){console.log('[TerminalPro] Basket analytics fetch error:',e.message);}}
+else{el.innerText=(w.z>=0?'+':'')+w.z.toFixed(2)+'σ';var s=healthZColor(w.z);el.style.color=s.c;sub.innerText=w.dataPoints+'d window';}}
+// Display max drawdown if available
+if(bd.maxDrawdownPct!==undefined){var ddEl=document.getElementById('maxDrawdown');if(ddEl){ddEl.innerText=bd.maxDrawdownPct.toFixed(1)+'%';ddEl.style.color=bd.maxDrawdownPct>15?'var(--high)':bd.maxDrawdownPct>8?'var(--yellow)':'var(--low)';ddEl.title='Max portfolio drawdown from peak: $'+bd.maxDrawdown.toFixed(2);}}
+// Show concentration warning
+if(bd.concentrationWarning){var cwEl=document.getElementById('concWarning');if(cwEl){cwEl.style.display='';cwEl.innerHTML='<span style="color:var(--yellow);font-weight:900">&#9888; CONCENTRATED</span> '+bd.concentrationWarning.pct.toFixed(0)+'% in '+bd.concentrationWarning.sector;}}
+}catch(e){console.log('[TerminalPro] Basket analytics fetch error:',e.message);}}
 function toggleHealthBar(){var bar=document.getElementById('healthBar');if(bar.classList.contains('collapsed')){bar.classList.remove('collapsed');bar.classList.add('expanded');}else{bar.classList.remove('expanded');bar.classList.add('collapsed');}}
 // ── PORTFOLIO ANALYTICS TAB ──
 var paCurrentMode='live';

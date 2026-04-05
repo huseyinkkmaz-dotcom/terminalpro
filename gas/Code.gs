@@ -17,7 +17,215 @@
 // CONSTANTS
 // ============================================================
 var MIN_STDEV = 0.001; // Minimum meaningful standard deviation — used across alerts, backtests, and basket metrics
-var MIN_WIN_RATE_SAMPLES = 5; // Minimum trigger events required for a win rate to be considered reliable
+var MIN_WIN_RATE_SAMPLES = 20; // Minimum trigger events required for a win rate to be considered reliable (raised from 5 for statistical rigor)
+
+// Transaction cost assumptions for preferred stocks
+var DEFAULT_HALF_SPREAD_BPS = 15; // 15 bps half bid-ask spread per leg (~$0.04 on $25 stock)
+var DEFAULT_COMMISSION_PER_SHARE = 0.005; // $0.005/share (typical IBKR rate)
+var DEFAULT_SHARES_PER_LEG = 100; // default position size for cost estimation
+var SHORT_BORROW_ANNUAL_BPS = 100; // 100 bps annual short borrow cost for preferred stocks
+
+// ADF test critical values (MacKinnon, 1994) — approximate for n=50-100 observations
+// Format: {significance_level: critical_t_statistic}
+var ADF_CRITICAL_VALUES = {
+  '1pct': -3.51,
+  '5pct': -2.89,
+  '10pct': -2.58
+};
+
+// ============================================================
+// STATISTICAL TESTS — ADF, OU Half-Life, Transaction Costs
+// ============================================================
+
+/**
+ * Augmented Dickey-Fuller test for stationarity.
+ * Tests H0: unit root (non-stationary) vs H1: stationary.
+ * Uses OLS regression: Δy_t = α + β*y_{t-1} + Σγ_i*Δy_{t-i} + ε
+ * with 1 lag (sufficient for daily spread data).
+ *
+ * @param {number[]} series - Time series (oldest first), minimum 20 observations
+ * @returns {Object} { tStat, pValue, isStationary, criticalValues, nObs, lag }
+ *   - isStationary: true if t-stat < 5% critical value (-2.89)
+ */
+function adfTest_(series) {
+  var n = series.length;
+  if (n < 20) return { tStat: 0, isStationary: false, error: 'Insufficient data (need 20+, got ' + n + ')' };
+
+  // Compute first differences
+  var dy = [];
+  for (var i = 1; i < n; i++) dy.push(series[i] - series[i - 1]);
+
+  // ADF with 1 lag: Δy_t = α + β*y_{t-1} + γ*Δy_{t-1} + ε
+  // Regressors: [1, y_{t-1}, Δy_{t-1}]  (3 columns)
+  // Dependent: Δy_t for t = 2..n-1 (i.e., dy[1..end])
+  var T = dy.length - 1; // effective sample size (lose 1 obs for lag)
+  if (T < 15) return { tStat: 0, isStationary: false, error: 'Insufficient data after differencing' };
+
+  // Build X matrix (T × 3) and Y vector (T × 1)
+  // Row i corresponds to t = i+1 in dy[] (i.e., original series index i+2)
+  var X = [];
+  var Y = [];
+  for (var t = 0; t < T; t++) {
+    X.push([1, series[t + 1], dy[t]]);  // [intercept, y_{t-1}, Δy_{t-1}]
+    Y.push(dy[t + 1]);                   // Δy_t
+  }
+
+  // OLS: β = (X'X)^{-1} X'Y
+  // Compute X'X (3×3)
+  var k = 3;
+  var XtX = [];
+  for (var i = 0; i < k; i++) {
+    XtX.push([]);
+    for (var j = 0; j < k; j++) {
+      var s = 0;
+      for (var t = 0; t < T; t++) s += X[t][i] * X[t][j];
+      XtX[i].push(s);
+    }
+  }
+
+  // Compute X'Y (3×1)
+  var XtY = [];
+  for (var i = 0; i < k; i++) {
+    var s = 0;
+    for (var t = 0; t < T; t++) s += X[t][i] * Y[t];
+    XtY.push(s);
+  }
+
+  // Invert 3×3 matrix using cofactor method
+  var inv = invert3x3_(XtX);
+  if (!inv) return { tStat: 0, isStationary: false, error: 'Singular matrix — spread may be constant' };
+
+  // Coefficients: β = inv(X'X) * X'Y
+  var beta = [];
+  for (var i = 0; i < k; i++) {
+    var s = 0;
+    for (var j = 0; j < k; j++) s += inv[i][j] * XtY[j];
+    beta.push(s);
+  }
+
+  // Residuals and σ²
+  var sse = 0;
+  for (var t = 0; t < T; t++) {
+    var yhat = 0;
+    for (var j = 0; j < k; j++) yhat += X[t][j] * beta[j];
+    var resid = Y[t] - yhat;
+    sse += resid * resid;
+  }
+  var sigma2 = sse / (T - k);
+
+  // Standard error of β₁ (the coefficient on y_{t-1})
+  var seBeta1 = Math.sqrt(sigma2 * inv[1][1]);
+  if (seBeta1 < 1e-12) return { tStat: 0, isStationary: false, error: 'Near-zero SE — degenerate regression' };
+
+  var tStat = beta[1] / seBeta1;
+
+  return {
+    tStat: parseFloat(tStat.toFixed(3)),
+    isStationary: tStat < ADF_CRITICAL_VALUES['5pct'],
+    confidence: tStat < ADF_CRITICAL_VALUES['1pct'] ? '99%' : tStat < ADF_CRITICAL_VALUES['5pct'] ? '95%' : tStat < ADF_CRITICAL_VALUES['10pct'] ? '90%' : 'none',
+    criticalValues: ADF_CRITICAL_VALUES,
+    nObs: T,
+    lag: 1,
+    beta: parseFloat(beta[1].toFixed(6))
+  };
+}
+
+/**
+ * Invert a 3×3 matrix using the cofactor/adjugate method.
+ * Returns null if singular (det ≈ 0).
+ */
+function invert3x3_(m) {
+  var det = m[0][0]*(m[1][1]*m[2][2]-m[1][2]*m[2][1])
+          - m[0][1]*(m[1][0]*m[2][2]-m[1][2]*m[2][0])
+          + m[0][2]*(m[1][0]*m[2][1]-m[1][1]*m[2][0]);
+  if (Math.abs(det) < 1e-14) return null;
+  var invDet = 1.0 / det;
+  return [
+    [(m[1][1]*m[2][2]-m[1][2]*m[2][1])*invDet, (m[0][2]*m[2][1]-m[0][1]*m[2][2])*invDet, (m[0][1]*m[1][2]-m[0][2]*m[1][1])*invDet],
+    [(m[1][2]*m[2][0]-m[1][0]*m[2][2])*invDet, (m[0][0]*m[2][2]-m[0][2]*m[2][0])*invDet, (m[0][2]*m[1][0]-m[0][0]*m[1][2])*invDet],
+    [(m[1][0]*m[2][1]-m[1][1]*m[2][0])*invDet, (m[0][1]*m[2][0]-m[0][0]*m[2][1])*invDet, (m[0][0]*m[1][1]-m[0][1]*m[1][0])*invDet]
+  ];
+}
+
+/**
+ * Ornstein-Uhlenbeck half-life estimation.
+ * Fits: Δy_t = α + β*y_{t-1} + ε
+ * Half-life = -ln(2) / β (in trading days)
+ *
+ * @param {number[]} series - Spread time series (oldest first)
+ * @returns {Object} { halfLife, lambda, isValid }
+ *   - halfLife in trading days (NaN/Infinity if β >= 0 → not mean-reverting)
+ *   - lambda = -β (speed of reversion)
+ */
+function ouHalfLife_(series) {
+  var n = series.length;
+  if (n < 20) return { halfLife: Infinity, lambda: 0, isValid: false, error: 'Need 20+ observations' };
+
+  // Simple OLS: Δy_t = α + β*y_{t-1}
+  var sumX = 0, sumY = 0, sumXX = 0, sumXY = 0;
+  var T = n - 1;
+  for (var i = 0; i < T; i++) {
+    var x = series[i];       // y_{t-1}
+    var y = series[i + 1] - series[i]; // Δy_t
+    sumX += x;
+    sumY += y;
+    sumXX += x * x;
+    sumXY += x * y;
+  }
+  var denom = T * sumXX - sumX * sumX;
+  if (Math.abs(denom) < 1e-14) return { halfLife: Infinity, lambda: 0, isValid: false, error: 'Degenerate regression' };
+
+  var beta = (T * sumXY - sumX * sumY) / denom;
+
+  // β must be negative for mean reversion
+  if (beta >= 0) return { halfLife: Infinity, lambda: 0, isValid: false };
+
+  var halfLife = -Math.log(2) / beta;
+  return {
+    halfLife: parseFloat(halfLife.toFixed(1)),
+    lambda: parseFloat((-beta).toFixed(6)),
+    isValid: halfLife > 0 && halfLife < 500
+  };
+}
+
+/**
+ * Estimate round-trip transaction costs for a pair trade.
+ * Accounts for: bid-ask spread (both legs × entry + exit), commissions, and short borrow cost.
+ *
+ * @param {number} priceA - Current price of leg A
+ * @param {number} priceB - Current price of leg B
+ * @param {number} sharesPerLeg - Shares per leg (default 100)
+ * @param {number} holdDays - Expected holding period in trading days
+ * @returns {Object} { totalCost, costPerShare, spreadCostA, spreadCostB, commission, borrowCost }
+ */
+function estimateTransactionCosts_(priceA, priceB, sharesPerLeg, holdDays) {
+  var shares = sharesPerLeg || DEFAULT_SHARES_PER_LEG;
+  var hd = holdDays || 30;
+
+  // Bid-ask spread cost: half-spread × 2 legs × 2 (entry + exit)
+  var halfSpreadA = priceA * DEFAULT_HALF_SPREAD_BPS / 10000;
+  var halfSpreadB = priceB * DEFAULT_HALF_SPREAD_BPS / 10000;
+  var spreadCostA = halfSpreadA * 2 * shares; // round-trip for leg A
+  var spreadCostB = halfSpreadB * 2 * shares; // round-trip for leg B
+
+  // Commission: per share × 2 legs × 2 (entry + exit)
+  var commission = DEFAULT_COMMISSION_PER_SHARE * shares * 4;
+
+  // Short borrow cost: annualized rate × (holdDays/252) × notional of short leg
+  var shortNotional = Math.min(priceA, priceB) * shares; // conservative: use cheaper leg
+  var borrowCost = shortNotional * SHORT_BORROW_ANNUAL_BPS / 10000 * (hd / 252);
+
+  var totalCost = spreadCostA + spreadCostB + commission + borrowCost;
+
+  return {
+    totalCost: parseFloat(totalCost.toFixed(2)),
+    costPerShare: parseFloat((totalCost / shares).toFixed(4)),
+    spreadCostA: parseFloat(spreadCostA.toFixed(2)),
+    spreadCostB: parseFloat(spreadCostB.toFixed(2)),
+    commission: parseFloat(commission.toFixed(2)),
+    borrowCost: parseFloat(borrowCost.toFixed(2))
+  };
+}
 
 // ============================================================
 // ROUTING
@@ -66,6 +274,12 @@ function doGet(e) {
       delete alerts._diag;
       var allPairs = alerts._allPairs || [];
       delete alerts._allPairs;
+      // Read last WebCache update timestamp
+      var lastCacheUpdate = '';
+      try {
+        lastCacheUpdate = PropertiesService.getScriptProperties().getProperty('WEBCACHE_UPDATED') || '';
+      } catch(ex) {}
+
       result = {
         ok: true,
         mode: mode,
@@ -75,6 +289,7 @@ function doGet(e) {
         portfolioData: getOpenTrades(),
         historyData: getClosedTrades(),
         macroData: getMacroData(),
+        cacheTimestamp: lastCacheUpdate,
         _diag: diag
       };
     }
@@ -327,14 +542,26 @@ function sanitizeObject_(obj) {
 // ============================================================
 // TICKER EXCLUSION LISTS
 // ============================================================
-/** Permanently excluded from ALL views */
+/**
+ * HARD BLACKLIST — bad data, delisted, or broken GOOGLEFINANCE tickers.
+ * Excluded from ALL views including backtests. These tickers have data quality
+ * issues that would corrupt statistical calculations.
+ */
 var BLACKLIST = {
   'GJH':1,'GJP':1,'GJO':1,'GJR':1,'GJS':1,'GJT':1,
-  'EPR-E':1,'EPR-G':1,'EPR-C':1,
   'KTH':1,'KTN':1,
+  'IPB':1
+};
+/**
+ * SOFT BLACKLIST — poor performers or problematic tickers that should be excluded
+ * from live alerts but INCLUDED in backtests to avoid survivorship bias.
+ * Moving these from BLACKLIST to SOFT_BLACKLIST ensures backtest results
+ * reflect realistic conditions (including pairs that lost money).
+ */
+var SOFT_BLACKLIST = {
+  'EPR-E':1,'EPR-G':1,'EPR-C':1,
   'ONBPO':1,'ONBPP':1,
   'BEPI':1,'BIP-A':1,'BIPJ':1,'BIPI':1,'BIPH':1,'BEPH':1,'BEP-A':1,'BEPJ':1,
-  'IPB':1,
   'SR-A':1,'RIV-A':1,'ACP-A':1,'OPP-A':1,
   'GAB-H':1,'GAB-K':1,
   'GGT-E':1,'GGT-G':1,
@@ -347,6 +574,12 @@ var INTRA_ONLY = {
   'HFRO-A':1,'HFRO-B':1
 };
 function isBlacklisted(ticker) {
+  var t = String(ticker).toUpperCase().trim();
+  return !!BLACKLIST[t] || !!SOFT_BLACKLIST[t];
+}
+/** Returns true only for hard-blacklisted tickers (data quality issues).
+ *  Soft-blacklisted tickers are allowed in backtests to avoid survivorship bias. */
+function isHardBlacklisted(ticker) {
   return !!BLACKLIST[String(ticker).toUpperCase().trim()];
 }
 function isIntraOnly(ticker) {
@@ -441,22 +674,43 @@ function getAlertData(mode) {
         }
       }
     }
-    // Load DivDates for ex-dividend date column
-    var divMap = {};
+    // Load DivDates for ex-dividend date column (now includes IsEstimated flag)
+    var divMap = {};    // {TICKER: Date}
+    var divEstMap = {}; // {TICKER: 'ESTIMATED'|'CONFIRMED'|''}
     var divSheet = ss.getSheetByName('DivDates');
     if (divSheet && divSheet.getLastRow() > 1) {
-      var divData = divSheet.getRange(2, 1, divSheet.getLastRow() - 1, 2).getValues();
+      var divCols = Math.min(divSheet.getLastColumn(), 4);
+      var divData = divSheet.getRange(2, 1, divSheet.getLastRow() - 1, divCols).getValues();
       for (var d = 0; d < divData.length; d++) {
         var dticker = String(divData[d][0]).toUpperCase().trim();
         var ddate = divData[d][1];
         if (dticker && ddate instanceof Date) {
           divMap[dticker] = ddate;
+          divEstMap[dticker] = divCols >= 4 ? String(divData[d][3] || '') : '';
         }
       }
     }
+    // Load TickerHistory for ADF/half-life computation on alert pairs
+    var histMap = readTickerHistMap_(ss);
+
+    // Load Master sheet for call price / par value data
+    var masterSheet = ss.getSheetByName('Master');
+    var callMap = {}; // {TICKER: {parValue, callDate, callPrice}} — for call risk tracking
+    if (masterSheet && masterSheet.getLastRow() > 1) {
+      var masterData = masterSheet.getDataRange().getValues();
+      // Master columns: A:Ticker, B:LastClose, C:CouponYield, D:CurrentYield, E:CreditRating
+      // We infer par value = $25 (standard for preferreds) and flag above-par
+      for (var m = 1; m < masterData.length; m++) {
+        var mTicker = String(masterData[m][0]).toUpperCase().trim();
+        if (mTicker) {
+          callMap[mTicker] = { parValue: 25.00 }; // standard preferred par
+        }
+      }
+    }
+
     var output = [];
     var _diag = {totalRows: data.length - 1, noId: 0, noPrice: 0, noHistory: 0, noCoupon: 0, lowZ: 0,
-                 blacklisted: 0, intraOnly: 0, divTooFar: 0, passed: 0,
+                 blacklisted: 0, intraOnly: 0, divTooFar: 0, passed: 0, adfFail: 0,
                  sheetUsed: liveSheet.getName(), sampleRows: []};
     // Capture first 5 rows raw data for debugging
     for (var s = 1; s < Math.min(6, data.length); s++) {
@@ -548,10 +802,55 @@ function getAlertData(mode) {
       var curVol = parseFloat(row[22]) || 0;
       var volSpike = (row[23] === true || row[23] === "TRUE");
       // DIV DATES — divA/divB already resolved above (proximity filter)
-      // Expected Profit = |Current Spread - 90-Day Mean| (distance to mean reversion)
       var spread = parseFloat(row[5]) || 0;
       var mean = parseFloat(row[10]) || 0;
-      var expProfit = Math.abs(spread - mean);
+
+      // ── QUANT STATS: ADF, Half-Life, Transaction Costs, Call Risk ──
+      // Build spread series from TickerHistory for this pair
+      var hA = histMap[tickerA] || [];
+      var hB = histMap[tickerB] || [];
+      var spreadSeries = [];
+      var logRatioSeries = [];
+      var minHistLen = Math.min(hA.length, hB.length, 90);
+      for (var h = 0; h < minHistLen; h++) {
+        var pxA = hA[hA.length - minHistLen + h];
+        var pxB = hB[hB.length - minHistLen + h];
+        spreadSeries.push(pxA - pxB);
+        if (pxA > 0 && pxB > 0) logRatioSeries.push(Math.log(pxA / pxB));
+      }
+
+      // ADF test on log-ratio spread (more appropriate for stat arb)
+      var adfResult = logRatioSeries.length >= 20 ? adfTest_(logRatioSeries) : { tStat: 0, isStationary: false, error: 'No history' };
+      var halfLifeResult = logRatioSeries.length >= 20 ? ouHalfLife_(logRatioSeries) : { halfLife: Infinity, isValid: false };
+
+      // Transaction cost estimate (assume 30-day hold or half-life if available)
+      var estHoldDays = (halfLifeResult.isValid && halfLifeResult.halfLife < 200) ? Math.ceil(halfLifeResult.halfLife * 2) : 30;
+      var txnCosts = estimateTransactionCosts_(priceA, priceB, DEFAULT_SHARES_PER_LEG, estHoldDays);
+
+      // Proper Expected Profit: E[P] = P(win) × grossProfit - P(loss) × grossLoss - costs
+      // For now, grossProfit = |spread - mean| per share × shares
+      var grossProfitPerShare = Math.abs(spread - mean);
+      var grossProfit = grossProfitPerShare * DEFAULT_SHARES_PER_LEG;
+      var netExpProfit = grossProfit - txnCosts.totalCost;
+      var expProfit = Math.max(0, netExpProfit / DEFAULT_SHARES_PER_LEG); // per-share net
+
+      // Log-ratio Z-score (more robust than nominal spread Z-score)
+      var logRatioZ = 0;
+      if (logRatioSeries.length >= 20) {
+        var lrSum = 0;
+        for (var lr = 0; lr < logRatioSeries.length; lr++) lrSum += logRatioSeries[lr];
+        var lrMean = lrSum / logRatioSeries.length;
+        var lrSqSum = 0;
+        for (var lr = 0; lr < logRatioSeries.length; lr++) lrSqSum += (logRatioSeries[lr] - lrMean) * (logRatioSeries[lr] - lrMean);
+        var lrStd = Math.sqrt(lrSqSum / (logRatioSeries.length - 1));
+        var currentLogRatio = (priceA > 0 && priceB > 0) ? Math.log(priceA / priceB) : 0;
+        logRatioZ = lrStd > 0.0001 ? (currentLogRatio - lrMean) / lrStd : 0;
+      }
+
+      // Call risk: flag if either leg is trading above par ($25)
+      var callRiskA = (callMap[tickerA] && priceA > callMap[tickerA].parValue) ? { abovePar: true, premium: parseFloat((priceA - 25).toFixed(2)) } : null;
+      var callRiskB = (callMap[tickerB] && priceB > callMap[tickerB].parValue) ? { abovePar: true, premium: parseFloat((priceB - 25).toFixed(2)) } : null;
+
       output.push({
         id: info.id,
         tA: row[1] || info.tA,
@@ -563,6 +862,9 @@ function getAlertData(mode) {
         sec: row[15] || "",
         spr: spread.toFixed(2),
         expProfit: expProfit.toFixed(2),
+        grossExpProfit: grossProfitPerShare.toFixed(2),
+        txnCost: txnCosts.costPerShare.toFixed(4),
+        txnCostTotal: txnCosts.totalCost.toFixed(2),
         yA: yA,
         yB: yB,
         z: currentZ.toFixed(2),
@@ -573,7 +875,18 @@ function getAlertData(mode) {
         volSpike: volSpike,
         zTrend: trend,
         exDivA: (divA && divA >= now) ? divA.toISOString().split('T')[0] : null,
-        exDivB: (divB && divB >= now) ? divB.toISOString().split('T')[0] : null
+        exDivB: (divB && divB >= now) ? divB.toISOString().split('T')[0] : null,
+        exDivAEst: divEstMap[tickerA] === 'ESTIMATED',
+        exDivBEst: divEstMap[tickerB] === 'ESTIMATED',
+        // Quant quality metrics
+        adfStat: adfResult.tStat || 0,
+        adfPass: adfResult.isStationary || false,
+        adfConf: adfResult.confidence || 'none',
+        halfLife: halfLifeResult.isValid ? halfLifeResult.halfLife : null,
+        halfLifeValid: halfLifeResult.isValid || false,
+        logRatioZ: parseFloat(logRatioZ.toFixed(2)),
+        callRiskA: callRiskA,
+        callRiskB: callRiskB
       });
     }
     output._diag = _diag;
@@ -944,6 +1257,29 @@ function getBasketAnalytics() {
     }
     var weightedAvgZ = totalWeight > 0 ? parseFloat((weightedZSum / totalWeight).toFixed(2)) : 0;
 
+    // ── MAX DRAWDOWN from basket history ──
+    var maxDrawdown = 0;
+    var maxDrawdownPct = 0;
+    var peak = -Infinity;
+    var drawdownSeries = [];
+    if (basketValues.length > 0) {
+      for (var dd = 0; dd < basketValues.length; dd++) {
+        if (basketValues[dd] > peak) peak = basketValues[dd];
+        var drawdown = peak - basketValues[dd];
+        drawdownSeries.push(drawdown);
+        if (drawdown > maxDrawdown) maxDrawdown = drawdown;
+      }
+      maxDrawdownPct = peak !== 0 ? parseFloat((maxDrawdown / Math.abs(peak) * 100).toFixed(2)) : 0;
+    }
+
+    // Sector concentration warning (>50% in one sector = concentrated)
+    var concentrationWarning = null;
+    for (var sec in sectorPct) {
+      if (sectorPct[sec] > 50 && trades.length > 3) {
+        concentrationWarning = { sector: sec, pct: sectorPct[sec] };
+      }
+    }
+
     return {
       trades: trades.length,
       weightedAvgZ: weightedAvgZ,
@@ -951,7 +1287,10 @@ function getBasketAnalytics() {
       sectorPct: sectorPct,
       strategyMix: strategyCount,
       totalNotional: parseFloat(totalNotional.toFixed(2)),
-      basketHistory: basketValues.length > 0 ? basketValues.slice(-30) : []
+      basketHistory: basketValues.length > 0 ? basketValues.slice(-30) : [],
+      maxDrawdown: parseFloat(maxDrawdown.toFixed(2)),
+      maxDrawdownPct: maxDrawdownPct,
+      concentrationWarning: concentrationWarning
     };
   } catch(e) {
     return { trades: 0, error: e.message };
@@ -3347,8 +3686,9 @@ function runBacktest_(zThreshold, exitZ, maxHold, mode) {
       var tA = pair.tA.toUpperCase().trim();
       var tB = pair.tB.toUpperCase().trim();
 
-      // FILTER: blacklisted tickers — excluded from all backtest modes
-      if (isBlacklisted(tA) || isBlacklisted(tB)) { pairsSkippedHist++; continue; }
+      // FILTER: only hard-blacklisted tickers excluded from backtests (data quality issues)
+      // Soft-blacklisted tickers (poor performers) are INCLUDED to avoid survivorship bias
+      if (isHardBlacklisted(tA) || isHardBlacklisted(tB)) { pairsSkippedHist++; continue; }
 
       // FILTER: intra-only tickers — excluded from credit backtest
       if (pair.mode === 'credit' && (isIntraOnly(tA) || isIntraOnly(tB))) { pairsSkippedHist++; continue; }

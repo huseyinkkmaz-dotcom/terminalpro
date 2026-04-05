@@ -289,3 +289,49 @@ Pre-computed probability analysis for top 20 alert pairs. Updated daily at 9 AM 
 
 **Coupon Yield empty = variable/reset rate → excluded from dashboard.**
 **Credit Rating empty = excluded from credit arb pairing.**
+
+## Quant Audit Improvements (V24+)
+
+### Statistical Foundation
+- **ADF Cointegration Test** — Each alert pair now runs an Augmented Dickey-Fuller test on the log-ratio spread. Non-stationary pairs (ADF p > 5%) have their composite score capped at 30 and display a red "✗ ADF" badge. Function: `adfTest_()` in Code.gs.
+- **Log-Ratio Z-Score** — In addition to the nominal spread Z, each pair now computes `logRatioZ = (log(PA/PB) - mean) / std`. This is price-level invariant and preferred for the composite score.
+- **OU Half-Life** — Ornstein-Uhlenbeck half-life per pair (`ouHalfLife_()` in Code.gs). Displayed as "HL:Xd" in the Quality column. Used for adaptive age scoring in the composite score.
+
+### Transaction Cost Modeling
+- **estimateTransactionCosts_()** — Models round-trip costs: bid-ask spread (15 bps/leg), commissions ($0.005/share), and short borrow cost (100 bps/year). Constants at top of Code.gs.
+- **Net Expected Profit** — `expProfit` in the API response is now net of estimated transaction costs. The frontend shows both gross and net expected profit.
+
+### Call Risk Tracking
+- Each alert now includes `callRiskA` / `callRiskB` objects when a leg trades above par ($25). The Quality column shows red "CALLABLE" badges. The composite score penalizes above-par callables proportionally to the premium.
+
+### Composite Score V3
+- ADF stationarity as hard gate (non-stationary capped at 30)
+- Half-life replaces arbitrary age sweet spot (3-10d → HL-relative)
+- Transaction costs deducted before profit scoring
+- Removed correlated components (Z-mag + EP + age triple-counting eliminated)
+- Call risk penalty for above-par preferreds
+
+### Survivorship Bias Fix
+- **BLACKLIST** split into `BLACKLIST` (hard — data quality) and `SOFT_BLACKLIST` (poor performers). Backtests now use `isHardBlacklisted()` — only data-quality exclusions. Poor performers are included to prevent inflated backtest results.
+
+### Adaptive Lookback Window
+- Credit pair cache (`computeCreditCache`) now computes OU half-life first, then sets lookback = 3× half-life (clamped 30-180 days) instead of fixed 90. Falls back to 90 if half-life is not computable.
+
+### Portfolio Risk Metrics
+- **Max Drawdown** — `getBasketAnalytics()` now computes peak-to-trough drawdown from basket history. Displayed in the Health Bar's new "Risk Metrics" section.
+- **Concentration Warning** — Alerts when >50% of portfolio notional is in one sector.
+
+### Dividend Date Transparency
+- **DivDates sheet** now has 4th column `IsEstimated` — `CONFIRMED` (direct from Yahoo) vs `ESTIMATED` (+91 day projection).
+- Frontend shows yellow "EST" badge next to projected dates.
+
+### Data Staleness
+- Header now shows time since last WebCache update (e.g., "Data: 5m ago") with color coding: green (<15m), yellow (15-30m), red (>30m stale).
+- `MIN_WIN_RATE_SAMPLES` raised from 5 to 20 for statistical rigor.
+
+### DivDates Sheet (updated)
+
+| A: Ticker | B: NextDivDate | C: LastFetched | D: IsEstimated |
+|-----------|---------------|----------------|----------------|
+| BAC-B | 2026-03-15 | 2026-02-20T06:00:00 | CONFIRMED |
+| PSA-F | 2026-06-15 | 2026-02-20T06:00:00 | ESTIMATED |

@@ -734,8 +734,12 @@ function fetchDividendDates() {
   var divSheet = ss.getSheetByName('DivDates');
   if (!divSheet) {
     divSheet = ss.insertSheet('DivDates');
-    divSheet.getRange(1, 1, 1, 3).setValues([['Ticker', 'NextDivDate', 'LastFetched']]);
-    divSheet.getRange(1, 1, 1, 3).setFontWeight('bold');
+    divSheet.getRange(1, 1, 1, 4).setValues([['Ticker', 'NextDivDate', 'LastFetched', 'IsEstimated']]);
+    divSheet.getRange(1, 1, 1, 4).setFontWeight('bold');
+  }
+  // Ensure 4th column header exists (upgrade existing sheets)
+  if (divSheet.getLastColumn() < 4) {
+    divSheet.getRange(1, 4).setValue('IsEstimated').setFontWeight('bold');
   }
 
   // Load existing data — skip recently fetched tickers
@@ -822,9 +826,9 @@ function fetchDividendDates() {
           var rawTs = (q.exDividendDate && q.exDividendDate > 0) ? q.exDividendDate : 0;
 
           if (rawTs > 0) {
-            var d = projectNextDivDate_(new Date(rawTs * 1000), now);
-            if (d) {
-              dataMap[key] = [ourTicker, d, now];
+            var result = projectNextDivDate_(new Date(rawTs * 1000), now);
+            if (result) {
+              dataMap[key] = [ourTicker, result.date, now, result.isEstimated ? 'ESTIMATED' : 'CONFIRMED'];
               successCount++;
               continue;
             }
@@ -908,17 +912,17 @@ function fetchDividendDates() {
             }
 
             if (latest > 0) {
-              var d = projectNextDivDate_(new Date(latest * 1000), now);
-              if (d) {
-                dataMap[key] = [ticker, d, now];
+              var result = projectNextDivDate_(new Date(latest * 1000), now);
+              if (result) {
+                dataMap[key] = [ticker, result.date, now, result.isEstimated ? 'ESTIMATED' : 'CONFIRMED'];
                 phase2Count++;
                 if (phase2Count === 1) {
-                  Logger.log('Phase 2 first success: ' + ticker + ' → ' + d.toISOString().split('T')[0]);
+                  Logger.log('Phase 2 first success: ' + ticker + ' → ' + result.date.toISOString().split('T')[0] + (result.isEstimated ? ' (estimated)' : ' (confirmed)'));
                 }
                 continue;
               }
             }
-            dataMap[key] = [ticker, '', now];
+            dataMap[key] = [ticker, '', now, ''];
           } catch (e) {
             dataMap[key] = [ticker, '', now];
           }
@@ -942,10 +946,14 @@ function fetchDividendDates() {
   allRows.sort(function(a, b) { return String(a[0]).localeCompare(String(b[0])); });
 
   divSheet.clear();
-  divSheet.getRange(1, 1, 1, 3).setValues([['Ticker', 'NextDivDate', 'LastFetched']]);
-  divSheet.getRange(1, 1, 1, 3).setFontWeight('bold');
+  divSheet.getRange(1, 1, 1, 4).setValues([['Ticker', 'NextDivDate', 'LastFetched', 'IsEstimated']]);
+  divSheet.getRange(1, 1, 1, 4).setFontWeight('bold');
   if (allRows.length > 0) {
-    divSheet.getRange(2, 1, allRows.length, 3).setValues(allRows);
+    // Ensure all rows have 4 columns
+    for (var ri = 0; ri < allRows.length; ri++) {
+      while (allRows[ri].length < 4) allRows[ri].push('');
+    }
+    divSheet.getRange(2, 1, allRows.length, 4).setValues(allRows);
   }
 
   Logger.log('fetchDividendDates: Done. ' + successCount + '/' + toFetch.length + ' got dates. ' + allRows.length + ' total tickers stored.');
@@ -956,21 +964,26 @@ function fetchDividendDates() {
  * If the date is in the past, adds 91 days (quarterly) until it's >= today.
  * Returns null if the result is unreasonable (> 1 year out).
  */
+/**
+ * Projects the next dividend date from a known dividend date.
+ * Returns {date, isEstimated} — isEstimated=true if the date was projected
+ * (not directly from Yahoo Finance). Projected dates add 91 days (quarterly).
+ */
 function projectNextDivDate_(divDate, today) {
   var d = new Date(divDate.getTime());
   var maxFuture = new Date(today.getTime() + 400 * 86400000); // ~13 months max
 
-  // If already in the future, return as-is
-  if (d >= today) return d;
+  // If already in the future, return as confirmed (directly from source)
+  if (d >= today) return { date: d, isEstimated: false };
 
-  // Add 91 days (quarterly) until it's in the future
+  // Add 91 days (quarterly) until it's in the future — this is an ESTIMATE
   while (d < today) {
     d = new Date(d.getTime() + 91 * 86400000);
   }
 
   // Sanity check: don't return dates too far out
   if (d > maxFuture) return null;
-  return d;
+  return { date: d, isEstimated: true };
 }
 
 // ============================================================
@@ -1754,10 +1767,44 @@ function computeCreditCache() {
       // TickerHistory arrays are oldest-first, but different tickers may have
       // different lengths (different listing dates, data gaps). Aligning from
       // the end ensures the most recent entries (same trading days) are paired.
-      // Also cap at 90 trading days to match intra-company pair lookback window.
+      // Adaptive lookback: use 3× half-life if computable, else default 90 days.
       var hA = histMap[tA] || [];
       var hB = histMap[tB] || [];
-      var LOOKBACK = 90;
+      var DEFAULT_LOOKBACK = 90;
+
+      // First pass: compute log-ratio series with all available history for half-life
+      var maxAvail = Math.min(hA.length, hB.length);
+      var logRatioForHL = [];
+      for (var k = 0; k < maxAvail; k++) {
+        var pxA = hA[hA.length - maxAvail + k];
+        var pxB = hB[hB.length - maxAvail + k];
+        if (pxA > 0 && pxB > 0) logRatioForHL.push(Math.log(pxA / pxB));
+      }
+
+      // Compute half-life to determine adaptive lookback
+      var LOOKBACK = DEFAULT_LOOKBACK;
+      if (logRatioForHL.length >= 30) {
+        // Simple OU half-life: Δy = α + β*y_{t-1}, HL = -ln(2)/β
+        var hlSumX = 0, hlSumY = 0, hlSumXX = 0, hlSumXY = 0;
+        var hlT = logRatioForHL.length - 1;
+        for (var k = 0; k < hlT; k++) {
+          var x = logRatioForHL[k];
+          var y = logRatioForHL[k + 1] - logRatioForHL[k];
+          hlSumX += x; hlSumY += y; hlSumXX += x * x; hlSumXY += x * y;
+        }
+        var hlDenom = hlT * hlSumXX - hlSumX * hlSumX;
+        if (Math.abs(hlDenom) > 1e-14) {
+          var hlBeta = (hlT * hlSumXY - hlSumX * hlSumY) / hlDenom;
+          if (hlBeta < 0) {
+            var hl = -Math.log(2) / hlBeta;
+            if (hl > 0 && hl < 300) {
+              // Adaptive: lookback = 3× half-life, clamped to [30, 180]
+              LOOKBACK = Math.max(30, Math.min(180, Math.round(hl * 3)));
+            }
+          }
+        }
+      }
+
       var minLen = Math.min(hA.length, hB.length, LOOKBACK);
       var spreads = [];
       for (var k = 0; k < minLen; k++) {
