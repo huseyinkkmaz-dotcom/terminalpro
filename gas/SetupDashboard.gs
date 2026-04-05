@@ -1772,24 +1772,22 @@ function computeCreditCache() {
       var hB = histMap[tB] || [];
       var DEFAULT_LOOKBACK = 90;
 
-      // First pass: compute log-ratio series with all available history for half-life
+      // First pass: compute nominal spread series with all available history for half-life
       var maxAvail = Math.min(hA.length, hB.length);
-      var logRatioForHL = [];
+      var spreadForHL = [];
       for (var k = 0; k < maxAvail; k++) {
-        var pxA = hA[hA.length - maxAvail + k];
-        var pxB = hB[hB.length - maxAvail + k];
-        if (pxA > 0 && pxB > 0) logRatioForHL.push(Math.log(pxA / pxB));
+        spreadForHL.push(hA[hA.length - maxAvail + k] - hB[hB.length - maxAvail + k]);
       }
 
       // Compute half-life to determine adaptive lookback
       var LOOKBACK = DEFAULT_LOOKBACK;
-      if (logRatioForHL.length >= 30) {
+      if (spreadForHL.length >= 30) {
         // Simple OU half-life: Δy = α + β*y_{t-1}, HL = -ln(2)/β
         var hlSumX = 0, hlSumY = 0, hlSumXX = 0, hlSumXY = 0;
-        var hlT = logRatioForHL.length - 1;
+        var hlT = spreadForHL.length - 1;
         for (var k = 0; k < hlT; k++) {
-          var x = logRatioForHL[k];
-          var y = logRatioForHL[k + 1] - logRatioForHL[k];
+          var x = spreadForHL[k];
+          var y = spreadForHL[k + 1] - spreadForHL[k];
           hlSumX += x; hlSumY += y; hlSumXX += x * x; hlSumXY += x * y;
         }
         var hlDenom = hlT * hlSumXX - hlSumX * hlSumX;

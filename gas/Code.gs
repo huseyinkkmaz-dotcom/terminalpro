@@ -19,12 +19,6 @@
 var MIN_STDEV = 0.001; // Minimum meaningful standard deviation — used across alerts, backtests, and basket metrics
 var MIN_WIN_RATE_SAMPLES = 20; // Minimum trigger events required for a win rate to be considered reliable (raised from 5 for statistical rigor)
 
-// Transaction cost assumptions for preferred stocks
-var DEFAULT_HALF_SPREAD_BPS = 15; // 15 bps half bid-ask spread per leg (~$0.04 on $25 stock)
-var DEFAULT_COMMISSION_PER_SHARE = 0.005; // $0.005/share (typical IBKR rate)
-var DEFAULT_SHARES_PER_LEG = 100; // default position size for cost estimation
-var SHORT_BORROW_ANNUAL_BPS = 100; // 100 bps annual short borrow cost for preferred stocks
-
 // ADF test critical values (MacKinnon, 1994) — approximate for n=50-100 observations
 // Format: {significance_level: critical_t_statistic}
 var ADF_CRITICAL_VALUES = {
@@ -185,45 +179,6 @@ function ouHalfLife_(series) {
     halfLife: parseFloat(halfLife.toFixed(1)),
     lambda: parseFloat((-beta).toFixed(6)),
     isValid: halfLife > 0 && halfLife < 500
-  };
-}
-
-/**
- * Estimate round-trip transaction costs for a pair trade.
- * Accounts for: bid-ask spread (both legs × entry + exit), commissions, and short borrow cost.
- *
- * @param {number} priceA - Current price of leg A
- * @param {number} priceB - Current price of leg B
- * @param {number} sharesPerLeg - Shares per leg (default 100)
- * @param {number} holdDays - Expected holding period in trading days
- * @returns {Object} { totalCost, costPerShare, spreadCostA, spreadCostB, commission, borrowCost }
- */
-function estimateTransactionCosts_(priceA, priceB, sharesPerLeg, holdDays) {
-  var shares = sharesPerLeg || DEFAULT_SHARES_PER_LEG;
-  var hd = holdDays || 30;
-
-  // Bid-ask spread cost: half-spread × 2 legs × 2 (entry + exit)
-  var halfSpreadA = priceA * DEFAULT_HALF_SPREAD_BPS / 10000;
-  var halfSpreadB = priceB * DEFAULT_HALF_SPREAD_BPS / 10000;
-  var spreadCostA = halfSpreadA * 2 * shares; // round-trip for leg A
-  var spreadCostB = halfSpreadB * 2 * shares; // round-trip for leg B
-
-  // Commission: per share × 2 legs × 2 (entry + exit)
-  var commission = DEFAULT_COMMISSION_PER_SHARE * shares * 4;
-
-  // Short borrow cost: annualized rate × (holdDays/252) × notional of short leg
-  var shortNotional = Math.min(priceA, priceB) * shares; // conservative: use cheaper leg
-  var borrowCost = shortNotional * SHORT_BORROW_ANNUAL_BPS / 10000 * (hd / 252);
-
-  var totalCost = spreadCostA + spreadCostB + commission + borrowCost;
-
-  return {
-    totalCost: parseFloat(totalCost.toFixed(2)),
-    costPerShare: parseFloat((totalCost / shares).toFixed(4)),
-    spreadCostA: parseFloat(spreadCostA.toFixed(2)),
-    spreadCostB: parseFloat(spreadCostB.toFixed(2)),
-    commission: parseFloat(commission.toFixed(2)),
-    borrowCost: parseFloat(borrowCost.toFixed(2))
   };
 }
 
@@ -810,42 +765,17 @@ function getAlertData(mode) {
       var hA = histMap[tickerA] || [];
       var hB = histMap[tickerB] || [];
       var spreadSeries = [];
-      var logRatioSeries = [];
       var minHistLen = Math.min(hA.length, hB.length, 90);
       for (var h = 0; h < minHistLen; h++) {
-        var pxA = hA[hA.length - minHistLen + h];
-        var pxB = hB[hB.length - minHistLen + h];
-        spreadSeries.push(pxA - pxB);
-        if (pxA > 0 && pxB > 0) logRatioSeries.push(Math.log(pxA / pxB));
+        spreadSeries.push(hA[hA.length - minHistLen + h] - hB[hB.length - minHistLen + h]);
       }
 
-      // ADF test on log-ratio spread (more appropriate for stat arb)
-      var adfResult = logRatioSeries.length >= 20 ? adfTest_(logRatioSeries) : { tStat: 0, isStationary: false, error: 'No history' };
-      var halfLifeResult = logRatioSeries.length >= 20 ? ouHalfLife_(logRatioSeries) : { halfLife: Infinity, isValid: false };
+      // ADF test on nominal spread
+      var adfResult = spreadSeries.length >= 20 ? adfTest_(spreadSeries) : { tStat: 0, isStationary: false, error: 'No history' };
+      var halfLifeResult = spreadSeries.length >= 20 ? ouHalfLife_(spreadSeries) : { halfLife: Infinity, isValid: false };
 
-      // Transaction cost estimate (assume 30-day hold or half-life if available)
-      var estHoldDays = (halfLifeResult.isValid && halfLifeResult.halfLife < 200) ? Math.ceil(halfLifeResult.halfLife * 2) : 30;
-      var txnCosts = estimateTransactionCosts_(priceA, priceB, DEFAULT_SHARES_PER_LEG, estHoldDays);
-
-      // Proper Expected Profit: E[P] = P(win) × grossProfit - P(loss) × grossLoss - costs
-      // For now, grossProfit = |spread - mean| per share × shares
-      var grossProfitPerShare = Math.abs(spread - mean);
-      var grossProfit = grossProfitPerShare * DEFAULT_SHARES_PER_LEG;
-      var netExpProfit = grossProfit - txnCosts.totalCost;
-      var expProfit = Math.max(0, netExpProfit / DEFAULT_SHARES_PER_LEG); // per-share net
-
-      // Log-ratio Z-score (more robust than nominal spread Z-score)
-      var logRatioZ = 0;
-      if (logRatioSeries.length >= 20) {
-        var lrSum = 0;
-        for (var lr = 0; lr < logRatioSeries.length; lr++) lrSum += logRatioSeries[lr];
-        var lrMean = lrSum / logRatioSeries.length;
-        var lrSqSum = 0;
-        for (var lr = 0; lr < logRatioSeries.length; lr++) lrSqSum += (logRatioSeries[lr] - lrMean) * (logRatioSeries[lr] - lrMean);
-        var lrStd = Math.sqrt(lrSqSum / (logRatioSeries.length - 1));
-        var currentLogRatio = (priceA > 0 && priceB > 0) ? Math.log(priceA / priceB) : 0;
-        logRatioZ = lrStd > 0.0001 ? (currentLogRatio - lrMean) / lrStd : 0;
-      }
+      // Expected Profit = |Current Spread - 90-Day Mean| (distance to mean reversion)
+      var expProfit = Math.abs(spread - mean);
 
       // Call risk: flag if either leg is trading above par ($25)
       var callRiskA = (callMap[tickerA] && priceA > callMap[tickerA].parValue) ? { abovePar: true, premium: parseFloat((priceA - 25).toFixed(2)) } : null;
@@ -862,9 +792,6 @@ function getAlertData(mode) {
         sec: row[15] || "",
         spr: spread.toFixed(2),
         expProfit: expProfit.toFixed(2),
-        grossExpProfit: grossProfitPerShare.toFixed(2),
-        txnCost: txnCosts.costPerShare.toFixed(4),
-        txnCostTotal: txnCosts.totalCost.toFixed(2),
         yA: yA,
         yB: yB,
         z: currentZ.toFixed(2),
@@ -884,7 +811,6 @@ function getAlertData(mode) {
         adfConf: adfResult.confidence || 'none',
         halfLife: halfLifeResult.isValid ? halfLifeResult.halfLife : null,
         halfLifeValid: halfLifeResult.isValid || false,
-        logRatioZ: parseFloat(logRatioZ.toFixed(2)),
         callRiskA: callRiskA,
         callRiskB: callRiskB
       });

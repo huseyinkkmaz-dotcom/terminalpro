@@ -635,7 +635,7 @@ th .th-hint{font-weight:400;font-size:8px;letter-spacing:0;text-transform:none;c
 <button class="filter-pill" id="divFilterBtn" onclick="toggleDivFilter(this)">&#128176; Ex-Div &le;7d</button>
 <span class="filter-label" style="margin-left:auto;font-size:8px" id="screenerAge"></span>
 </div>
-<table><thead><tr><th>Pair</th><th>Spread</th><th>Ex-Dividend<span class="th-hint">next date per leg</span></th><th class="sortable" onclick="sortProfit()">Edge<span class="th-hint">net profit (after costs)</span> &#8645;</th><th class="sortable" onclick="sortZ()">Z-Score &#8645;</th><th class="sortable" onclick="sortLiq()">Avg Liquidity &#8645;</th><th class="sortable" onclick="sortAge()">Days Active &#8645;</th><th>Velocity<span class="th-hint">&sigma;/day convergence</span></th><th>Quality<span class="th-hint">ADF / half-life / cost</span></th><th>Signal</th><th style="text-align:right">Actions</th></tr></thead><tbody id="alertBody"></tbody></table>
+<table><thead><tr><th>Pair</th><th>Spread</th><th>Ex-Dividend<span class="th-hint">next date per leg</span></th><th class="sortable" onclick="sortProfit()">Edge<span class="th-hint">exp. profit + yield spread</span> &#8645;</th><th class="sortable" onclick="sortZ()">Z-Score &#8645;</th><th class="sortable" onclick="sortLiq()">Avg Liquidity &#8645;</th><th class="sortable" onclick="sortAge()">Days Active &#8645;</th><th>Velocity<span class="th-hint">&sigma;/day convergence</span></th><th>Quality<span class="th-hint">ADF / half-life / cost</span></th><th>Signal</th><th style="text-align:right">Actions</th></tr></thead><tbody id="alertBody"></tbody></table>
 </div>
 <div id="portfolio" class="tab-content">
 <div class="exposure-pill-box"><div class="exp-pill"><span class="exp-label">LONG</span><span class="exp-val-long" id="valLong">$0</span></div><div class="exp-pill"><span class="exp-label">SHORT</span><span class="exp-val-short" id="valShort">$0</span></div></div>
@@ -1046,14 +1046,12 @@ function sqPopulateCalc(idx){
 // Key changes from V2:
 // - ADF stationarity as hard gate (non-stationary pairs capped at 30)
 // - Half-life replaces arbitrary age sweet spot
-// - Transaction costs deducted from expected profit
 // - Removed correlated components (Z-mag + EP + age were triple-counting)
 // - Call risk penalty for above-par callables
-// - Log-ratio Z preferred over nominal Z
 function computeSetupScore(r, maxEP) {
   var score = 0;
-  var az = Math.abs(parseFloat(r.logRatioZ) || parseFloat(r.z) || 0); // prefer log-ratio Z
-  var ep = parseFloat(r.expProfit) || 0; // now net of transaction costs (from backend)
+  var az = Math.abs(parseFloat(r.z) || 0);
+  var ep = parseFloat(r.expProfit) || 0;
   var liq = parseFloat(r.liq) || 0;
   var age = parseInt(r.age) || 0;
   var yA = parseFloat(r.yA) || 0, yB = parseFloat(r.yB) || 0;
@@ -1746,13 +1744,8 @@ h+='<td><div class="instr-main"><a href="'+url+'" target="_blank" class="'+lk+'"
 h+='<td><div class="mono-data">$'+r.spr+'</div></td>';
 // Ex-Div
 h+=divTd;
-// Edge: net profit (after costs) + gross profit + yield spread
-var grossEP=r.grossExpProfit||ep;
-var netEPVal=parseFloat(ep)||0;
-var epClr=netEPVal>0.5?'var(--low)':netEPVal>0?'var(--yellow)':'var(--high)';
-h+='<td><div class="mono-data" style="color:'+epClr+'">$'+ep+'<span style="font-size:8px;color:var(--subtext);margin-left:3px">net</span></div>';
-if(grossEP!==ep){h+='<div style="font-size:9px;color:var(--subtext);font-family:JetBrains Mono;margin-top:1px">$'+grossEP+' gross</div>';}
-h+='<div style="font-size:9px;color:var(--subtext);font-family:JetBrains Mono;margin-top:2px">'+yieldSpread+'% spread</div></td>';
+// Edge: exp profit + yield spread subscript
+h+='<td><div class="mono-data" style="color:var(--low)">$'+ep+'</div><div style="font-size:9px;color:var(--subtext);font-family:JetBrains Mono;margin-top:2px">'+yieldSpread+'% spread</div></td>';
 // Z-Score — visual anchor with scaled background
 h+='<td style="background:'+zBg+'"><div class="mono-data" style="font-size:16px;font-weight:900;color:var(--accent)">'+z.toFixed(2)+'&sigma;</div>'+sp+'</td>';
 // Liquidity
@@ -1761,9 +1754,9 @@ h+='<td><div style="display:flex;align-items:center;gap:4px"><span class="dot '+
 h+='<td><div class="mono-data" style="font-size:11px">'+at+'</div></td>';
 // Velocity
 h+='<td><div class="mono-data" style="font-size:11px;color:'+velClr+'">'+velocity+'</div></td>';
-// Quality — ADF, half-life, transaction costs, call risk
+// Quality — ADF, half-life, call risk
 var adfOk=r.adfPass;var hlVal=r.halfLife;var hlValid=r.halfLifeValid;
-var txnC=parseFloat(r.txnCost)||0;var callA=r.callRiskA;var callB=r.callRiskB;
+var callA=r.callRiskA;var callB=r.callRiskB;
 var qParts=[];
 // ADF badge
 if(adfOk){qParts.push('<span style="color:var(--low);font-size:9px;font-weight:900" title="ADF test passed: spread is stationary ('+r.adfConf+')">&#10003; ADF</span>');}
@@ -1771,13 +1764,9 @@ else{qParts.push('<span style="color:var(--high);font-size:9px;font-weight:900" 
 // Half-life
 if(hlValid&&hlVal){qParts.push('<span style="color:var(--accent);font-size:9px;font-weight:700" title="OU half-life: '+hlVal+' trading days">HL:'+hlVal+'d</span>');}
 else{qParts.push('<span style="color:var(--subtext);font-size:9px" title="Half-life could not be computed">HL:—</span>');}
-// Transaction cost
-if(txnC>0){qParts.push('<span style="color:var(--yellow);font-size:9px;font-family:JetBrains Mono" title="Estimated round-trip cost per share: $'+txnC.toFixed(2)+'">$'+txnC.toFixed(2)+' cost</span>');}
 // Call risk
 if(callA){qParts.push('<span style="color:var(--high);font-size:8px;font-weight:900" title="'+r.tA+' is $'+callA.premium+' above par ($25) — call risk">'+r.tA+' CALLABLE</span>');}
 if(callB){qParts.push('<span style="color:var(--high);font-size:8px;font-weight:900" title="'+r.tB+' is $'+callB.premium+' above par ($25) — call risk">'+r.tB+' CALLABLE</span>');}
-// Log-ratio Z
-if(r.logRatioZ&&Math.abs(r.logRatioZ-parseFloat(r.z))>0.3){qParts.push('<span style="color:var(--purple);font-size:8px" title="Log-ratio Z differs significantly from nominal Z">LR:'+r.logRatioZ+'&sigma;</span>');}
 h+='<td><div style="display:flex;flex-direction:column;gap:2px">'+qParts.join('')+'</div></td>';
 // Signal
 h+='<td><div class="action-tag'+actCls+'" style="color:'+act.c+';border-color:'+act.c+'">'+act.l+'</div></td>';

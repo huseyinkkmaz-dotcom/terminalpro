@@ -293,13 +293,8 @@ Pre-computed probability analysis for top 20 alert pairs. Updated daily at 9 AM 
 ## Quant Audit Improvements (V24+)
 
 ### Statistical Foundation
-- **ADF Cointegration Test** — Each alert pair now runs an Augmented Dickey-Fuller test on the log-ratio spread. Non-stationary pairs (ADF p > 5%) have their composite score capped at 30 and display a red "✗ ADF" badge. Function: `adfTest_()` in Code.gs.
-- **Log-Ratio Z-Score** — In addition to the nominal spread Z, each pair now computes `logRatioZ = (log(PA/PB) - mean) / std`. This is price-level invariant and preferred for the composite score.
+- **ADF Cointegration Test** — Each alert pair runs an Augmented Dickey-Fuller test on the nominal spread series. Non-stationary pairs (ADF p > 5%) have their composite score capped at 30 and display a red "✗ ADF" badge. Function: `adfTest_()` in Code.gs.
 - **OU Half-Life** — Ornstein-Uhlenbeck half-life per pair (`ouHalfLife_()` in Code.gs). Displayed as "HL:Xd" in the Quality column. Used for adaptive age scoring in the composite score.
-
-### Transaction Cost Modeling
-- **estimateTransactionCosts_()** — Models round-trip costs: bid-ask spread (15 bps/leg), commissions ($0.005/share), and short borrow cost (100 bps/year). Constants at top of Code.gs.
-- **Net Expected Profit** — `expProfit` in the API response is now net of estimated transaction costs. The frontend shows both gross and net expected profit.
 
 ### Call Risk Tracking
 - Each alert now includes `callRiskA` / `callRiskB` objects when a leg trades above par ($25). The Quality column shows red "CALLABLE" badges. The composite score penalizes above-par callables proportionally to the premium.
@@ -307,7 +302,6 @@ Pre-computed probability analysis for top 20 alert pairs. Updated daily at 9 AM 
 ### Composite Score V3
 - ADF stationarity as hard gate (non-stationary capped at 30)
 - Half-life replaces arbitrary age sweet spot (3-10d → HL-relative)
-- Transaction costs deducted before profit scoring
 - Removed correlated components (Z-mag + EP + age triple-counting eliminated)
 - Call risk penalty for above-par preferreds
 
