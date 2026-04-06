@@ -36,6 +36,7 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);paddi
 .exp-val-short{font-family:'JetBrains Mono';font-weight:900;color:var(--high);font-size:13px}
 table{width:100%;border-collapse:separate;border-spacing:0 3px}
 thead{position:sticky;top:42px;z-index:10}
+#osTable thead{position:static}
 th{text-align:left;padding:12px 16px;color:var(--subtext);font-size:9px;text-transform:uppercase;font-weight:900;user-select:none;letter-spacing:1px;white-space:nowrap;background:var(--bg)}
 .sortable{cursor:pointer;transition:.2s}.sortable:hover{color:var(--accent)}
 td{background:var(--card);padding:14px 16px;border-top:1px solid rgba(55,65,81,.5);border-bottom:none;vertical-align:middle}
@@ -1765,8 +1766,8 @@ else{qParts.push('<span style="color:var(--high);font-size:9px;font-weight:900" 
 if(hlValid&&hlVal){qParts.push('<span style="color:var(--accent);font-size:9px;font-weight:700" title="OU half-life: '+hlVal+' trading days">HL:'+hlVal+'d</span>');}
 else{qParts.push('<span style="color:var(--subtext);font-size:9px" title="Half-life could not be computed">HL:—</span>');}
 // Call risk
-if(callA){qParts.push('<span style="color:var(--high);font-size:8px;font-weight:900" title="'+r.tA+' is $'+callA.premium+' above par ($25) — call risk">'+r.tA+' CALLABLE</span>');}
-if(callB){qParts.push('<span style="color:var(--high);font-size:8px;font-weight:900" title="'+r.tB+' is $'+callB.premium+' above par ($25) — call risk">'+r.tB+' CALLABLE</span>');}
+if(callA){qParts.push('<span style="color:var(--yellow);font-size:8px;font-weight:900" title="'+r.tA+' trades $'+callA.premium+' above par ($25). If past its call-protection date the issuer could redeem at $25, capping upside.">'+r.tA+' +$'+callA.premium+' PAR</span>');}
+if(callB){qParts.push('<span style="color:var(--yellow);font-size:8px;font-weight:900" title="'+r.tB+' trades $'+callB.premium+' above par ($25). If past its call-protection date the issuer could redeem at $25, capping upside.">'+r.tB+' +$'+callB.premium+' PAR</span>');}
 h+='<td><div style="display:flex;flex-direction:column;gap:2px">'+qParts.join('')+'</div></td>';
 // Signal
 h+='<td><div class="action-tag'+actCls+'" style="color:'+act.c+';border-color:'+act.c+'">'+act.l+'</div></td>';

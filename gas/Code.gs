@@ -778,8 +778,12 @@ function getAlertData(mode) {
       var expProfit = Math.abs(spread - mean);
 
       // Call risk: flag if either leg is trading above par ($25)
-      var callRiskA = (callMap[tickerA] && priceA > callMap[tickerA].parValue) ? { abovePar: true, premium: parseFloat((priceA - 25).toFixed(2)) } : null;
-      var callRiskB = (callMap[tickerB] && priceB > callMap[tickerB].parValue) ? { abovePar: true, premium: parseFloat((priceB - 25).toFixed(2)) } : null;
+      // Only flag meaningful premium-to-par (> $0.75). Trading a few cents above $25 is normal
+      // and doesn't imply call risk — most preferreds sit slightly above par without being called.
+      var premA = priceA - 25;
+      var premB = priceB - 25;
+      var callRiskA = (callMap[tickerA] && premA > 0.75) ? { abovePar: true, premium: parseFloat(premA.toFixed(2)) } : null;
+      var callRiskB = (callMap[tickerB] && premB > 0.75) ? { abovePar: true, premium: parseFloat(premB.toFixed(2)) } : null;
 
       output.push({
         id: info.id,
