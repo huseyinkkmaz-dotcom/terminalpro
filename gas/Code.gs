@@ -765,13 +765,16 @@ function getAlertData(mode) {
       var hA = histMap[tickerA] || [];
       var hB = histMap[tickerB] || [];
       var spreadSeries = [];
-      var minHistLen = Math.min(hA.length, hB.length, 90);
+      // Use the full available history (Tier 1 fix) — capping at 90 was killing ADF power.
+      var minHistLen = Math.min(hA.length, hB.length);
       for (var h = 0; h < minHistLen; h++) {
         spreadSeries.push(hA[hA.length - minHistLen + h] - hB[hB.length - minHistLen + h]);
       }
 
-      // ADF test on nominal spread
+      // ADF test on nominal spread. Tri-state: PASS (5%), WEAK (10%), FAIL.
       var adfResult = spreadSeries.length >= 20 ? adfTest_(spreadSeries) : { tStat: 0, isStationary: false, error: 'No history' };
+      var adfWeak = adfResult.tStat && adfResult.tStat < ADF_CRITICAL_VALUES['10pct'];
+      var adfState = adfResult.isStationary ? 'pass' : (adfWeak ? 'weak' : 'fail');
       var halfLifeResult = spreadSeries.length >= 20 ? ouHalfLife_(spreadSeries) : { halfLife: Infinity, isValid: false };
 
       // Expected Profit = |Current Spread - 90-Day Mean| (distance to mean reversion)
@@ -812,6 +815,7 @@ function getAlertData(mode) {
         // Quant quality metrics
         adfStat: adfResult.tStat || 0,
         adfPass: adfResult.isStationary || false,
+        adfState: adfState,
         adfConf: adfResult.confidence || 'none',
         halfLife: halfLifeResult.isValid ? halfLifeResult.halfLife : null,
         halfLifeValid: halfLifeResult.isValid || false,

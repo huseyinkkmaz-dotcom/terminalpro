@@ -1057,13 +1057,13 @@ function computeSetupScore(r, maxEP) {
   var age = parseInt(r.age) || 0;
   var yA = parseFloat(r.yA) || 0, yB = parseFloat(r.yB) || 0;
   var adfPass = r.adfPass || false;
+  var adfState = r.adfState || (adfPass ? 'pass' : 'fail');
   var halfLife = r.halfLife || null;
   var halfLifeValid = r.halfLifeValid || false;
 
-  // ── GATE: Stationarity check ──
-  // Non-stationary pairs are fundamentally unreliable for mean reversion.
-  // Cap their score at 30 and add a warning flag.
-  var stationaryCap = adfPass ? 100 : 30;
+  // ── ADF: informational nudge, not a hard cap (Tier 1 fix) ──
+  // PASS (5%) → +5, WEAK (10%) → 0, FAIL → -5. Half-life carries the weight.
+  var adfNudge = adfState === 'pass' ? 5 : (adfState === 'weak' ? 0 : -5);
 
   // 1. Z-Score magnitude (0-15): entry signal strength
   //    Sweet spot is half-life dependent: if HL known, 2.0-2.5 is ideal
@@ -1178,8 +1178,9 @@ function computeSetupScore(r, maxEP) {
     else if (reg === 'VOLATILE' && az < 2.2) score -= 1;
   }
 
-  // Apply stationarity cap: non-stationary pairs max out at 30
-  var finalScore = Math.max(0, Math.min(stationaryCap, Math.round(score)));
+  // ADF nudge applied (no hard cap)
+  score += adfNudge;
+  var finalScore = Math.max(0, Math.min(100, Math.round(score)));
   return finalScore;
 }
 function cleanIdFE(id) { return String(id).replace(/[^a-zA-Z0-9]/g, '').toUpperCase(); }
@@ -1756,12 +1757,13 @@ h+='<td><div class="mono-data" style="font-size:11px">'+at+'</div></td>';
 // Velocity
 h+='<td><div class="mono-data" style="font-size:11px;color:'+velClr+'">'+velocity+'</div></td>';
 // Quality — ADF, half-life, call risk
-var adfOk=r.adfPass;var hlVal=r.halfLife;var hlValid=r.halfLifeValid;
+var adfSt=r.adfState||(r.adfPass?'pass':'fail');var hlVal=r.halfLife;var hlValid=r.halfLifeValid;
 var callA=r.callRiskA;var callB=r.callRiskB;
 var qParts=[];
-// ADF badge
-if(adfOk){qParts.push('<span style="color:var(--low);font-size:9px;font-weight:900" title="ADF test passed: spread is stationary ('+r.adfConf+')">&#10003; ADF</span>');}
-else{qParts.push('<span style="color:var(--high);font-size:9px;font-weight:900" title="ADF test FAILED: spread may not be stationary. Z-score unreliable.">&#10007; ADF</span>');}
+// ADF badge — tri-state (PASS/WEAK/FAIL)
+if(adfSt==='pass'){qParts.push('<span style="color:var(--low);font-size:9px;font-weight:900" title="ADF passed at 5% — spread is statistically stationary ('+r.adfConf+'). Mean reversion is supported by the data.">&#10003; ADF</span>');}
+else if(adfSt==='weak'){qParts.push('<span style="color:var(--yellow);font-size:9px;font-weight:900" title="ADF passed only at 10% — weak evidence of stationarity. Tradeable but verify with half-life.">~ ADF</span>');}
+else{qParts.push('<span style="color:var(--high);font-size:9px;font-weight:900" title="ADF failed — no evidence of mean reversion in the lookback window. Z-scores may be misleading.">&#10007; ADF</span>');}
 // Half-life
 if(hlValid&&hlVal){qParts.push('<span style="color:var(--accent);font-size:9px;font-weight:700" title="OU half-life: '+hlVal+' trading days">HL:'+hlVal+'d</span>');}
 else{qParts.push('<span style="color:var(--subtext);font-size:9px" title="Half-life could not be computed">HL:—</span>');}

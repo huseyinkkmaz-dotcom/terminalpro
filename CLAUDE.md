@@ -290,6 +290,17 @@ Pre-computed probability analysis for top 20 alert pairs. Updated daily at 9 AM 
 **Coupon Yield empty = variable/reset rate → excluded from dashboard.**
 **Credit Rating empty = excluded from credit arb pairing.**
 
+## ADF Backlog (Tier 2 & Tier 3 — pending)
+
+Tier 1 shipped: full-history lookback (no 90d cap), tri-state ADF (pass/weak/fail at 5%/10%), no hard score cap, ±5 nudge instead.
+
+**Tier 2 — better statistics (do next):**
+1. Engle-Granger cointegration test. OLS priceA = α + β·priceB, then ADF on the residuals. Replace nominal-spread ADF for credit pairs especially. Store hedge ratio β so it can be used for sizing too.
+2. Pair ADF with half-life as secondary check — if HL is clean (5–25d) treat as tradeable even if ADF is borderline.
+
+**Tier 3 — regime awareness:**
+3. Rolling ADF: run on the last 60d in addition to the full window. Surface "was cointegrated, isn't anymore" pairs as a danger badge.
+
 ## Quant Audit Improvements (V24+)
 
 ### Statistical Foundation
