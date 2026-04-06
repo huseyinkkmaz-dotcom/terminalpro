@@ -1731,7 +1731,7 @@ var yieldSpread=Math.abs((parseFloat(r.yA)||0)-(parseFloat(r.yB)||0)).toFixed(1)
 var velocity='—';var velClr='var(--subtext)';
 if(r.zTrend&&r.zTrend.length>=2){var absVals=r.zTrend.map(function(v){return Math.abs(parseFloat(v)||0);});var recent=absVals.slice(-4);var totalDelta=0;for(var vi=1;vi<recent.length;vi++){totalDelta+=(recent[vi-1]-recent[vi]);}var avgDelta=totalDelta/(recent.length-1);if(avgDelta>0.05){velocity='+'+avgDelta.toFixed(2)+'&sigma;/d';velClr='var(--low)';}else if(avgDelta<-0.05){velocity=avgDelta.toFixed(2)+'&sigma;/d';velClr='var(--high)';}else{velocity='flat';velClr='var(--subtext)';}}
 // Confidence dim: low liquidity or no screener data
-var rowOpacity=(al<5000||ag===0)?'opacity:.55':'';
+var rowOpacity='';
 // Z-score visual intensity
 var zBg=az>=3?'rgba(14,165,233,.15)':(az>=2.5?'rgba(14,165,233,.1)':(az>=2?'rgba(14,165,233,.06)':'transparent'));
 // Div proximity data attrs for filter
