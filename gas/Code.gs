@@ -27,6 +27,15 @@ var ADF_CRITICAL_VALUES = {
   '10pct': -2.58
 };
 
+// Engle-Granger cointegration critical values (MacKinnon, 1996) — N=2 variables, with constant, no trend.
+// More stringent than raw ADF because the residuals come from an estimated cointegrating vector.
+// Applied to the residual ADF t-stat (not the regular ADF thresholds).
+var EG_CRITICAL_VALUES = {
+  '1pct': -3.90,
+  '5pct': -3.34,
+  '10pct': -3.04
+};
+
 // ============================================================
 // STATISTICAL TESTS — ADF, OU Half-Life, Transaction Costs
 // ============================================================
@@ -179,6 +188,86 @@ function ouHalfLife_(series) {
     halfLife: parseFloat(halfLife.toFixed(1)),
     lambda: parseFloat((-beta).toFixed(6)),
     isValid: halfLife > 0 && halfLife < 500
+  };
+}
+
+/**
+ * Engle-Granger cointegration test (Tier 2.1).
+ *
+ * Two-step procedure:
+ *   1) OLS regression  priceA_t = α + β·priceB_t + ε_t
+ *   2) ADF test on the residuals ε_t, compared against MacKinnon 1996 EG critical values
+ *      (more stringent than a vanilla ADF because β is estimated).
+ *
+ * The hedge ratio β is the dollar-neutral leg ratio: for each $1 of A, short $β of B.
+ * Returned for future sizing use; spread Z-scores in the sheets are still nominal (A - B).
+ *
+ * @param {number[]} seriesA - Price series for leg A (oldest first)
+ * @param {number[]} seriesB - Price series for leg B (oldest first), same length as A
+ * @returns {Object} { alpha, beta, residuals, adf, isCointegrated, confidence, nObs, error? }
+ *   - adf: same shape as adfTest_() return but compared against EG_CRITICAL_VALUES
+ *   - isCointegrated: true if residual ADF t-stat < EG 5% critical value (-3.34)
+ *   - confidence: '99%' | '95%' | '90%' | 'none' using EG critical values
+ */
+function engleGrangerTest_(seriesA, seriesB) {
+  var n = Math.min(seriesA.length, seriesB.length);
+  if (n < 20) return { alpha: 0, beta: 0, residuals: [], adf: null, isCointegrated: false, confidence: 'none', nObs: n, error: 'Insufficient data (need 20+, got ' + n + ')' };
+
+  // Align tail windows to equal length
+  var a = seriesA.slice(seriesA.length - n);
+  var b = seriesB.slice(seriesB.length - n);
+
+  // Step 1 — OLS: a_t = α + β·b_t + ε_t
+  var sumB = 0, sumA = 0, sumBB = 0, sumAB = 0;
+  for (var i = 0; i < n; i++) {
+    sumB += b[i];
+    sumA += a[i];
+    sumBB += b[i] * b[i];
+    sumAB += a[i] * b[i];
+  }
+  var denom = n * sumBB - sumB * sumB;
+  if (Math.abs(denom) < 1e-14) {
+    return { alpha: 0, beta: 0, residuals: [], adf: null, isCointegrated: false, confidence: 'none', nObs: n, error: 'Degenerate regression — priceB is constant' };
+  }
+  var beta = (n * sumAB - sumB * sumA) / denom;
+  var alpha = (sumA - beta * sumB) / n;
+
+  // Step 2 — residuals
+  var residuals = [];
+  for (var j = 0; j < n; j++) residuals.push(a[j] - alpha - beta * b[j]);
+
+  // Step 3 — ADF on residuals (reuse adfTest_ machinery, then re-grade vs EG critical values)
+  var adf = adfTest_(residuals);
+  if (adf.error) {
+    return { alpha: parseFloat(alpha.toFixed(4)), beta: parseFloat(beta.toFixed(4)), residuals: residuals, adf: adf, isCointegrated: false, confidence: 'none', nObs: n, error: adf.error };
+  }
+
+  var t = adf.tStat;
+  var isCointegrated = t < EG_CRITICAL_VALUES['5pct'];
+  var confidence = t < EG_CRITICAL_VALUES['1pct'] ? '99%'
+                 : t < EG_CRITICAL_VALUES['5pct'] ? '95%'
+                 : t < EG_CRITICAL_VALUES['10pct'] ? '90%'
+                 : 'none';
+
+  // Re-grade adf object against EG thresholds so downstream code that reads adf.isStationary gets EG semantics
+  var adfEG = {
+    tStat: t,
+    isStationary: isCointegrated,
+    confidence: confidence,
+    criticalValues: EG_CRITICAL_VALUES,
+    nObs: adf.nObs,
+    lag: adf.lag,
+    beta: adf.beta // raw ADF slope on residuals (not to be confused with EG β hedge ratio)
+  };
+
+  return {
+    alpha: parseFloat(alpha.toFixed(4)),
+    beta: parseFloat(beta.toFixed(4)),
+    residuals: residuals,
+    adf: adfEG,
+    isCointegrated: isCointegrated,
+    confidence: confidence,
+    nObs: n
   };
 }
 
@@ -760,21 +849,35 @@ function getAlertData(mode) {
       var spread = parseFloat(row[5]) || 0;
       var mean = parseFloat(row[10]) || 0;
 
-      // ── QUANT STATS: ADF, Half-Life, Transaction Costs, Call Risk ──
-      // Build spread series from TickerHistory for this pair
+      // ── QUANT STATS: Engle-Granger Cointegration, Half-Life, Transaction Costs, Call Risk ──
+      // Build paired price tails from TickerHistory for this pair
       var hA = histMap[tickerA] || [];
       var hB = histMap[tickerB] || [];
-      var spreadSeries = [];
       // Use the full available history (Tier 1 fix) — capping at 90 was killing ADF power.
       var minHistLen = Math.min(hA.length, hB.length);
+      var hA_tail = hA.slice(hA.length - minHistLen);
+      var hB_tail = hB.slice(hB.length - minHistLen);
+      var spreadSeries = [];
       for (var h = 0; h < minHistLen; h++) {
-        spreadSeries.push(hA[hA.length - minHistLen + h] - hB[hB.length - minHistLen + h]);
+        spreadSeries.push(hA_tail[h] - hB_tail[h]);
       }
 
-      // ADF test on nominal spread. Tri-state: PASS (5%), WEAK (10%), FAIL.
-      var adfResult = spreadSeries.length >= 20 ? adfTest_(spreadSeries) : { tStat: 0, isStationary: false, error: 'No history' };
-      var adfWeak = adfResult.tStat && adfResult.tStat < ADF_CRITICAL_VALUES['10pct'];
+      // Tier 2.1 — Engle-Granger cointegration test.
+      // OLS priceA = α + β·priceB, then ADF on residuals with MacKinnon 1996 EG criticals.
+      // Replaces the old nominal-spread ADF as the stationarity gate for alerts, and
+      // exposes β as the hedge ratio for future position sizing work.
+      var egResult = minHistLen >= 20 ? engleGrangerTest_(hA_tail, hB_tail) : null;
+      var adfResult;
+      if (egResult && egResult.adf && !egResult.error) {
+        adfResult = egResult.adf; // already graded against EG criticals
+      } else {
+        adfResult = { tStat: 0, isStationary: false, confidence: 'none', error: (egResult && egResult.error) || 'No history' };
+      }
+      // Tri-state using EG thresholds: PASS (5%), WEAK (10%), FAIL.
+      var adfWeak = adfResult.tStat && adfResult.tStat < EG_CRITICAL_VALUES['10pct'];
       var adfState = adfResult.isStationary ? 'pass' : (adfWeak ? 'weak' : 'fail');
+      // Half-life still runs on the nominal (trading) spread because the Z-score and exit
+      // mechanics both use the nominal spread.
       var halfLifeResult = spreadSeries.length >= 20 ? ouHalfLife_(spreadSeries) : { halfLife: Infinity, isValid: false };
 
       // Expected Profit = |Current Spread - 90-Day Mean| (distance to mean reversion)
@@ -817,6 +920,11 @@ function getAlertData(mode) {
         adfPass: adfResult.isStationary || false,
         adfState: adfState,
         adfConf: adfResult.confidence || 'none',
+        // Tier 2.1 — Engle-Granger hedge ratio (α, β from OLS priceA = α + β·priceB).
+        // Returned for sizing and transparency. The stationarity gate (adfStat/adfPass above)
+        // is now graded against EG criticals, not vanilla ADF.
+        egBeta: egResult && !egResult.error ? egResult.beta : null,
+        egAlpha: egResult && !egResult.error ? egResult.alpha : null,
         halfLife: halfLifeResult.isValid ? halfLifeResult.halfLife : null,
         halfLifeValid: halfLifeResult.isValid || false,
         callRiskA: callRiskA,
