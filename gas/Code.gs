@@ -982,7 +982,9 @@ function getOpenTrades() {
 // ============================================================
 function getClosedTrades() {
   try {
-    var rows = SpreadsheetApp.getActive().getSheetByName('ClosedTrades').getDataRange().getValues();
+    var ctSheet = SpreadsheetApp.getActive().getSheetByName('ClosedTrades');
+    if (!ctSheet) return [];
+    var rows = ctSheet.getDataRange().getValues();
     var output = [];
     for (var i = 1; i < rows.length; i++) {
       var r = rows[i]; var info = parseTickerInfo(r[0]);

@@ -38,6 +38,8 @@ table{width:100%;border-collapse:separate;border-spacing:0 3px}
 thead{position:sticky;top:42px;z-index:10}
 #btPairsTable thead{position:static}
 #osTable thead{position:static}
+/* Tables inside their own scroll containers must stick to 0 (relative to container), not 42 (relative to viewport) */
+#psResultTable thead{top:0}
 th{text-align:left;padding:12px 16px;color:var(--subtext);font-size:9px;text-transform:uppercase;font-weight:900;user-select:none;letter-spacing:1px;white-space:nowrap;background:var(--bg)}
 .sortable{cursor:pointer;transition:.2s}.sortable:hover{color:var(--accent)}
 td{background:var(--card);padding:14px 16px;border-top:1px solid rgba(55,65,81,.5);border-bottom:none;vertical-align:middle}
@@ -405,7 +407,7 @@ td:last-child{border-radius:0 6px 6px 0}
 .exit-banner-action:hover{background:rgba(255,255,255,.2)}
 @keyframes exitPulse{0%,100%{opacity:1}50%{opacity:.85}}
 /* ── Persistent Alert Tray ── */
-.alert-tray{position:sticky;top:0;z-index:1100;max-height:0;overflow:hidden;transition:max-height .4s cubic-bezier(.4,0,.2,1),opacity .3s;opacity:0;background:linear-gradient(180deg,rgba(7,11,20,.98) 0%,rgba(7,11,20,.95) 100%);backdrop-filter:blur(16px);border-bottom:1px solid transparent}
+.alert-tray{position:relative;z-index:1;max-height:0;overflow:hidden;transition:max-height .4s cubic-bezier(.4,0,.2,1),opacity .3s;opacity:0;background:linear-gradient(180deg,rgba(7,11,20,.98) 0%,rgba(7,11,20,.95) 100%);backdrop-filter:blur(16px);border-bottom:1px solid transparent}
 .alert-tray.open{max-height:400px;opacity:1}
 .alert-tray.has-danger{border-bottom-color:rgba(239,68,68,.3);box-shadow:0 4px 24px rgba(239,68,68,.08)}
 .alert-tray.has-warning{border-bottom-color:rgba(245,158,11,.3);box-shadow:0 4px 24px rgba(245,158,11,.06)}
@@ -441,7 +443,7 @@ td:last-child{border-radius:0 6px 6px 0}
 .alert-tray-item-meta{display:flex;gap:12px;font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--subtext);flex-shrink:0}
 .alert-tray-item-action{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.1);color:var(--text);padding:4px 10px;border-radius:4px;font-size:9px;font-weight:700;cursor:pointer;text-transform:uppercase;letter-spacing:.3px;transition:.15s;flex-shrink:0;white-space:nowrap}
 .alert-tray-item-action:hover{background:rgba(255,255,255,.12);border-color:rgba(255,255,255,.2)}
-.alert-tray-collapsed{display:none;position:sticky;top:0;z-index:1100;cursor:pointer;transition:background .15s}
+.alert-tray-collapsed{display:none;position:relative;z-index:1;cursor:pointer;transition:background .15s}
 .alert-tray-collapsed.visible{display:flex;align-items:center;justify-content:center;gap:8px;padding:6px 20px}
 .alert-tray-collapsed.danger{background:rgba(239,68,68,.08);border-bottom:1px solid rgba(239,68,68,.2)}
 .alert-tray-collapsed.warning{background:rgba(245,158,11,.06);border-bottom:1px solid rgba(245,158,11,.15)}
@@ -574,25 +576,6 @@ th .th-hint{font-weight:400;font-size:8px;letter-spacing:0;text-transform:none;c
 <span id="regimeLabel" style="color:var(--subtext)">REGIME: —</span>
 <span id="regimeDetail" style="color:var(--subtext);margin-left:12px;font-weight:400"></span>
 </div>
-<!-- ═══ PERSISTENT ALERT TRAY ═══ -->
-<div id="alertTray" class="alert-tray">
-<div class="alert-tray-header">
-<div class="alert-tray-title">
-<span>&#9888; Exit Signals</span>
-<span id="alertTrayCount" class="alert-tray-count">0</span>
-</div>
-<div class="alert-tray-actions">
-<button class="alert-tray-dismiss" onclick="dismissAlertTray()" title="Dismiss all — signals reappear on next refresh if still active">Dismiss All</button>
-<button class="alert-tray-close" onclick="collapseAlertTray()" title="Minimize">&minus;</button>
-</div>
-</div>
-<div id="alertTrayItems" class="alert-tray-items"></div>
-</div>
-<div id="alertTrayCollapsed" class="alert-tray-collapsed" onclick="expandAlertTray()">
-<span style="font-size:12px">&#9888;</span>
-<span class="alert-tray-collapsed-text" id="alertTrayCollapsedText">0 exit signals</span>
-<span style="font-size:9px;color:var(--subtext)">&#9650;</span>
-</div>
 <div class="nav-bar">
 <div class="nav-item active" onclick="tab('alerts',this)">Alerts</div>
 <div class="nav-item" onclick="tab('portfolio',this)">Portfolio</div>
@@ -607,7 +590,26 @@ th .th-hint{font-weight:400;font-size:8px;letter-spacing:0;text-transform:none;c
 <div class="conn-dot loading" id="connDot" title="API Status"></div>
 <div id="dataStaleness" style="font-size:9px;color:var(--subtext);margin-left:8px;font-family:JetBrains Mono;white-space:nowrap" title="Time since last WebCache update (GOOGLEFINANCE data is 15-min delayed)"></div>
 </div>
-<div id="pairSweepBar" style="background:var(--card);border-bottom:1px solid var(--border);padding:0;position:sticky;top:42px;z-index:999;backdrop-filter:blur(10px)">
+<!-- ═══ ALERT TRAY (below nav so nav stays visible) ═══ -->
+<div id="alertTrayCollapsed" class="alert-tray-collapsed" onclick="expandAlertTray()">
+<span style="font-size:12px">&#9888;</span>
+<span class="alert-tray-collapsed-text" id="alertTrayCollapsedText">0 exit signals</span>
+<span style="font-size:9px;color:var(--subtext)">&#9650;</span>
+</div>
+<div id="alertTray" class="alert-tray">
+<div class="alert-tray-header">
+<div class="alert-tray-title">
+<span>&#9888; Exit Signals</span>
+<span id="alertTrayCount" class="alert-tray-count">0</span>
+</div>
+<div class="alert-tray-actions">
+<button class="alert-tray-dismiss" onclick="dismissAlertTray()" title="Dismiss all — signals reappear on next refresh if still active">Dismiss All</button>
+<button class="alert-tray-close" onclick="collapseAlertTray()" title="Minimize">&minus;</button>
+</div>
+</div>
+<div id="alertTrayItems" class="alert-tray-items"></div>
+</div>
+<div id="pairSweepBar" style="background:var(--card);border-bottom:1px solid var(--border);padding:0;position:relative;backdrop-filter:blur(10px)">
 <div style="display:flex;align-items:center;justify-content:center;gap:10px;padding:6px 20px;cursor:pointer" onclick="var b=document.getElementById('sweepExpand');b.style.display=b.style.display==='none'?'flex':'none';">
 <span style="font-size:9px;font-weight:900;color:var(--subtext);text-transform:uppercase;letter-spacing:1.5px;white-space:nowrap">&#9654; Pair Sweep</span>
 </div>

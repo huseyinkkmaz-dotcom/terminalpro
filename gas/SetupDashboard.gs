@@ -137,7 +137,7 @@ function setupAllBatched() {
         ageSheet.getRange(1, 1, 1, 3).setValues([['PairID', 'FirstCrossTimestamp', 'Source']]);
         ageSheet.getRange(1, 1, 1, 3).setFontWeight('bold');
       }
-      ensureSheet_(ss, 'DivDates', ['Ticker', 'ExDivDate', 'LastFetched']);
+      ensureSheet_(ss, 'DivDates', ['Ticker', 'NextDivDate', 'LastFetched', 'IsEstimated']);
       ensureSheet_(ss, 'Watchlist', ['PairID', 'AddedDate', 'AddedZ', 'Mode', 'AddedExpProfit', 'AddedSpread']);
       ensureSheet_(ss, 'BasketCache', ['Key', 'Value', 'UpdatedAt']);
       ensureSheet_(ss, 'ScreenerCache', ['PairID','TickerA','TickerB','Mode','Z','ExpProfit','WR30','WR60','WR90','AvgMAE','P75MAE','WidenProb','Triggers','EP30','EP60','UpdatedAt','WR15','EP15','EP90']);
@@ -743,12 +743,17 @@ function fetchDividendDates() {
   }
 
   // Load existing data — skip recently fetched tickers
+  // Read all 4 cols so IsEstimated isn't lost when writing back cache-hit rows.
   var dataMap = {};
   if (divSheet.getLastRow() > 1) {
-    var existData = divSheet.getRange(2, 1, divSheet.getLastRow() - 1, 3).getValues();
+    var existCols = Math.max(3, divSheet.getLastColumn());
+    var existData = divSheet.getRange(2, 1, divSheet.getLastRow() - 1, existCols).getValues();
     for (var i = 0; i < existData.length; i++) {
       var key = String(existData[i][0]).toUpperCase().trim();
-      dataMap[key] = existData[i];
+      // Normalize to 4 elements so downstream writes preserve column layout.
+      var row = existData[i].slice(0, 4);
+      while (row.length < 4) row.push('');
+      dataMap[key] = row;
     }
   }
 
