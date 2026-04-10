@@ -384,6 +384,10 @@ function doGet(e) {
       clearHistory();
       result = { ok: true, message: "History cleared" };
     }
+    else if (action === 'deleteClosedTrade') {
+      deleteClosedTrade(e.parameter.row || 0);
+      result = { ok: true, message: "Closed trade deleted" };
+    }
     else if (action === 'getWatchlist') {
       result = { ok: true, watchlistData: getWatchlistData() };
     }
@@ -1183,6 +1187,14 @@ function clearHistory() {
   var sheet = ss.getSheetByName('ClosedTrades');
   if (!sheet || sheet.getLastRow() <= 1) return;
   sheet.deleteRows(2, sheet.getLastRow() - 1);
+}
+function deleteClosedTrade(rowIdx) {
+  var row = parseInt(rowIdx);
+  if (!row || row < 2) throw new Error('Invalid row index');
+  var ss = SpreadsheetApp.getActive();
+  var sheet = ss.getSheetByName('ClosedTrades');
+  if (!sheet || row > sheet.getLastRow()) throw new Error('Row does not exist');
+  sheet.deleteRow(row);
 }
 // ============================================================
 // BASKET ANALYTICS

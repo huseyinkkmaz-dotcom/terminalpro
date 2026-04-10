@@ -840,7 +840,7 @@ th .th-hint{font-weight:400;font-size:8px;letter-spacing:0;text-transform:none;c
 <button class="filter-pill" onclick="histSort('return')">Return%</button>
 </div>
 <div style="overflow-x:auto;max-height:calc(100vh - 280px);overflow-y:auto;position:relative">
-<table id="historyTable"><thead style="position:sticky;top:0;z-index:10"><tr><th>Pair</th><th>Type</th><th>Reason</th><th>Entry</th><th>Exit</th><th>Size</th><th>Opened</th><th>Closed</th><th>Hold</th><th class="mono-data">Cap Gains</th><th class="mono-data">Net Div</th><th class="mono-data">Net P&amp;L</th><th>Return</th><th>vs Target</th><th>Notes</th></tr></thead><tbody></tbody></table>
+<table id="historyTable"><thead style="position:sticky;top:0;z-index:10"><tr><th>Pair</th><th>Type</th><th>Reason</th><th>Entry</th><th>Exit</th><th>Size</th><th>Opened</th><th>Closed</th><th>Hold</th><th class="mono-data">Cap Gains</th><th class="mono-data">Net Div</th><th class="mono-data">Net P&amp;L</th><th>Return</th><th>vs Target</th><th>Notes</th><th style="width:36px"></th></tr></thead><tbody></tbody></table>
 </div>
 </div>
 <div id="histJournalSection" style="display:none">
@@ -1601,6 +1601,7 @@ el.innerHTML=h;}else{el.innerHTML='';}}catch(e){el.innerHTML='';}}
 function closeJournal(){document.getElementById('journalOverlay').classList.remove('open');document.getElementById('journalDrawer').classList.remove('open');}
 async function saveJournalNote(){var btn=document.getElementById('journalSaveBtn');var note=document.getElementById('journalNote').value;btn.disabled=true;btn.innerText='SAVING...';try{await apiGet('saveNote',{row:journalRowIdx,note:note});document.getElementById('journalSaved').classList.add('show');btn.innerText='SAVE NOTE';btn.disabled=false;var noteBtn=document.getElementById('nbtn-'+journalRowIdx);if(noteBtn){noteBtn.innerText=note?'Edit Note':'Add Note';noteBtn.className=note?'note-btn has-note':'note-btn';}}catch(e){btn.innerText='SAVE NOTE';btn.disabled=false;alert('Failed to save note.');}}
 async function doClearHistory(){if(!confirm('Clear all history? This cannot be undone.'))return;try{await apiGet("clearHistory");refreshData();}catch(e){alert('Failed to clear history.');}}
+async function deleteClosedTrade(rowIdx,pairId,evt){evt.stopPropagation();if(!confirm('Remove closed trade "'+pairId+'" (row '+rowIdx+')? This cannot be undone.'))return;try{await apiGet('deleteClosedTrade',{row:rowIdx});refreshData();}catch(e){alert('Failed to remove trade.');}}
 var activeSector='';
 var _starredFilter=false;var _divFilter=false;
 function toggleStarredFilter(btn){_starredFilter=!_starredFilter;btn.classList.toggle('active',_starredFilter);applyFilters();}
@@ -2047,7 +2048,7 @@ if(closeMonth&&closeMonth!==lastMonth){
 var monthTrades=sorted.filter(function(x){return x.closeDate&&x.closeDate.replace(/\/\d+$/,'')===closeMonth;});
 var monthPnl=0;monthTrades.forEach(function(x){monthPnl+=parseFloat(x.pnl)||0;});
 var mpClr=monthPnl>=0?'var(--low)':'var(--high)';
-hh+='<tr style="background:var(--bg)"><td colspan="15" style="padding:8px 16px;font-size:10px;font-weight:900;color:var(--subtext);text-transform:uppercase;letter-spacing:1px;border:none;background:var(--bg)"><span>'+closeMonth+'</span><span style="margin-left:12px;color:var(--accent)">'+monthTrades.length+' trades</span><span style="margin-left:12px;color:'+mpClr+'">'+(monthPnl>=0?'+':'')+monthPnl.toFixed(2)+'$</span></td></tr>';
+hh+='<tr style="background:var(--bg)"><td colspan="16" style="padding:8px 16px;font-size:10px;font-weight:900;color:var(--subtext);text-transform:uppercase;letter-spacing:1px;border:none;background:var(--bg)"><span>'+closeMonth+'</span><span style="margin-left:12px;color:var(--accent)">'+monthTrades.length+' trades</span><span style="margin-left:12px;color:'+mpClr+'">'+(monthPnl>=0?'+':'')+monthPnl.toFixed(2)+'$</span></td></tr>';
 lastMonth=closeMonth;}
 var p=parseFloat(h.pnl)||0;var pc=p>=0?'var(--low)':'var(--high)';var rc=parseFloat(h.returnPct)||0;
 var typeClr=h.closeType==='PARTIAL'?'var(--yellow)':'var(--subtext)';
@@ -2081,6 +2082,7 @@ hh+='<td><div class="mono-data" style="color:'+pc+';font-weight:900">'+(p>=0?'+'
 hh+='<td><div class="mono-data" style="color:'+pc+'">'+(rc>=0?'+':'')+rc.toFixed(1)+'%</div></td>';
 hh+='<td>'+targetCell+'</td>';
 hh+='<td><button class="'+nbCls+'" id="nbtn-'+h.rowIdx+'" onclick="openJournal('+h.rowIdx+',\''+h.id.replace(/'/g,"\\'")+'\',\''+h.pnl+'\',\''+h.openDate+'\',\''+h.closeDate+'\',\''+h.holdDays+'\',\''+h.entryZ+'\',\''+h.exitZ+'\',\''+h.capGains+'\',\''+h.netDiv+'\',\''+hn+'\',\''+String(h.closeReason||'').replace(/'/g,"\\'")+'\',\''+String(h.targetPnL||'').toString().replace(/'/g,"\\'")+'\',\''+String(h.paidDiv||'').toString().replace(/'/g,"\\'")+'\',\''+String(h.rcvdDiv||'').toString().replace(/'/g,"\\'")+'\',\''+hgid+'\')">'+nbLbl+'</button></td>';
+hh+='<td><button onclick="deleteClosedTrade('+h.rowIdx+',\''+h.id.replace(/'/g,"\\'")+'\',event)" style="background:none;border:1px solid rgba(239,68,68,0.3);color:var(--high);cursor:pointer;padding:4px 8px;border-radius:6px;font-size:10px;opacity:0.5;transition:opacity .2s" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.5" title="Remove this entry">&#10005;</button></td>';
 hh+='</tr>';});hh+='</tbody>';document.getElementById('historyTable').querySelector('tbody').outerHTML=hh;}
 // ── PORTFOLIO HEALTH BAR ──
 function healthZColor(z){var a=Math.abs(z);if(a>=1.8)return{c:'var(--high)',bg:'rgba(239,68,68,0.1)',b:'var(--high)',label:'EXTREME'};if(a>=1.0)return{c:'var(--yellow)',bg:'rgba(245,158,11,0.1)',b:'var(--yellow)',label:'ELEVATED'};if(a>=0.5)return{c:'var(--accent)',bg:'rgba(14,165,233,0.1)',b:'var(--accent)',label:'MILD'};return{c:'var(--low)',bg:'rgba(16,185,129,0.1)',b:'var(--low)',label:'NEUTRAL'};}
