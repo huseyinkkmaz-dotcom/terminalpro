@@ -38,6 +38,7 @@ table{width:100%;border-collapse:separate;border-spacing:0 3px}
 thead{position:sticky;top:42px;z-index:10}
 #btPairsTable thead{position:static}
 #osTable thead{position:static}
+#historyTable thead{top:0}
 /* Tables inside their own scroll containers must stick to 0 (relative to container), not 42 (relative to viewport) */
 #psResultTable thead{top:0}
 th{text-align:left;padding:12px 16px;color:var(--subtext);font-size:9px;text-transform:uppercase;font-weight:900;user-select:none;letter-spacing:1px;white-space:nowrap;background:var(--bg)}
@@ -532,17 +533,41 @@ th .th-hint{font-weight:400;font-size:8px;letter-spacing:0;text-transform:none;c
 <button onclick="doSubmit()" style="background:var(--accent);color:var(--bg);border:none;padding:18px;width:100%;border-radius:8px;font-weight:900;cursor:pointer;font-size:13px">CONFIRM</button>
 <button onclick="closeModal()" style="background:none;border:none;color:var(--subtext);width:100%;margin-top:15px;cursor:pointer;font-size:12px">CANCEL</button>
 </div></div>
-<div id="closeTypeModal" class="modal"><div class="modal-content" style="width:340px">
-<div style="font-weight:900;font-size:22px;color:var(--high);margin-bottom:30px;text-transform:uppercase">Close Position</div>
+<div id="closeTypeModal" class="modal"><div class="modal-content" style="width:420px">
+<div style="font-weight:900;font-size:22px;color:var(--high);margin-bottom:8px;text-transform:uppercase">Close Position</div>
+<div id="closePairLabel" style="font-size:14px;font-weight:900;color:var(--accent);margin-bottom:20px"></div>
+<div id="closePositionInfo" style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:20px">
+<div style="padding:10px;background:var(--white-03);border-radius:8px;border:1px solid var(--border)">
+<div id="closeLegALabel" style="font-size:9px;font-weight:900;color:var(--accent);text-transform:uppercase;margin-bottom:4px">LEG A</div>
+<div id="closeLegAInfo" style="font-family:'JetBrains Mono';font-size:12px;color:var(--text)"></div>
+</div>
+<div style="padding:10px;background:var(--white-03);border-radius:8px;border:1px solid var(--border)">
+<div id="closeLegBLabel" style="font-size:9px;font-weight:900;color:var(--accent);text-transform:uppercase;margin-bottom:4px">LEG B</div>
+<div id="closeLegBInfo" style="font-family:'JetBrains Mono';font-size:12px;color:var(--text)"></div>
+</div>
+</div>
 <div id="closeTypeChoices">
-<button onclick="doFullClose()" style="background:rgba(239,68,68,.05);border:1.5px solid var(--high);color:var(--high);padding:18px;width:100%;border-radius:8px;font-weight:900;cursor:pointer;font-size:13px;margin-bottom:12px">FULL CLOSE</button>
+<button onclick="showFullCloseInputs()" style="background:rgba(239,68,68,.05);border:1.5px solid var(--high);color:var(--high);padding:18px;width:100%;border-radius:8px;font-weight:900;cursor:pointer;font-size:13px;margin-bottom:12px">FULL CLOSE</button>
 <button onclick="showPartialInputs()" style="background:rgba(14,165,233,.05);border:1.5px solid var(--accent);color:var(--accent);padding:18px;width:100%;border-radius:8px;font-weight:900;cursor:pointer;font-size:13px">PARTIAL CLOSE</button>
 </div>
-<div id="partialInputs" style="display:none">
-<div style="font-size:10px;font-weight:900;color:var(--subtext);text-transform:uppercase;margin-bottom:15px">Shares to reduce per leg</div>
+<div id="fullCloseInputs" style="display:none">
+<div style="font-size:10px;font-weight:900;color:var(--subtext);text-transform:uppercase;margin-bottom:15px">Exit Prices <span style="font-weight:400;text-transform:none">(leave blank to use live prices)</span></div>
 <div style="display:grid;grid-template-columns:1fr 1fr;gap:15px;margin-bottom:25px">
-<div><label style="font-size:9px;color:var(--subtext);font-weight:900;display:block;margin-bottom:8px">REDUCE A</label><input type="text" id="reduceA" value="0" style="width:100%;background:var(--bg);border:1px solid var(--border);color:white;padding:14px;border-radius:8px;box-sizing:border-box"></div>
-<div><label style="font-size:9px;color:var(--subtext);font-weight:900;display:block;margin-bottom:8px">REDUCE B</label><input type="text" id="reduceB" value="0" style="width:100%;background:var(--bg);border:1px solid var(--border);color:white;padding:14px;border-radius:8px;box-sizing:border-box"></div>
+<div><label id="closeFullLblA" style="font-size:9px;color:var(--subtext);font-weight:900;display:block;margin-bottom:8px">EXIT PRICE A</label><input type="text" id="closeFullPriceA" placeholder="Live" style="width:100%;background:var(--bg);border:1px solid var(--border);color:white;padding:14px;border-radius:8px;box-sizing:border-box"></div>
+<div><label id="closeFullLblB" style="font-size:9px;color:var(--subtext);font-weight:900;display:block;margin-bottom:8px">EXIT PRICE B</label><input type="text" id="closeFullPriceB" placeholder="Live" style="width:100%;background:var(--bg);border:1px solid var(--border);color:white;padding:14px;border-radius:8px;box-sizing:border-box"></div>
+</div>
+<button onclick="doFullClose()" style="background:var(--high);color:white;border:none;padding:18px;width:100%;border-radius:8px;font-weight:900;cursor:pointer;font-size:13px">CONFIRM FULL CLOSE</button>
+</div>
+<div id="partialInputs" style="display:none">
+<div style="font-size:10px;font-weight:900;color:var(--subtext);text-transform:uppercase;margin-bottom:15px">Shares to reduce & exit prices</div>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:15px;margin-bottom:15px">
+<div><label id="closePartialLblA" style="font-size:9px;color:var(--subtext);font-weight:900;display:block;margin-bottom:8px">REDUCE A</label><input type="text" id="reduceA" value="0" style="width:100%;background:var(--bg);border:1px solid var(--border);color:white;padding:14px;border-radius:8px;box-sizing:border-box"><div id="closeMaxA" style="font-size:9px;color:var(--subtext);margin-top:4px"></div></div>
+<div><label id="closePartialLblB" style="font-size:9px;color:var(--subtext);font-weight:900;display:block;margin-bottom:8px">REDUCE B</label><input type="text" id="reduceB" value="0" style="width:100%;background:var(--bg);border:1px solid var(--border);color:white;padding:14px;border-radius:8px;box-sizing:border-box"><div id="closeMaxB" style="font-size:9px;color:var(--subtext);margin-top:4px"></div></div>
+</div>
+<div style="font-size:10px;font-weight:900;color:var(--subtext);text-transform:uppercase;margin-bottom:8px">Exit Prices <span style="font-weight:400;text-transform:none">(leave blank to use live prices)</span></div>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:15px;margin-bottom:25px">
+<div><label id="closePartialPriceLblA" style="font-size:9px;color:var(--subtext);font-weight:900;display:block;margin-bottom:8px">EXIT PRICE A</label><input type="text" id="closePartialPriceA" placeholder="Live" style="width:100%;background:var(--bg);border:1px solid var(--border);color:white;padding:14px;border-radius:8px;box-sizing:border-box"></div>
+<div><label id="closePartialPriceLblB" style="font-size:9px;color:var(--subtext);font-weight:900;display:block;margin-bottom:8px">EXIT PRICE B</label><input type="text" id="closePartialPriceB" placeholder="Live" style="width:100%;background:var(--bg);border:1px solid var(--border);color:white;padding:14px;border-radius:8px;box-sizing:border-box"></div>
 </div>
 <button onclick="doPartialClose()" style="background:var(--accent);color:var(--bg);border:none;padding:18px;width:100%;border-radius:8px;font-weight:900;cursor:pointer;font-size:13px">CONFIRM PARTIAL CLOSE</button>
 </div>
@@ -773,9 +798,9 @@ th .th-hint{font-weight:400;font-size:8px;letter-spacing:0;text-transform:none;c
 <button onclick="doClearHistory()" style="background:rgba(239,68,68,.05);border:1.5px solid var(--high);color:var(--high);padding:10px 20px;border-radius:8px;font-size:10px;font-weight:900;cursor:pointer;text-transform:uppercase">Clear History</button>
 </div>
 <div id="histClosedSection">
-<div id="historySummary" style="display:flex;gap:15px;margin-bottom:20px"></div>
-<div style="overflow-x:auto">
-<table id="historyTable"><thead><tr><th>Pair</th><th>Type</th><th>Entry Prices</th><th>Exit Prices</th><th>Position Size</th><th>Opened</th><th>Closed</th><th>Days Held</th><th class="mono-data">Capital Gains</th><th class="mono-data">Net Dividends</th><th class="mono-data">Net P&amp;L</th><th>Return %</th><th>Notes</th></tr></thead><tbody></tbody></table>
+<div id="historySummary" style="display:flex;gap:15px;margin-bottom:20px;flex-wrap:wrap"></div>
+<div style="overflow-x:auto;max-height:calc(100vh - 220px);overflow-y:auto;position:relative">
+<table id="historyTable"><thead style="position:sticky;top:0;z-index:10"><tr><th>Pair</th><th>Type</th><th>Entry Prices</th><th>Exit Prices</th><th>Position Size</th><th>Opened</th><th>Closed</th><th>Days Held</th><th class="mono-data">Capital Gains</th><th class="mono-data">Net Dividends</th><th class="mono-data">Net P&amp;L</th><th>Return %</th><th>Notes</th></tr></thead><tbody></tbody></table>
 </div>
 </div>
 <div id="histJournalSection" style="display:none">
@@ -1404,12 +1429,34 @@ function tab(t,el){document.querySelectorAll('.tab-content').forEach(x=>x.classL
 function openModal(id,tA,tB,exitParams){activeId=id;window._pendingExitParams=exitParams||null;document.getElementById('modalTitle').innerText=id;document.getElementById('lblA').innerText=(tA||"PRICE A")+" PRICE";document.getElementById('lblB').innerText=(tB||"PRICE B")+" PRICE";document.getElementById('pA').value="";document.getElementById('pB').value="";document.getElementById('sA').value="0";document.getElementById('sB').value="0";var epInfo=document.getElementById('exitParamsInfo');if(epInfo){if(exitParams&&exitParams.targetExitZ){epInfo.style.display='block';epInfo.innerHTML='<span style="color:var(--low);font-weight:900">Exit targets will be stamped:</span> Exit Z: '+parseFloat(exitParams.targetExitZ).toFixed(1)+'σ · Profit capture: '+(exitParams.profitCapturePct||'—')+'% · Max hold: '+(exitParams.maxHoldDays||'—')+'d';}else{epInfo.style.display='none';}}document.getElementById('entryModal').style.display='block';}
 function closeModal(){document.getElementById('entryModal').style.display='none';}
 async function doSubmit(){try{var params={id:activeId,priceA:document.getElementById('pA').value,priceB:document.getElementById('pB').value,sizeA:document.getElementById('sA').value,sizeB:document.getElementById('sB').value};var ep=window._pendingExitParams;if(ep){if(ep.targetExitZ)params.targetExitZ=ep.targetExitZ;if(ep.profitCapturePct)params.profitCapturePct=ep.profitCapturePct;if(ep.partialAtPct)params.partialAtPct=ep.partialAtPct;if(ep.sourcePortfolio)params.sourcePortfolio=ep.sourcePortfolio;if(ep.maxHoldDays)params.maxHoldDays=ep.maxHoldDays;}window._pendingExitParams=null;await apiGet("saveTrade",params);closeModal();refreshData();}catch(e){alert("Failed to save.");}}
-var closeTargetId='',closeCardId='';
-function openCloseModal(id,cid){closeTargetId=id;closeCardId=cid;document.getElementById('closeTypeChoices').style.display='block';document.getElementById('partialInputs').style.display='none';document.getElementById('reduceA').value='0';document.getElementById('reduceB').value='0';document.getElementById('closeTypeModal').style.display='block';}
+var closeTargetId='',closeCardId='',closeTickerA='',closeTickerB='';
+function openCloseModal(id,cid,tA,tB,pA,pB,sA,sB,costA,costB){closeTargetId=id;closeCardId=cid;closeTickerA=tA||'LEG A';closeTickerB=tB||'LEG B';
+document.getElementById('closePairLabel').innerText=id;
+document.getElementById('closeLegALabel').innerText=tA||'LEG A';
+document.getElementById('closeLegBLabel').innerText=tB||'LEG B';
+var sAn=parseFloat(sA)||0,sBn=parseFloat(sB)||0;
+var legADir=sAn>=0?'LONG':'SHORT',legBDir=sBn>=0?'LONG':'SHORT';
+var legAClr=sAn>=0?'var(--low)':'var(--high)',legBClr=sBn>=0?'var(--low)':'var(--high)';
+document.getElementById('closeLegAInfo').innerHTML='<span style="color:'+legAClr+';font-size:9px;font-weight:900">'+legADir+'</span> '+Math.abs(sAn)+' @ $'+(parseFloat(costA)||0).toFixed(2)+'<br><span style="color:var(--subtext);font-size:10px">Now: $'+(parseFloat(pA)||0).toFixed(2)+'</span>';
+document.getElementById('closeLegBInfo').innerHTML='<span style="color:'+legBClr+';font-size:9px;font-weight:900">'+legBDir+'</span> '+Math.abs(sBn)+' @ $'+(parseFloat(costB)||0).toFixed(2)+'<br><span style="color:var(--subtext);font-size:10px">Now: $'+(parseFloat(pB)||0).toFixed(2)+'</span>';
+document.getElementById('closeFullLblA').innerText=(tA||'A')+' EXIT PRICE';
+document.getElementById('closeFullLblB').innerText=(tB||'B')+' EXIT PRICE';
+document.getElementById('closePartialLblA').innerText='REDUCE '+(tA||'A');
+document.getElementById('closePartialLblB').innerText='REDUCE '+(tB||'B');
+document.getElementById('closeMaxA').innerText='Max: '+Math.abs(sAn)+' shares';
+document.getElementById('closeMaxB').innerText='Max: '+Math.abs(sBn)+' shares';
+document.getElementById('closePartialPriceLblA').innerText=(tA||'A')+' EXIT PRICE';
+document.getElementById('closePartialPriceLblB').innerText=(tB||'B')+' EXIT PRICE';
+document.getElementById('closeTypeChoices').style.display='block';document.getElementById('partialInputs').style.display='none';document.getElementById('fullCloseInputs').style.display='none';
+document.getElementById('reduceA').value='0';document.getElementById('reduceB').value='0';
+document.getElementById('closeFullPriceA').value='';document.getElementById('closeFullPriceB').value='';
+document.getElementById('closePartialPriceA').value='';document.getElementById('closePartialPriceB').value='';
+document.getElementById('closeTypeModal').style.display='block';}
 function closeCloseModal(){document.getElementById('closeTypeModal').style.display='none';}
-async function doFullClose(){closeCloseModal();var c=document.getElementById(closeCardId);if(c)c.style.opacity="0.5";try{await apiGet("closeTrade",{id:closeTargetId});refreshData();}catch(e){if(c)c.style.opacity="1";alert("Failed to close trade.");}}
+function showFullCloseInputs(){document.getElementById('closeTypeChoices').style.display='none';document.getElementById('fullCloseInputs').style.display='block';}
+async function doFullClose(){var epA=document.getElementById('closeFullPriceA').value.trim();var epB=document.getElementById('closeFullPriceB').value.trim();closeCloseModal();var c=document.getElementById(closeCardId);if(c)c.style.opacity="0.5";try{var params={id:closeTargetId};if(epA)params.exitPriceA=epA;if(epB)params.exitPriceB=epB;await apiGet("closeTrade",params);refreshData();}catch(e){if(c)c.style.opacity="1";alert("Failed to close trade.");}}
 function showPartialInputs(){document.getElementById('closeTypeChoices').style.display='none';document.getElementById('partialInputs').style.display='block';}
-async function doPartialClose(){var rA=document.getElementById('reduceA').value||0;var rB=document.getElementById('reduceB').value||0;closeCloseModal();var c=document.getElementById(closeCardId);if(c)c.style.opacity="0.5";try{await apiGet("partialClose",{id:closeTargetId,reduceA:rA,reduceB:rB});refreshData();}catch(e){if(c)c.style.opacity="1";alert("Failed to partial close.");}}
+async function doPartialClose(){var rA=document.getElementById('reduceA').value||0;var rB=document.getElementById('reduceB').value||0;var epA=document.getElementById('closePartialPriceA').value.trim();var epB=document.getElementById('closePartialPriceB').value.trim();closeCloseModal();var c=document.getElementById(closeCardId);if(c)c.style.opacity="0.5";try{var params={id:closeTargetId,reduceA:rA,reduceB:rB};if(epA)params.exitPriceA=epA;if(epB)params.exitPriceB=epB;await apiGet("partialClose",params);refreshData();}catch(e){if(c)c.style.opacity="1";alert("Failed to partial close.");}}
 var divTargetId='',divType='';
 function openDivModal(id,type){divTargetId=id;divType=type;document.getElementById('divAmount').value='';var btn=document.getElementById('divSubmitBtn');if(type==='paid'){document.getElementById('divModalTitle').innerText='Add Paid Dividend';document.getElementById('divModalSub').innerText='Short leg dividend owed — enters as cost';btn.className='div-submit paid';btn.innerText='Record Paid Div';}else{document.getElementById('divModalTitle').innerText='Add Received Dividend';document.getElementById('divModalSub').innerText='Long leg dividend received — enters as income';btn.className='div-submit rcvd';btn.innerText='Record Received Div';}document.getElementById('divModal').style.display='flex';}
 function closeDivModal(){document.getElementById('divModal').style.display='none';}
@@ -1832,7 +1879,7 @@ if(p.maxHoldDays!=null) exitPanel+=' \u00B7 Max hold: '+p.maxHoldDays+'d';
 if(p.sourcePortfolio) exitPanel+=' \u00B7 Source: '+p.sourcePortfolio;
 exitPanel+='</div>';
 }
-ph+='<div class="trade-card" id="card-'+i+'">'+'<div style="display:flex;justify-content:space-between;align-items:flex-start"><div><div style="font-weight:900;font-size:22px;color:var(--accent)">'+p.id+'</div><div style="display:flex;gap:6px;align-items:center;margin-top:4px"><div style="font-size:12px;color:var(--subtext);font-weight:700">Spread: $'+p.spr+'</div><div class="entry-indicator">ENTRY: '+ez.toFixed(2)+'σ</div></div></div><div style="font-family:\'JetBrains Mono\';font-weight:900;font-size:22px;color:'+c+'">'+(p.dollarPnL>=0?'+':'')+p.dollarPnL+'$</div></div>'+'<div class="target-ribbon"><div class="target-row"><div class="target-desc">CURRENT SPREAD</div><div class="target-val">$'+p.spr+' (Diff)</div></div><div class="target-row"><div class="target-desc">TARGET MEAN</div>'+tm+'</div></div>'+'<div style="display:flex;gap:12px;margin-top:20px;margin-bottom:20px"><div style="flex:1;padding:12px;background:rgba(255,255,255,.03);border-radius:10px;border:1px solid var(--border)"><div style="font-size:10px;color:var(--accent);font-weight:900;text-transform:uppercase;margin-bottom:6px">'+tA+'</div><div style="font-family:\'JetBrains Mono\';font-size:15px;font-weight:900;color:white">$'+p.pA+'</div><div style="font-size:10px;color:var(--subtext);margin-top:4px">Qty: '+p.sA+'</div></div><div style="flex:1;padding:12px;background:rgba(255,255,255,.03);border-radius:10px;border:1px solid var(--border)"><div style="font-size:10px;color:var(--accent);font-weight:900;text-transform:uppercase;margin-bottom:6px">'+tB+'</div><div style="font-family:\'JetBrains Mono\';font-size:15px;font-weight:900;color:white">$'+p.pB+'</div><div style="font-size:10px;color:var(--subtext);margin-top:4px">Qty: '+p.sB+'</div></div></div>'+'<div class="div-flow-row"><div class="div-flow-item"><div class="div-flow-label" style="color:var(--subtext)">Capital Gains</div><div class="div-flow-val" style="color:'+cgClr+'">'+(cg>=0?'+':'')+cg.toFixed(2)+'$</div></div><div class="div-flow-item"><div class="div-flow-label" style="color:var(--high)">Dividends Paid</div><div class="div-flow-val" style="color:var(--high)">-'+pd.toFixed(2)+'$</div><button class="div-btn paid" onclick="openDivModal(\''+si+'\',\'paid\')" style="margin-top:4px">+ Add</button></div><div class="div-flow-item"><div class="div-flow-label" style="color:var(--low)">Dividends Received</div><div class="div-flow-val" style="color:var(--low)">+'+rd.toFixed(2)+'$</div><button class="div-btn rcvd" onclick="openDivModal(\''+si+'\',\'received\')" style="margin-top:4px">+ Add</button></div><div class="div-flow-item"><div class="div-flow-label" style="color:var(--subtext)">Net Dividends</div><div class="div-flow-val" style="color:'+ndClr+'">'+(nd>=0?'+':'')+nd.toFixed(2)+'$</div></div></div>'+exitPanel+'<div class="progress-container"><div class="progress-bar" style="width:'+prog+'%;background:'+c+'"></div></div>'+'<div class="tc-progress-label"><span>Total Distance: <span class="tc-val">'+p.centGoal+'&cent;</span></span><span style="color:'+c+'">Remaining: <span class="tc-val">'+p.centRem+'&cent;</span></span></div>'+'<div style="display:flex;justify-content:space-between;margin-top:20px"><button class="scale-btn" onclick="openModal(\''+si+'\',\''+sa+'\',\''+sb+'\')">Scale</button><button class="close-trade-btn" onclick="openCloseModal(\''+si+'\',\'card-'+i+'\')">Close</button></div></div>';});}
+ph+='<div class="trade-card" id="card-'+i+'">'+'<div style="display:flex;justify-content:space-between;align-items:flex-start"><div><div style="font-weight:900;font-size:22px;color:var(--accent)">'+p.id+'</div><div style="display:flex;gap:6px;align-items:center;margin-top:4px"><div style="font-size:12px;color:var(--subtext);font-weight:700">Spread: $'+p.spr+'</div><div class="entry-indicator">ENTRY: '+ez.toFixed(2)+'σ</div></div></div><div style="font-family:\'JetBrains Mono\';font-weight:900;font-size:22px;color:'+c+'">'+(p.dollarPnL>=0?'+':'')+p.dollarPnL+'$</div></div>'+'<div class="target-ribbon"><div class="target-row"><div class="target-desc">CURRENT SPREAD</div><div class="target-val">$'+p.spr+' (Diff)</div></div><div class="target-row"><div class="target-desc">TARGET MEAN</div>'+tm+'</div></div>'+'<div style="display:flex;gap:12px;margin-top:20px;margin-bottom:20px"><div style="flex:1;padding:12px;background:rgba(255,255,255,.03);border-radius:10px;border:1px solid var(--border)"><div style="font-size:10px;color:var(--accent);font-weight:900;text-transform:uppercase;margin-bottom:6px">'+tA+'</div><div style="font-family:\'JetBrains Mono\';font-size:15px;font-weight:900;color:white">$'+p.pA+'</div><div style="font-size:10px;color:var(--subtext);margin-top:4px">Qty: '+p.sA+'</div></div><div style="flex:1;padding:12px;background:rgba(255,255,255,.03);border-radius:10px;border:1px solid var(--border)"><div style="font-size:10px;color:var(--accent);font-weight:900;text-transform:uppercase;margin-bottom:6px">'+tB+'</div><div style="font-family:\'JetBrains Mono\';font-size:15px;font-weight:900;color:white">$'+p.pB+'</div><div style="font-size:10px;color:var(--subtext);margin-top:4px">Qty: '+p.sB+'</div></div></div>'+'<div class="div-flow-row"><div class="div-flow-item"><div class="div-flow-label" style="color:var(--subtext)">Capital Gains</div><div class="div-flow-val" style="color:'+cgClr+'">'+(cg>=0?'+':'')+cg.toFixed(2)+'$</div></div><div class="div-flow-item"><div class="div-flow-label" style="color:var(--high)">Dividends Paid</div><div class="div-flow-val" style="color:var(--high)">-'+pd.toFixed(2)+'$</div><button class="div-btn paid" onclick="openDivModal(\''+si+'\',\'paid\')" style="margin-top:4px">+ Add</button></div><div class="div-flow-item"><div class="div-flow-label" style="color:var(--low)">Dividends Received</div><div class="div-flow-val" style="color:var(--low)">+'+rd.toFixed(2)+'$</div><button class="div-btn rcvd" onclick="openDivModal(\''+si+'\',\'received\')" style="margin-top:4px">+ Add</button></div><div class="div-flow-item"><div class="div-flow-label" style="color:var(--subtext)">Net Dividends</div><div class="div-flow-val" style="color:'+ndClr+'">'+(nd>=0?'+':'')+nd.toFixed(2)+'$</div></div></div>'+exitPanel+'<div class="progress-container"><div class="progress-bar" style="width:'+prog+'%;background:'+c+'"></div></div>'+'<div class="tc-progress-label"><span>Total Distance: <span class="tc-val">'+p.centGoal+'&cent;</span></span><span style="color:'+c+'">Remaining: <span class="tc-val">'+p.centRem+'&cent;</span></span></div>'+'<div style="display:flex;justify-content:space-between;margin-top:20px"><button class="scale-btn" onclick="openModal(\''+si+'\',\''+sa+'\',\''+sb+'\')">Scale</button><button class="close-trade-btn" onclick="openCloseModal(\''+si+'\',\'card-'+i+'\',\''+sa+'\',\''+sb+'\',\''+p.livePriceA+'\',\''+p.livePriceB+'\',\''+p.sA+'\',\''+p.sB+'\',\''+p.pA+'\',\''+p.pB+'\')">Close</button></div></div>';});}
 document.getElementById('portfolioGrid').innerHTML=ph;
 renderHealthBar(data.portfolioData);
 checkExitSignalsClient();
@@ -3894,7 +3941,8 @@ function updateAlertTray() {
     h += '<span>' + s.currentZ.toFixed(2) + '\u03C3</span>';
     h += '<span>' + (s.unrealizedPnl >= 0 ? '+' : '') + parseFloat(s.unrealizedPnl).toFixed(0) + '$</span>';
     h += '</div>';
-    h += '<button class="alert-tray-item-action" onclick="openCloseModal(\'' + si + '\',null)">Close</button>';
+    var stA=String(s.tA||'').replace(/'/g,"\\'"),stB=String(s.tB||'').replace(/'/g,"\\'");
+    h += '<button class="alert-tray-item-action" onclick="openCloseModal(\'' + si + '\',null,\''+stA+'\',\''+stB+'\')">Close</button>';
     h += '</div>';
   });
   itemsEl.innerHTML = h;

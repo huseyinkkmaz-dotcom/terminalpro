@@ -354,11 +354,15 @@ function doGet(e) {
       result = { ok: true, message: "Trade saved" };
     }
     else if (action === 'closeTrade') {
-      closeTradeInSheet(e.parameter.id || "");
+      var exitPA = e.parameter.exitPriceA ? parseFloat(e.parameter.exitPriceA) : null;
+      var exitPB = e.parameter.exitPriceB ? parseFloat(e.parameter.exitPriceB) : null;
+      closeTradeInSheet(e.parameter.id || "", exitPA, exitPB);
       result = { ok: true, message: "Trade closed" };
     }
     else if (action === 'partialClose') {
-      partialCloseTradeInSheet(e.parameter.id || "", e.parameter.reduceA || 0, e.parameter.reduceB || 0);
+      var exitPA = e.parameter.exitPriceA ? parseFloat(e.parameter.exitPriceA) : null;
+      var exitPB = e.parameter.exitPriceB ? parseFloat(e.parameter.exitPriceB) : null;
+      partialCloseTradeInSheet(e.parameter.id || "", e.parameter.reduceA || 0, e.parameter.reduceB || 0, exitPA, exitPB);
       result = { ok: true, message: "Partial close recorded" };
     }
     else if (action === 'addDividend') {
@@ -2782,7 +2786,7 @@ function saveTradeToSheet(trade) {
                    targetExitZ, profitCapturePct, targetPnL, partialAtPct, sourcePortfolio, maxHoldDays]);
   return true;
 }
-function closeTradeInSheet(id) {
+function closeTradeInSheet(id, customExitA, customExitB) {
   var ss = SpreadsheetApp.getActive();
   var sheet = ss.getSheetByName('OpenTrades');
   if (!sheet || sheet.getLastRow() <= 1) return true;
@@ -2803,12 +2807,12 @@ function closeTradeInSheet(id) {
       var targetExitZ = data[i][9] !== undefined && data[i][9] !== '' ? data[i][9] : '';
       var targetPnL = data[i][11] !== undefined && data[i][11] !== '' ? data[i][11] : '';
       var sourcePortfolio = data[i][13] !== undefined && data[i][13] !== '' ? data[i][13] : '';
-      // Look up live exit prices
+      // Use custom exit prices if provided, otherwise look up live prices
       var live = getLivePairData_(ss, pairId);
-      var exitA = live ? live.priceA : costA;
-      var exitB = live ? live.priceB : costB;
+      var exitA = (customExitA != null && !isNaN(customExitA)) ? customExitA : (live ? live.priceA : costA);
+      var exitB = (customExitB != null && !isNaN(customExitB)) ? customExitB : (live ? live.priceB : costB);
       var exitZ = live ? live.z : 0;
-      if (!live) {
+      if (!live && customExitA == null && customExitB == null) {
         Logger.log('WARNING: closeTradeInSheet — live data unavailable for ' + pairId + '. Using entry prices as exit prices (PnL will be $0 cap gains).');
       }
       var capGains = ((exitA - costA) * sA) + ((exitB - costB) * sB);
@@ -2826,7 +2830,7 @@ function closeTradeInSheet(id) {
   }
   return true;
 }
-function partialCloseTradeInSheet(id, reduceA, reduceB) {
+function partialCloseTradeInSheet(id, reduceA, reduceB, customExitA, customExitB) {
   var ss = SpreadsheetApp.getActive();
   var sheet = ss.getSheetByName('OpenTrades');
   if (!sheet || sheet.getLastRow() <= 1) return true;
@@ -2862,10 +2866,10 @@ function partialCloseTradeInSheet(id, reduceA, reduceB) {
       var divRatio = (ratioA + ratioB) / 2;
       var closedPaidDiv = Math.round(totalPaidDiv * divRatio * 100) / 100;
       var closedRcvdDiv = Math.round(totalRcvdDiv * divRatio * 100) / 100;
-      // Look up live exit prices
+      // Use custom exit prices if provided, otherwise look up live prices
       var live = getLivePairData_(ss, pairId);
-      var exitA = live ? live.priceA : costA;
-      var exitB = live ? live.priceB : costB;
+      var exitA = (customExitA != null && !isNaN(customExitA)) ? customExitA : (live ? live.priceA : costA);
+      var exitB = (customExitB != null && !isNaN(customExitB)) ? customExitB : (live ? live.priceB : costB);
       var exitZ = live ? live.z : 0;
       // PnL: capital gains on closed portion + proportional dividends
       // FIX: capGains uses signed sizes (closedA*signA) for direction, not closedA*signA again
