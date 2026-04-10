@@ -356,14 +356,21 @@ function doGet(e) {
     else if (action === 'closeTrade') {
       var exitPA = e.parameter.exitPriceA ? parseFloat(e.parameter.exitPriceA) : null;
       var exitPB = e.parameter.exitPriceB ? parseFloat(e.parameter.exitPriceB) : null;
-      closeTradeInSheet(e.parameter.id || "", exitPA, exitPB);
+      var closeReason = e.parameter.closeReason || '';
+      closeTradeInSheet(e.parameter.id || "", exitPA, exitPB, closeReason);
       result = { ok: true, message: "Trade closed" };
     }
     else if (action === 'partialClose') {
       var exitPA = e.parameter.exitPriceA ? parseFloat(e.parameter.exitPriceA) : null;
       var exitPB = e.parameter.exitPriceB ? parseFloat(e.parameter.exitPriceB) : null;
-      partialCloseTradeInSheet(e.parameter.id || "", e.parameter.reduceA || 0, e.parameter.reduceB || 0, exitPA, exitPB);
+      var closeReason = e.parameter.closeReason || '';
+      partialCloseTradeInSheet(e.parameter.id || "", e.parameter.reduceA || 0, e.parameter.reduceB || 0, exitPA, exitPB, closeReason);
       result = { ok: true, message: "Partial close recorded" };
+    }
+    else if (action === 'getTradeEvents') {
+      var groupId = e.parameter.groupId || '';
+      var events = getTradeEvents_(SpreadsheetApp.getActive(), groupId);
+      result = { ok: true, events: events };
     }
     else if (action === 'addDividend') {
       addDividendToTrade(e.parameter.id || "", e.parameter.type || "", parseFloat(e.parameter.amount) || 0);
@@ -994,6 +1001,8 @@ function getOpenTrades() {
         if (mTicker && mCoupon > 0) couponMap[mTicker] = mCoupon;
       }
     }
+    // Pre-load TickerHistory for sparkline computation
+    var histMap = readTickerHistMap_(ss);
     var now = new Date();
     var results = [];
     for (var j = 1; j < openData.length; j++) {
@@ -1041,6 +1050,17 @@ function getOpenTrades() {
           var exDivB = divMap[tkB] || null;
           var couponA = couponMap[tkA] || 0;
           var couponB = couponMap[tkB] || 0;
+          // Compute 30-day PnL sparkline from TickerHistory
+          var sparkline = [];
+          var hA = histMap[tkA], hB = histMap[tkB];
+          if (hA && hB) {
+            var spkLen = Math.min(hA.length, hB.length, 30);
+            for (var sp = hA.length - spkLen, spB = hB.length - spkLen; sp < hA.length; sp++, spB++) {
+              var spPnl = ((hA[sp] - costA) * sA) + ((hB[spB] - costB) * sB);
+              sparkline.push(Math.round(spPnl * 100) / 100);
+            }
+          }
+          var tradeGroupId = openData[j][15] !== undefined && openData[j][15] !== '' ? String(openData[j][15]) : '';
           results.push({
             id: displayId, tA: tA_Name, tB: tB_Name,
             spr: liveSpr.toFixed(2), target: meanTarget.toFixed(2),
@@ -1061,9 +1081,12 @@ function getOpenTrades() {
             targetExitZ: targetExitZ, profitCapturePct: profitCapturePct,
             targetPnL: targetPnL, partialAtPct: partialAtPct,
             sourcePortfolio: sourcePortfolio, maxHoldDays: maxHoldDays,
-            profitProgress: targetPnL && targetPnL > 0 ? Math.round((netPnl / targetPnL) * 100) : null
+            profitProgress: targetPnL && targetPnL > 0 ? Math.round((netPnl / targetPnL) * 100) : null,
+            sparkline: sparkline,
+            tradeGroupId: tradeGroupId
           });
         } else {
+          var tradeGroupIdW = openData[j][15] !== undefined && openData[j][15] !== '' ? String(openData[j][15]) : '';
           results.push({
             id: displayId+" [WAITING]", tA: tA_Name, tB: tB_Name,
             spr:"0.00", target:"0.00", stdev: 0,
@@ -1081,7 +1104,9 @@ function getOpenTrades() {
             targetExitZ: targetExitZ, profitCapturePct: profitCapturePct,
             targetPnL: targetPnL, partialAtPct: partialAtPct,
             sourcePortfolio: sourcePortfolio, maxHoldDays: maxHoldDays,
-            profitProgress: null
+            profitProgress: null,
+            sparkline: [],
+            tradeGroupId: tradeGroupIdW
           });
         }
       } catch(err) { console.error(err); }
@@ -1120,6 +1145,11 @@ function getClosedTrades() {
       var netDiv = rcvdDiv - paidDiv;
       var entryCost = Math.abs(costA * sizeA) + Math.abs(costB * sizeB);
       var returnPct = entryCost > 0 ? (pnl / entryCost * 100) : 0;
+      var targetExitZ = r[16] !== undefined && r[16] !== '' ? parseFloat(r[16]) || 0 : null;
+      var targetPnL = r[17] !== undefined && r[17] !== '' ? parseFloat(r[17]) || 0 : null;
+      var sourcePortfolio = r[18] !== undefined && r[18] !== '' ? String(r[18]) : '';
+      var closeReason = r[19] !== undefined && r[19] !== '' ? String(r[19]) : '';
+      var tradeGroupId = r[20] !== undefined && r[20] !== '' ? String(r[20]) : '';
       output.push({
         id: info.id, tA: info.tA, tB: info.tB,
         rowIdx: i + 1, // 1-indexed sheet row for saveTradeNote
@@ -1137,7 +1167,12 @@ function getClosedTrades() {
         netDiv: netDiv.toFixed(2),
         returnPct: returnPct.toFixed(2),
         closeType: closeType,
-        note: note
+        note: note,
+        targetExitZ: targetExitZ,
+        targetPnL: targetPnL,
+        sourcePortfolio: sourcePortfolio,
+        closeReason: closeReason,
+        tradeGroupId: tradeGroupId
       });
     }
     return output.reverse();
@@ -2754,6 +2789,9 @@ function saveTradeToSheet(trade) {
         }
         sheet.getRange(i + 1, 10, 1, 6).setValues([[scaleTargetExitZ, scaleProfitCapPct, scaleTargetPnL, scalePartialAt, scaleSrcPortfolio, scaleMaxHold]]);
       }
+      // Log SCALE_IN event
+      var groupId = openData[i][15] || '';
+      logTradeEvent_(ss, realId, groupId, 'SCALE_IN', newPA, newPB, newSA, newSB, curZ, 'Avg: $' + avgPA.toFixed(2) + '/$' + avgPB.toFixed(2) + ' Total: ' + totalSA + '/' + totalSB);
       return true;
     }
   }
@@ -2782,11 +2820,14 @@ function saveTradeToSheet(trade) {
   if ((targetPnL === '' || targetPnL === 0) && trade.targetPnL !== '' && parseFloat(trade.targetPnL) > 0) {
     targetPnL = parseFloat(trade.targetPnL);
   }
+  // Generate TradeGroupID for lifecycle tracking
+  var tradeGroupId = cleanId(realId) + '_' + Date.now();
   sheet.appendRow([realId, curZ, trade.priceA, trade.priceB, trade.sizeA, trade.sizeB, new Date(), 0, 0,
-                   targetExitZ, profitCapturePct, targetPnL, partialAtPct, sourcePortfolio, maxHoldDays]);
+                   targetExitZ, profitCapturePct, targetPnL, partialAtPct, sourcePortfolio, maxHoldDays, tradeGroupId]);
+  logTradeEvent_(ss, realId, tradeGroupId, 'OPEN', trade.priceA, trade.priceB, trade.sizeA, trade.sizeB, curZ, sourcePortfolio ? 'Source: ' + sourcePortfolio : '');
   return true;
 }
-function closeTradeInSheet(id, customExitA, customExitB) {
+function closeTradeInSheet(id, customExitA, customExitB, closeReason) {
   var ss = SpreadsheetApp.getActive();
   var sheet = ss.getSheetByName('OpenTrades');
   if (!sheet || sheet.getLastRow() <= 1) return true;
@@ -2807,6 +2848,7 @@ function closeTradeInSheet(id, customExitA, customExitB) {
       var targetExitZ = data[i][9] !== undefined && data[i][9] !== '' ? data[i][9] : '';
       var targetPnL = data[i][11] !== undefined && data[i][11] !== '' ? data[i][11] : '';
       var sourcePortfolio = data[i][13] !== undefined && data[i][13] !== '' ? data[i][13] : '';
+      var tradeGroupId = data[i][15] !== undefined && data[i][15] !== '' ? data[i][15] : '';
       // Use custom exit prices if provided, otherwise look up live prices
       var live = getLivePairData_(ss, pairId);
       var exitA = (customExitA != null && !isNaN(customExitA)) ? customExitA : (live ? live.priceA : costA);
@@ -2817,20 +2859,21 @@ function closeTradeInSheet(id, customExitA, customExitB) {
       }
       var capGains = ((exitA - costA) * sA) + ((exitB - costB) * sB);
       var pnl = capGains + rcvdDiv - paidDiv;
-      // Write to ClosedTrades (19 columns: original 16 + TargetExitZ, TargetPnL, SourcePortfolio)
+      // Write to ClosedTrades (21 columns)
       var closed = ss.getSheetByName('ClosedTrades');
       if (!closed) {
         closed = ss.insertSheet('ClosedTrades');
-        closed.getRange(1, 1, 1, 19).setValues([['PairID','EntryZ','CostA','CostB','SizeA','SizeB','OpenDate','CloseDate','PnL','ExitPriceA','ExitPriceB','ExitZ','CloseType','PaidDiv','ReceivedDiv','Notes','TargetExitZ','TargetPnL','SourcePortfolio']]);
+        closed.getRange(1, 1, 1, 21).setValues([['PairID','EntryZ','CostA','CostB','SizeA','SizeB','OpenDate','CloseDate','PnL','ExitPriceA','ExitPriceB','ExitZ','CloseType','PaidDiv','ReceivedDiv','Notes','TargetExitZ','TargetPnL','SourcePortfolio','CloseReason','TradeGroupID']]);
       }
-      closed.appendRow([pairId, entryZ, costA, costB, sA, sB, openDate, new Date(), pnl, exitA, exitB, exitZ, 'FULL', paidDiv, rcvdDiv, '', targetExitZ, targetPnL, sourcePortfolio]);
+      closed.appendRow([pairId, entryZ, costA, costB, sA, sB, openDate, new Date(), pnl, exitA, exitB, exitZ, 'FULL', paidDiv, rcvdDiv, '', targetExitZ, targetPnL, sourcePortfolio, closeReason || '', tradeGroupId]);
+      logTradeEvent_(ss, pairId, tradeGroupId, 'FULL_CLOSE', exitA, exitB, sA, sB, exitZ, 'PnL: $' + pnl.toFixed(2) + (closeReason ? ' Reason: ' + closeReason : ''));
       sheet.deleteRow(i + 1);
       break;
     }
   }
   return true;
 }
-function partialCloseTradeInSheet(id, reduceA, reduceB, customExitA, customExitB) {
+function partialCloseTradeInSheet(id, reduceA, reduceB, customExitA, customExitB, closeReason) {
   var ss = SpreadsheetApp.getActive();
   var sheet = ss.getSheetByName('OpenTrades');
   if (!sheet || sheet.getLastRow() <= 1) return true;
@@ -2854,6 +2897,7 @@ function partialCloseTradeInSheet(id, reduceA, reduceB, customExitA, customExitB
       var pTargetExitZ = data[i][9] !== undefined && data[i][9] !== '' ? data[i][9] : '';
       var pTargetPnL = data[i][11] !== undefined && data[i][11] !== '' ? data[i][11] : '';
       var pSourcePortfolio = data[i][13] !== undefined && data[i][13] !== '' ? data[i][13] : '';
+      var tradeGroupId = data[i][15] !== undefined && data[i][15] !== '' ? data[i][15] : '';
       // Clamp reduce amounts to position size
       var closedA = Math.min(reduceA, Math.abs(sA));
       var closedB = Math.min(reduceB, Math.abs(sB));
@@ -2872,17 +2916,16 @@ function partialCloseTradeInSheet(id, reduceA, reduceB, customExitA, customExitB
       var exitB = (customExitB != null && !isNaN(customExitB)) ? customExitB : (live ? live.priceB : costB);
       var exitZ = live ? live.z : 0;
       // PnL: capital gains on closed portion + proportional dividends
-      // FIX: capGains uses signed sizes (closedA*signA) for direction, not closedA*signA again
-      // For long (signA=+1): profit = (exit-cost)*shares. For short (signA=-1): profit = (cost-exit)*shares = (exit-cost)*(-shares)
       var capGains = ((exitA - costA) * (closedA * signA)) + ((exitB - costB) * (closedB * signB));
       var pnl = capGains + closedRcvdDiv - closedPaidDiv;
-      // Write closed portion to ClosedTrades (19 columns)
+      // Write closed portion to ClosedTrades (21 columns)
       var closed = ss.getSheetByName('ClosedTrades');
       if (!closed) {
         closed = ss.insertSheet('ClosedTrades');
-        closed.getRange(1, 1, 1, 19).setValues([['PairID','EntryZ','CostA','CostB','SizeA','SizeB','OpenDate','CloseDate','PnL','ExitPriceA','ExitPriceB','ExitZ','CloseType','PaidDiv','ReceivedDiv','Notes','TargetExitZ','TargetPnL','SourcePortfolio']]);
+        closed.getRange(1, 1, 1, 21).setValues([['PairID','EntryZ','CostA','CostB','SizeA','SizeB','OpenDate','CloseDate','PnL','ExitPriceA','ExitPriceB','ExitZ','CloseType','PaidDiv','ReceivedDiv','Notes','TargetExitZ','TargetPnL','SourcePortfolio','CloseReason','TradeGroupID']]);
       }
-      closed.appendRow([pairId, entryZ, costA, costB, closedA * signA, closedB * signB, openDate, new Date(), pnl, exitA, exitB, exitZ, 'PARTIAL', closedPaidDiv, closedRcvdDiv, '', pTargetExitZ, pTargetPnL, pSourcePortfolio]);
+      closed.appendRow([pairId, entryZ, costA, costB, closedA * signA, closedB * signB, openDate, new Date(), pnl, exitA, exitB, exitZ, 'PARTIAL', closedPaidDiv, closedRcvdDiv, '', pTargetExitZ, pTargetPnL, pSourcePortfolio, closeReason || '', tradeGroupId]);
+      logTradeEvent_(ss, pairId, tradeGroupId, 'PARTIAL_CLOSE', exitA, exitB, closedA * signA, closedB * signB, exitZ, 'PnL: $' + pnl.toFixed(2) + (closeReason ? ' Reason: ' + closeReason : ''));
       // Update remaining position — subtract proportional div amounts
       var remainA = sA - (closedA * signA);
       var remainB = sB - (closedB * signB);
@@ -2900,9 +2943,47 @@ function partialCloseTradeInSheet(id, reduceA, reduceB, customExitA, customExitB
   return true;
 }
 // ============================================================
+// TRADE EVENT LOGGING
+// ============================================================
+// TradeEvents sheet: Timestamp, PairID, TradeGroupID, EventType, PriceA, PriceB, SizeA, SizeB, ZScore, Details
+function logTradeEvent_(ss, pairId, groupId, eventType, priceA, priceB, sizeA, sizeB, zScore, details) {
+  try {
+    var sheet = ss.getSheetByName('TradeEvents');
+    if (!sheet) {
+      sheet = ss.insertSheet('TradeEvents');
+      sheet.getRange(1, 1, 1, 10).setValues([['Timestamp','PairID','TradeGroupID','EventType','PriceA','PriceB','SizeA','SizeB','ZScore','Details']]);
+    }
+    sheet.appendRow([new Date(), pairId || '', groupId || '', eventType || '', priceA || '', priceB || '', sizeA || '', sizeB || '', zScore || '', details || '']);
+  } catch(e) { Logger.log('logTradeEvent_ error: ' + e); }
+}
+function getTradeEvents_(ss, groupId) {
+  try {
+    var sheet = ss.getSheetByName('TradeEvents');
+    if (!sheet || sheet.getLastRow() <= 1) return [];
+    var data = sheet.getDataRange().getValues();
+    var events = [];
+    for (var i = 1; i < data.length; i++) {
+      if (groupId && String(data[i][2]) !== String(groupId)) continue;
+      events.push({
+        timestamp: data[i][0] instanceof Date ? data[i][0].toISOString() : String(data[i][0]),
+        pairId: String(data[i][1]),
+        groupId: String(data[i][2]),
+        eventType: String(data[i][3]),
+        priceA: parseFloat(data[i][4]) || 0,
+        priceB: parseFloat(data[i][5]) || 0,
+        sizeA: parseFloat(data[i][6]) || 0,
+        sizeB: parseFloat(data[i][7]) || 0,
+        zScore: parseFloat(data[i][8]) || 0,
+        details: String(data[i][9] || '')
+      });
+    }
+    return events;
+  } catch(e) { return []; }
+}
+// ============================================================
 // DIVIDEND TRACKING
 // ============================================================
-// OpenTrades columns: A(0):PairID B(1):EntryZ C(2):CostA D(3):CostB E(4):SizeA F(5):SizeB G(6):Timestamp H(7):PaidDiv I(8):ReceivedDiv J(9):TargetExitZ K(10):ProfitCapturePct L(11):TargetPnL M(12):PartialAtPct N(13):SourcePortfolio O(14):MaxHoldDays
+// OpenTrades columns: A(0):PairID B(1):EntryZ C(2):CostA D(3):CostB E(4):SizeA F(5):SizeB G(6):Timestamp H(7):PaidDiv I(8):ReceivedDiv J(9):TargetExitZ K(10):ProfitCapturePct L(11):TargetPnL M(12):PartialAtPct N(13):SourcePortfolio O(14):MaxHoldDays P(15):TradeGroupID
 function addDividendToTrade(id, type, amount) {
   if (!id || !type || !amount || amount <= 0) throw new Error('Invalid dividend input');
   var ss = SpreadsheetApp.getActive();
@@ -2917,6 +2998,8 @@ function addDividendToTrade(id, type, amount) {
     if (cleanId(data[i][0]) === cleanTarget) {
       var existing = parseMoney(data[i][colIndex]);
       sheet.getRange(i + 1, sheetCol).setValue(existing + amount);
+      var groupId = data[i][15] || '';
+      logTradeEvent_(ss, data[i][0], groupId, type === 'paid' ? 'DIV_PAID' : 'DIV_RECEIVED', '', '', '', '', '', '$' + amount.toFixed(2));
       return true;
     }
   }

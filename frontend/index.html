@@ -256,6 +256,11 @@ td:last-child{border-radius:0 6px 6px 0}
 .pa-range-legend-dot{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:3px;vertical-align:middle}
 .pa-sparkline-wrap{margin-top:10px;height:40px;position:relative}
 .pa-sparkline-wrap svg{width:100%;height:100%}
+.tc-sparkline{margin-top:16px;padding:10px 14px;background:rgba(255,255,255,.02);border:1px solid var(--border);border-radius:10px}
+.tc-sparkline-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
+.tc-sparkline-label{font-size:9px;font-weight:900;text-transform:uppercase;letter-spacing:0.5px;color:var(--subtext)}
+.tc-sparkline-val{font-size:11px;font-weight:900;font-family:'JetBrains Mono',monospace}
+.tc-sparkline svg{width:100%;height:40px}
 .pa-bad-scenario{background:linear-gradient(135deg,rgba(239,68,68,.06),rgba(239,68,68,.02));border:1px solid rgba(239,68,68,.2);border-radius:8px;padding:10px 12px;margin-bottom:14px}
 .pa-bad-header{display:flex;align-items:center;gap:6px;margin-bottom:8px}
 .pa-bad-title{font-size:10px;font-weight:900;text-transform:uppercase;letter-spacing:1px;color:var(--high)}
@@ -533,45 +538,68 @@ th .th-hint{font-weight:400;font-size:8px;letter-spacing:0;text-transform:none;c
 <button onclick="doSubmit()" style="background:var(--accent);color:var(--bg);border:none;padding:18px;width:100%;border-radius:8px;font-weight:900;cursor:pointer;font-size:13px">CONFIRM</button>
 <button onclick="closeModal()" style="background:none;border:none;color:var(--subtext);width:100%;margin-top:15px;cursor:pointer;font-size:12px">CANCEL</button>
 </div></div>
-<div id="closeTypeModal" class="modal"><div class="modal-content" style="width:420px">
-<div style="font-weight:900;font-size:22px;color:var(--high);margin-bottom:8px;text-transform:uppercase">Close Position</div>
-<div id="closePairLabel" style="font-size:14px;font-weight:900;color:var(--accent);margin-bottom:20px"></div>
-<div id="closePositionInfo" style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:20px">
+<div id="manageModal" class="modal"><div class="modal-content" style="width:460px;max-height:90vh;overflow-y:auto">
+<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px">
+<div><div style="font-weight:900;font-size:20px;color:var(--accent);text-transform:uppercase" id="mgPairLabel"></div>
+<div style="font-size:10px;color:var(--subtext);margin-top:2px">Manage Position</div></div>
+<button onclick="closeManageModal()" style="background:none;border:none;color:var(--subtext);font-size:20px;cursor:pointer;padding:0 4px">&times;</button>
+</div>
+<div id="mgPositionInfo" style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px">
 <div style="padding:10px;background:var(--white-03);border-radius:8px;border:1px solid var(--border)">
-<div id="closeLegALabel" style="font-size:9px;font-weight:900;color:var(--accent);text-transform:uppercase;margin-bottom:4px">LEG A</div>
-<div id="closeLegAInfo" style="font-family:'JetBrains Mono';font-size:12px;color:var(--text)"></div>
+<div id="mgLegALabel" style="font-size:9px;font-weight:900;color:var(--accent);text-transform:uppercase;margin-bottom:4px"></div>
+<div id="mgLegAInfo" style="font-family:'JetBrains Mono';font-size:12px;color:var(--text)"></div>
 </div>
 <div style="padding:10px;background:var(--white-03);border-radius:8px;border:1px solid var(--border)">
-<div id="closeLegBLabel" style="font-size:9px;font-weight:900;color:var(--accent);text-transform:uppercase;margin-bottom:4px">LEG B</div>
-<div id="closeLegBInfo" style="font-family:'JetBrains Mono';font-size:12px;color:var(--text)"></div>
+<div id="mgLegBLabel" style="font-size:9px;font-weight:900;color:var(--accent);text-transform:uppercase;margin-bottom:4px"></div>
+<div id="mgLegBInfo" style="font-family:'JetBrains Mono';font-size:12px;color:var(--text)"></div>
 </div>
 </div>
-<div id="closeTypeChoices">
-<button onclick="showFullCloseInputs()" style="background:rgba(239,68,68,.05);border:1.5px solid var(--high);color:var(--high);padding:18px;width:100%;border-radius:8px;font-weight:900;cursor:pointer;font-size:13px;margin-bottom:12px">FULL CLOSE</button>
-<button onclick="showPartialInputs()" style="background:rgba(14,165,233,.05);border:1.5px solid var(--accent);color:var(--accent);padding:18px;width:100%;border-radius:8px;font-weight:900;cursor:pointer;font-size:13px">PARTIAL CLOSE</button>
+<div style="display:flex;gap:0;margin-bottom:20px;border:1px solid var(--border);border-radius:8px;overflow:hidden">
+<button class="mgTab active" id="mgTabAdd" onclick="mgSwitchTab('add')" style="flex:1;padding:12px;font-size:10px;font-weight:900;text-transform:uppercase;letter-spacing:1px;cursor:pointer;border:none;background:var(--accent-10);color:var(--accent);transition:.2s">Add</button>
+<button class="mgTab" id="mgTabReduce" onclick="mgSwitchTab('reduce')" style="flex:1;padding:12px;font-size:10px;font-weight:900;text-transform:uppercase;letter-spacing:1px;cursor:pointer;border:none;border-left:1px solid var(--border);background:var(--card);color:var(--subtext);transition:.2s">Reduce</button>
+<button class="mgTab" id="mgTabClose" onclick="mgSwitchTab('close')" style="flex:1;padding:12px;font-size:10px;font-weight:900;text-transform:uppercase;letter-spacing:1px;cursor:pointer;border:none;border-left:1px solid var(--border);background:var(--card);color:var(--subtext);transition:.2s">Close</button>
 </div>
-<div id="fullCloseInputs" style="display:none">
-<div style="font-size:10px;font-weight:900;color:var(--subtext);text-transform:uppercase;margin-bottom:15px">Exit Prices <span style="font-weight:400;text-transform:none">(leave blank to use live prices)</span></div>
-<div style="display:grid;grid-template-columns:1fr 1fr;gap:15px;margin-bottom:25px">
-<div><label id="closeFullLblA" style="font-size:9px;color:var(--subtext);font-weight:900;display:block;margin-bottom:8px">EXIT PRICE A</label><input type="text" id="closeFullPriceA" placeholder="Live" style="width:100%;background:var(--bg);border:1px solid var(--border);color:white;padding:14px;border-radius:8px;box-sizing:border-box"></div>
-<div><label id="closeFullLblB" style="font-size:9px;color:var(--subtext);font-weight:900;display:block;margin-bottom:8px">EXIT PRICE B</label><input type="text" id="closeFullPriceB" placeholder="Live" style="width:100%;background:var(--bg);border:1px solid var(--border);color:white;padding:14px;border-radius:8px;box-sizing:border-box"></div>
-</div>
-<button onclick="doFullClose()" style="background:var(--high);color:white;border:none;padding:18px;width:100%;border-radius:8px;font-weight:900;cursor:pointer;font-size:13px">CONFIRM FULL CLOSE</button>
-</div>
-<div id="partialInputs" style="display:none">
-<div style="font-size:10px;font-weight:900;color:var(--subtext);text-transform:uppercase;margin-bottom:15px">Shares to reduce & exit prices</div>
+<div id="mgAddPanel">
 <div style="display:grid;grid-template-columns:1fr 1fr;gap:15px;margin-bottom:15px">
-<div><label id="closePartialLblA" style="font-size:9px;color:var(--subtext);font-weight:900;display:block;margin-bottom:8px">REDUCE A</label><input type="text" id="reduceA" value="0" style="width:100%;background:var(--bg);border:1px solid var(--border);color:white;padding:14px;border-radius:8px;box-sizing:border-box"><div id="closeMaxA" style="font-size:9px;color:var(--subtext);margin-top:4px"></div></div>
-<div><label id="closePartialLblB" style="font-size:9px;color:var(--subtext);font-weight:900;display:block;margin-bottom:8px">REDUCE B</label><input type="text" id="reduceB" value="0" style="width:100%;background:var(--bg);border:1px solid var(--border);color:white;padding:14px;border-radius:8px;box-sizing:border-box"><div id="closeMaxB" style="font-size:9px;color:var(--subtext);margin-top:4px"></div></div>
+<div><label id="mgAddLblA" style="font-size:9px;color:var(--subtext);font-weight:900;display:block;margin-bottom:8px">PRICE A</label><input type="text" id="mgAddPriceA" style="width:100%;background:var(--bg);border:1px solid var(--border);color:white;padding:14px;border-radius:8px;box-sizing:border-box"></div>
+<div><label id="mgAddLblB" style="font-size:9px;color:var(--subtext);font-weight:900;display:block;margin-bottom:8px">PRICE B</label><input type="text" id="mgAddPriceB" style="width:100%;background:var(--bg);border:1px solid var(--border);color:white;padding:14px;border-radius:8px;box-sizing:border-box"></div>
 </div>
-<div style="font-size:10px;font-weight:900;color:var(--subtext);text-transform:uppercase;margin-bottom:8px">Exit Prices <span style="font-weight:400;text-transform:none">(leave blank to use live prices)</span></div>
-<div style="display:grid;grid-template-columns:1fr 1fr;gap:15px;margin-bottom:25px">
-<div><label id="closePartialPriceLblA" style="font-size:9px;color:var(--subtext);font-weight:900;display:block;margin-bottom:8px">EXIT PRICE A</label><input type="text" id="closePartialPriceA" placeholder="Live" style="width:100%;background:var(--bg);border:1px solid var(--border);color:white;padding:14px;border-radius:8px;box-sizing:border-box"></div>
-<div><label id="closePartialPriceLblB" style="font-size:9px;color:var(--subtext);font-weight:900;display:block;margin-bottom:8px">EXIT PRICE B</label><input type="text" id="closePartialPriceB" placeholder="Live" style="width:100%;background:var(--bg);border:1px solid var(--border);color:white;padding:14px;border-radius:8px;box-sizing:border-box"></div>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:15px;margin-bottom:20px">
+<div><label style="font-size:9px;color:var(--subtext);font-weight:900;display:block;margin-bottom:8px">SIZE A</label><input type="text" id="mgAddSizeA" value="0" style="width:100%;background:var(--bg);border:1px solid var(--border);color:white;padding:14px;border-radius:8px;box-sizing:border-box"></div>
+<div><label style="font-size:9px;color:var(--subtext);font-weight:900;display:block;margin-bottom:8px">SIZE B</label><input type="text" id="mgAddSizeB" value="0" style="width:100%;background:var(--bg);border:1px solid var(--border);color:white;padding:14px;border-radius:8px;box-sizing:border-box"></div>
 </div>
-<button onclick="doPartialClose()" style="background:var(--accent);color:var(--bg);border:none;padding:18px;width:100%;border-radius:8px;font-weight:900;cursor:pointer;font-size:13px">CONFIRM PARTIAL CLOSE</button>
+<button onclick="mgDoAdd()" style="background:var(--accent);color:var(--bg);border:none;padding:18px;width:100%;border-radius:8px;font-weight:900;cursor:pointer;font-size:13px">CONFIRM ADD</button>
 </div>
-<button onclick="closeCloseModal()" style="background:none;border:none;color:var(--subtext);width:100%;margin-top:15px;cursor:pointer;font-size:12px">CANCEL</button>
+<div id="mgReducePanel" style="display:none">
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:15px;margin-bottom:15px">
+<div><label id="mgReduceLblA" style="font-size:9px;color:var(--subtext);font-weight:900;display:block;margin-bottom:8px">REDUCE A</label><input type="text" id="mgReduceA" value="0" oninput="mgUpdatePnlPreview()" style="width:100%;background:var(--bg);border:1px solid var(--border);color:white;padding:14px;border-radius:8px;box-sizing:border-box"><div id="mgMaxA" style="font-size:9px;color:var(--subtext);margin-top:4px"></div></div>
+<div><label id="mgReduceLblB" style="font-size:9px;color:var(--subtext);font-weight:900;display:block;margin-bottom:8px">REDUCE B</label><input type="text" id="mgReduceB" value="0" oninput="mgUpdatePnlPreview()" style="width:100%;background:var(--bg);border:1px solid var(--border);color:white;padding:14px;border-radius:8px;box-sizing:border-box"><div id="mgMaxB" style="font-size:9px;color:var(--subtext);margin-top:4px"></div></div>
+</div>
+<div style="font-size:10px;font-weight:900;color:var(--subtext);text-transform:uppercase;margin-bottom:8px">Exit Prices <span style="font-weight:400;text-transform:none">(blank = live)</span></div>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:15px;margin-bottom:15px">
+<div><label id="mgReducePriceLblA" style="font-size:9px;color:var(--subtext);font-weight:900;display:block;margin-bottom:8px">EXIT A</label><input type="text" id="mgReducePriceA" placeholder="Live" oninput="mgUpdatePnlPreview()" style="width:100%;background:var(--bg);border:1px solid var(--border);color:white;padding:14px;border-radius:8px;box-sizing:border-box"></div>
+<div><label id="mgReducePriceLblB" style="font-size:9px;color:var(--subtext);font-weight:900;display:block;margin-bottom:8px">EXIT B</label><input type="text" id="mgReducePriceB" placeholder="Live" oninput="mgUpdatePnlPreview()" style="width:100%;background:var(--bg);border:1px solid var(--border);color:white;padding:14px;border-radius:8px;box-sizing:border-box"></div>
+</div>
+<div id="mgReduceReason" style="margin-bottom:15px">
+<div style="font-size:10px;font-weight:900;color:var(--subtext);text-transform:uppercase;margin-bottom:8px">Close Reason</div>
+<div style="display:flex;gap:6px;flex-wrap:wrap" id="mgReduceReasonPills"></div>
+</div>
+<div id="mgPnlPreview" style="display:none;padding:12px;background:var(--white-03);border:1px solid var(--border);border-radius:8px;margin-bottom:15px;font-family:'JetBrains Mono';font-size:12px"></div>
+<button onclick="mgDoReduce()" style="background:var(--accent);color:var(--bg);border:none;padding:18px;width:100%;border-radius:8px;font-weight:900;cursor:pointer;font-size:13px">CONFIRM REDUCE</button>
+</div>
+<div id="mgClosePanel" style="display:none">
+<div style="font-size:10px;font-weight:900;color:var(--subtext);text-transform:uppercase;margin-bottom:8px">Exit Prices <span style="font-weight:400;text-transform:none">(blank = live)</span></div>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:15px;margin-bottom:15px">
+<div><label id="mgClosePriceLblA" style="font-size:9px;color:var(--subtext);font-weight:900;display:block;margin-bottom:8px">EXIT A</label><input type="text" id="mgClosePriceA" placeholder="Live" oninput="mgUpdateClosePnlPreview()" style="width:100%;background:var(--bg);border:1px solid var(--border);color:white;padding:14px;border-radius:8px;box-sizing:border-box"></div>
+<div><label id="mgClosePriceLblB" style="font-size:9px;color:var(--subtext);font-weight:900;display:block;margin-bottom:8px">EXIT B</label><input type="text" id="mgClosePriceB" placeholder="Live" oninput="mgUpdateClosePnlPreview()" style="width:100%;background:var(--bg);border:1px solid var(--border);color:white;padding:14px;border-radius:8px;box-sizing:border-box"></div>
+</div>
+<div id="mgCloseReason" style="margin-bottom:15px">
+<div style="font-size:10px;font-weight:900;color:var(--subtext);text-transform:uppercase;margin-bottom:8px">Close Reason</div>
+<div style="display:flex;gap:6px;flex-wrap:wrap" id="mgCloseReasonPills"></div>
+</div>
+<div id="mgClosePnlPreview" style="display:none;padding:12px;background:var(--white-03);border:1px solid var(--border);border-radius:8px;margin-bottom:15px;font-family:'JetBrains Mono';font-size:12px"></div>
+<button onclick="mgDoClose()" style="background:var(--high);color:white;border:none;padding:18px;width:100%;border-radius:8px;font-weight:900;cursor:pointer;font-size:13px">CONFIRM FULL CLOSE</button>
+</div>
 </div></div>
 <div id="divModal"><div class="modal-box">
 <div class="modal-title" id="divModalTitle">Add Dividend</div>
@@ -798,9 +826,21 @@ th .th-hint{font-weight:400;font-size:8px;letter-spacing:0;text-transform:none;c
 <button onclick="doClearHistory()" style="background:rgba(239,68,68,.05);border:1.5px solid var(--high);color:var(--high);padding:10px 20px;border-radius:8px;font-size:10px;font-weight:900;cursor:pointer;text-transform:uppercase">Clear History</button>
 </div>
 <div id="histClosedSection">
-<div id="historySummary" style="display:flex;gap:15px;margin-bottom:20px;flex-wrap:wrap"></div>
-<div style="overflow-x:auto;max-height:calc(100vh - 220px);overflow-y:auto;position:relative">
-<table id="historyTable"><thead style="position:sticky;top:0;z-index:10"><tr><th>Pair</th><th>Type</th><th>Entry Prices</th><th>Exit Prices</th><th>Position Size</th><th>Opened</th><th>Closed</th><th>Days Held</th><th class="mono-data">Capital Gains</th><th class="mono-data">Net Dividends</th><th class="mono-data">Net P&amp;L</th><th>Return %</th><th>Notes</th></tr></thead><tbody></tbody></table>
+<div id="historySummary" style="display:flex;gap:15px;margin-bottom:15px;flex-wrap:wrap"></div>
+<div style="display:flex;gap:6px;margin-bottom:15px;flex-wrap:wrap;align-items:center">
+<span style="font-size:9px;font-weight:900;color:var(--subtext);text-transform:uppercase;margin-right:4px">TYPE:</span>
+<button class="filter-pill active" onclick="histFilterType('all',this)">All</button>
+<button class="filter-pill" onclick="histFilterType('FULL',this)">Full</button>
+<button class="filter-pill" onclick="histFilterType('PARTIAL',this)">Partial</button>
+<span style="width:1px;height:16px;background:var(--border);margin:0 8px"></span>
+<span style="font-size:9px;font-weight:900;color:var(--subtext);text-transform:uppercase;margin-right:4px">SORT:</span>
+<button class="filter-pill" onclick="histSort('date')">Date</button>
+<button class="filter-pill" onclick="histSort('pnl')">PnL</button>
+<button class="filter-pill" onclick="histSort('hold')">Hold</button>
+<button class="filter-pill" onclick="histSort('return')">Return%</button>
+</div>
+<div style="overflow-x:auto;max-height:calc(100vh - 280px);overflow-y:auto;position:relative">
+<table id="historyTable"><thead style="position:sticky;top:0;z-index:10"><tr><th>Pair</th><th>Type</th><th>Reason</th><th>Entry</th><th>Exit</th><th>Size</th><th>Opened</th><th>Closed</th><th>Hold</th><th class="mono-data">Cap Gains</th><th class="mono-data">Net Div</th><th class="mono-data">Net P&amp;L</th><th>Return</th><th>vs Target</th><th>Notes</th></tr></thead><tbody></tbody></table>
 </div>
 </div>
 <div id="histJournalSection" style="display:none">
@@ -1429,40 +1469,135 @@ function tab(t,el){document.querySelectorAll('.tab-content').forEach(x=>x.classL
 function openModal(id,tA,tB,exitParams){activeId=id;window._pendingExitParams=exitParams||null;document.getElementById('modalTitle').innerText=id;document.getElementById('lblA').innerText=(tA||"PRICE A")+" PRICE";document.getElementById('lblB').innerText=(tB||"PRICE B")+" PRICE";document.getElementById('pA').value="";document.getElementById('pB').value="";document.getElementById('sA').value="0";document.getElementById('sB').value="0";var epInfo=document.getElementById('exitParamsInfo');if(epInfo){if(exitParams&&exitParams.targetExitZ){epInfo.style.display='block';epInfo.innerHTML='<span style="color:var(--low);font-weight:900">Exit targets will be stamped:</span> Exit Z: '+parseFloat(exitParams.targetExitZ).toFixed(1)+'σ · Profit capture: '+(exitParams.profitCapturePct||'—')+'% · Max hold: '+(exitParams.maxHoldDays||'—')+'d';}else{epInfo.style.display='none';}}document.getElementById('entryModal').style.display='block';}
 function closeModal(){document.getElementById('entryModal').style.display='none';}
 async function doSubmit(){try{var params={id:activeId,priceA:document.getElementById('pA').value,priceB:document.getElementById('pB').value,sizeA:document.getElementById('sA').value,sizeB:document.getElementById('sB').value};var ep=window._pendingExitParams;if(ep){if(ep.targetExitZ)params.targetExitZ=ep.targetExitZ;if(ep.profitCapturePct)params.profitCapturePct=ep.profitCapturePct;if(ep.partialAtPct)params.partialAtPct=ep.partialAtPct;if(ep.sourcePortfolio)params.sourcePortfolio=ep.sourcePortfolio;if(ep.maxHoldDays)params.maxHoldDays=ep.maxHoldDays;}window._pendingExitParams=null;await apiGet("saveTrade",params);closeModal();refreshData();}catch(e){alert("Failed to save.");}}
-var closeTargetId='',closeCardId='',closeTickerA='',closeTickerB='';
-function openCloseModal(id,cid,tA,tB,pA,pB,sA,sB,costA,costB){closeTargetId=id;closeCardId=cid;closeTickerA=tA||'LEG A';closeTickerB=tB||'LEG B';
-document.getElementById('closePairLabel').innerText=id;
-document.getElementById('closeLegALabel').innerText=tA||'LEG A';
-document.getElementById('closeLegBLabel').innerText=tB||'LEG B';
-var sAn=parseFloat(sA)||0,sBn=parseFloat(sB)||0;
-var legADir=sAn>=0?'LONG':'SHORT',legBDir=sBn>=0?'LONG':'SHORT';
-var legAClr=sAn>=0?'var(--low)':'var(--high)',legBClr=sBn>=0?'var(--low)':'var(--high)';
-document.getElementById('closeLegAInfo').innerHTML='<span style="color:'+legAClr+';font-size:9px;font-weight:900">'+legADir+'</span> '+Math.abs(sAn)+' @ $'+(parseFloat(costA)||0).toFixed(2)+'<br><span style="color:var(--subtext);font-size:10px">Now: $'+(parseFloat(pA)||0).toFixed(2)+'</span>';
-document.getElementById('closeLegBInfo').innerHTML='<span style="color:'+legBClr+';font-size:9px;font-weight:900">'+legBDir+'</span> '+Math.abs(sBn)+' @ $'+(parseFloat(costB)||0).toFixed(2)+'<br><span style="color:var(--subtext);font-size:10px">Now: $'+(parseFloat(pB)||0).toFixed(2)+'</span>';
-document.getElementById('closeFullLblA').innerText=(tA||'A')+' EXIT PRICE';
-document.getElementById('closeFullLblB').innerText=(tB||'B')+' EXIT PRICE';
-document.getElementById('closePartialLblA').innerText='REDUCE '+(tA||'A');
-document.getElementById('closePartialLblB').innerText='REDUCE '+(tB||'B');
-document.getElementById('closeMaxA').innerText='Max: '+Math.abs(sAn)+' shares';
-document.getElementById('closeMaxB').innerText='Max: '+Math.abs(sBn)+' shares';
-document.getElementById('closePartialPriceLblA').innerText=(tA||'A')+' EXIT PRICE';
-document.getElementById('closePartialPriceLblB').innerText=(tB||'B')+' EXIT PRICE';
-document.getElementById('closeTypeChoices').style.display='block';document.getElementById('partialInputs').style.display='none';document.getElementById('fullCloseInputs').style.display='none';
-document.getElementById('reduceA').value='0';document.getElementById('reduceB').value='0';
-document.getElementById('closeFullPriceA').value='';document.getElementById('closeFullPriceB').value='';
-document.getElementById('closePartialPriceA').value='';document.getElementById('closePartialPriceB').value='';
-document.getElementById('closeTypeModal').style.display='block';}
-function closeCloseModal(){document.getElementById('closeTypeModal').style.display='none';}
-function showFullCloseInputs(){document.getElementById('closeTypeChoices').style.display='none';document.getElementById('fullCloseInputs').style.display='block';}
-async function doFullClose(){var epA=document.getElementById('closeFullPriceA').value.trim();var epB=document.getElementById('closeFullPriceB').value.trim();closeCloseModal();var c=document.getElementById(closeCardId);if(c)c.style.opacity="0.5";try{var params={id:closeTargetId};if(epA)params.exitPriceA=epA;if(epB)params.exitPriceB=epB;await apiGet("closeTrade",params);refreshData();}catch(e){if(c)c.style.opacity="1";alert("Failed to close trade.");}}
-function showPartialInputs(){document.getElementById('closeTypeChoices').style.display='none';document.getElementById('partialInputs').style.display='block';}
-async function doPartialClose(){var rA=document.getElementById('reduceA').value||0;var rB=document.getElementById('reduceB').value||0;var epA=document.getElementById('closePartialPriceA').value.trim();var epB=document.getElementById('closePartialPriceB').value.trim();closeCloseModal();var c=document.getElementById(closeCardId);if(c)c.style.opacity="0.5";try{var params={id:closeTargetId,reduceA:rA,reduceB:rB};if(epA)params.exitPriceA=epA;if(epB)params.exitPriceB=epB;await apiGet("partialClose",params);refreshData();}catch(e){if(c)c.style.opacity="1";alert("Failed to partial close.");}}
+// ── UNIFIED MANAGE POSITION MODAL ──
+var _mg={id:'',cardId:'',tA:'',tB:'',pA:0,pB:0,sA:0,sB:0,costA:0,costB:0,paidDiv:0,rcvdDiv:0,reason:''};
+var _mgReasons=['Target Hit','Time Stop','Stop Loss','Manual','Thesis Changed'];
+function openManageModal(id,cid,tA,tB,pA,pB,sA,sB,costA,costB,paidDiv,rcvdDiv,tab){
+_mg={id:id,cardId:cid,tA:tA||'LEG A',tB:tB||'LEG B',pA:parseFloat(pA)||0,pB:parseFloat(pB)||0,sA:parseFloat(sA)||0,sB:parseFloat(sB)||0,costA:parseFloat(costA)||0,costB:parseFloat(costB)||0,paidDiv:parseFloat(paidDiv)||0,rcvdDiv:parseFloat(rcvdDiv)||0,reason:''};
+document.getElementById('mgPairLabel').innerText=id;
+var legADir=_mg.sA>=0?'LONG':'SHORT',legBDir=_mg.sB>=0?'LONG':'SHORT';
+var legAClr=_mg.sA>=0?'var(--low)':'var(--high)',legBClr=_mg.sB>=0?'var(--low)':'var(--high)';
+document.getElementById('mgLegALabel').innerText=_mg.tA;
+document.getElementById('mgLegBLabel').innerText=_mg.tB;
+document.getElementById('mgLegAInfo').innerHTML='<span style="color:'+legAClr+';font-size:9px;font-weight:900">'+legADir+'</span> '+Math.abs(_mg.sA)+' @ $'+_mg.costA.toFixed(2)+'<br><span style="color:var(--subtext);font-size:10px">Now: $'+_mg.pA.toFixed(2)+'</span>';
+document.getElementById('mgLegBInfo').innerHTML='<span style="color:'+legBClr+';font-size:9px;font-weight:900">'+legBDir+'</span> '+Math.abs(_mg.sB)+' @ $'+_mg.costB.toFixed(2)+'<br><span style="color:var(--subtext);font-size:10px">Now: $'+_mg.pB.toFixed(2)+'</span>';
+// Add tab labels
+document.getElementById('mgAddLblA').innerText=_mg.tA+' PRICE';document.getElementById('mgAddLblB').innerText=_mg.tB+' PRICE';
+document.getElementById('mgReduceLblA').innerText='REDUCE '+_mg.tA;document.getElementById('mgReduceLblB').innerText='REDUCE '+_mg.tB;
+document.getElementById('mgMaxA').innerText='Max: '+Math.abs(_mg.sA)+' shares';document.getElementById('mgMaxB').innerText='Max: '+Math.abs(_mg.sB)+' shares';
+document.getElementById('mgReducePriceLblA').innerText=_mg.tA+' EXIT';document.getElementById('mgReducePriceLblB').innerText=_mg.tB+' EXIT';
+document.getElementById('mgClosePriceLblA').innerText=_mg.tA+' EXIT';document.getElementById('mgClosePriceLblB').innerText=_mg.tB+' EXIT';
+// Reset inputs
+document.getElementById('mgAddPriceA').value='';document.getElementById('mgAddPriceB').value='';
+document.getElementById('mgAddSizeA').value='0';document.getElementById('mgAddSizeB').value='0';
+document.getElementById('mgReduceA').value='0';document.getElementById('mgReduceB').value='0';
+document.getElementById('mgReducePriceA').value='';document.getElementById('mgReducePriceB').value='';
+document.getElementById('mgClosePriceA').value='';document.getElementById('mgClosePriceB').value='';
+document.getElementById('mgPnlPreview').style.display='none';document.getElementById('mgClosePnlPreview').style.display='none';
+// Render reason pills
+mgRenderReasonPills('mgReduceReasonPills');mgRenderReasonPills('mgCloseReasonPills');
+mgSwitchTab(tab||'add');
+document.getElementById('manageModal').style.display='block';
+}
+function mgRenderReasonPills(containerId){var h='';_mgReasons.forEach(function(r){h+='<button onclick="mgPickReason(this,\''+containerId+'\')" data-reason="'+r+'" style="padding:6px 12px;border-radius:6px;border:1px solid var(--border);background:transparent;color:var(--subtext);font-size:9px;font-weight:900;cursor:pointer;text-transform:uppercase;transition:.15s">'+r+'</button>';});document.getElementById(containerId).innerHTML=h;}
+function mgPickReason(btn,containerId){var pills=document.getElementById(containerId).querySelectorAll('button');pills.forEach(function(p){p.style.background='transparent';p.style.color='var(--subtext)';p.style.borderColor='var(--border)';});if(_mg.reason===btn.getAttribute('data-reason')){_mg.reason='';return;}
+_mg.reason=btn.getAttribute('data-reason');btn.style.background='var(--accent-10)';btn.style.color='var(--accent)';btn.style.borderColor='var(--accent)';}
+function closeManageModal(){document.getElementById('manageModal').style.display='none';}
+// Backwards-compatible alias for alert tray and other callers
+function openCloseModal(id,cid,tA,tB,pA,pB,sA,sB,costA,costB,paidDiv,rcvdDiv){openManageModal(id,cid,tA,tB,pA,pB,sA,sB,costA,costB,paidDiv,rcvdDiv,'close');}
+function mgSwitchTab(t){['add','reduce','close'].forEach(function(x){document.getElementById('mgTab'+x.charAt(0).toUpperCase()+x.slice(1)).style.background=x===t?'var(--accent-10)':'var(--card)';document.getElementById('mgTab'+x.charAt(0).toUpperCase()+x.slice(1)).style.color=x===t?'var(--accent)':'var(--subtext)';document.getElementById('mg'+x.charAt(0).toUpperCase()+x.slice(1)+'Panel').style.display=x===t?'block':'none';});}
+function mgUpdatePnlPreview(){
+var rA=Math.abs(parseFloat(document.getElementById('mgReduceA').value)||0);
+var rB=Math.abs(parseFloat(document.getElementById('mgReduceB').value)||0);
+if(rA===0&&rB===0){document.getElementById('mgPnlPreview').style.display='none';return;}
+var epA=parseFloat(document.getElementById('mgReducePriceA').value)||_mg.pA;
+var epB=parseFloat(document.getElementById('mgReducePriceB').value)||_mg.pB;
+var signA=_mg.sA>=0?1:-1,signB=_mg.sB>=0?1:-1;
+var clA=Math.min(rA,Math.abs(_mg.sA)),clB=Math.min(rB,Math.abs(_mg.sB));
+var cg=((epA-_mg.costA)*(clA*signA))+((epB-_mg.costB)*(clB*signB));
+var ratA=Math.abs(_mg.sA)>0?clA/Math.abs(_mg.sA):1,ratB=Math.abs(_mg.sB)>0?clB/Math.abs(_mg.sB):1;
+var dr=(ratA+ratB)/2;var pd=Math.round(_mg.paidDiv*dr*100)/100,rd=Math.round(_mg.rcvdDiv*dr*100)/100;
+var net=cg+rd-pd;var clr=net>=0?'var(--low)':'var(--high)';
+document.getElementById('mgPnlPreview').style.display='block';
+document.getElementById('mgPnlPreview').innerHTML='<div style="font-size:9px;font-weight:900;color:var(--subtext);text-transform:uppercase;margin-bottom:8px">PnL Preview</div><div style="display:flex;justify-content:space-between"><span style="color:var(--subtext)">Cap Gains</span><span style="color:'+(cg>=0?'var(--low)':'var(--high)')+'">'+(cg>=0?'+':'')+cg.toFixed(2)+'$</span></div><div style="display:flex;justify-content:space-between"><span style="color:var(--subtext)">Net Div</span><span style="color:'+((rd-pd)>=0?'var(--low)':'var(--high)')+'">'+(rd-pd>=0?'+':'')+(rd-pd).toFixed(2)+'$</span></div><div style="border-top:1px solid var(--border);margin-top:6px;padding-top:6px;display:flex;justify-content:space-between;font-weight:900"><span style="color:var(--text)">Net PnL</span><span style="color:'+clr+'">'+(net>=0?'+':'')+net.toFixed(2)+'$</span></div>';}
+function mgUpdateClosePnlPreview(){
+var epA=parseFloat(document.getElementById('mgClosePriceA').value)||_mg.pA;
+var epB=parseFloat(document.getElementById('mgClosePriceB').value)||_mg.pB;
+var cg=((epA-_mg.costA)*_mg.sA)+((epB-_mg.costB)*_mg.sB);
+var nd=_mg.rcvdDiv-_mg.paidDiv;var net=cg+nd;var clr=net>=0?'var(--low)':'var(--high)';
+document.getElementById('mgClosePnlPreview').style.display='block';
+document.getElementById('mgClosePnlPreview').innerHTML='<div style="font-size:9px;font-weight:900;color:var(--subtext);text-transform:uppercase;margin-bottom:8px">PnL Preview</div><div style="display:flex;justify-content:space-between"><span style="color:var(--subtext)">Cap Gains</span><span style="color:'+(cg>=0?'var(--low)':'var(--high)')+'">'+(cg>=0?'+':'')+cg.toFixed(2)+'$</span></div><div style="display:flex;justify-content:space-between"><span style="color:var(--subtext)">Net Div</span><span style="color:'+(nd>=0?'var(--low)':'var(--high)')+'">'+(nd>=0?'+':'')+nd.toFixed(2)+'$</span></div><div style="border-top:1px solid var(--border);margin-top:6px;padding-top:6px;display:flex;justify-content:space-between;font-weight:900"><span style="color:var(--text)">Net PnL</span><span style="color:'+clr+'">'+(net>=0?'+':'')+net.toFixed(2)+'$</span></div>';}
+async function mgDoAdd(){closeManageModal();try{await apiGet("saveTrade",{id:_mg.id,priceA:document.getElementById('mgAddPriceA').value,priceB:document.getElementById('mgAddPriceB').value,sizeA:document.getElementById('mgAddSizeA').value,sizeB:document.getElementById('mgAddSizeB').value});refreshData();}catch(e){alert("Failed to add shares.");}}
+async function mgDoReduce(){var rA=document.getElementById('mgReduceA').value||0;var rB=document.getElementById('mgReduceB').value||0;var epA=document.getElementById('mgReducePriceA').value.trim();var epB=document.getElementById('mgReducePriceB').value.trim();closeManageModal();var c=document.getElementById(_mg.cardId);if(c)c.style.opacity="0.5";try{var params={id:_mg.id,reduceA:rA,reduceB:rB};if(epA)params.exitPriceA=epA;if(epB)params.exitPriceB=epB;if(_mg.reason)params.closeReason=_mg.reason;await apiGet("partialClose",params);refreshData();}catch(e){if(c)c.style.opacity="1";alert("Failed to reduce position.");}}
+async function mgDoClose(){var epA=document.getElementById('mgClosePriceA').value.trim();var epB=document.getElementById('mgClosePriceB').value.trim();closeManageModal();var c=document.getElementById(_mg.cardId);if(c)c.style.opacity="0.5";try{var params={id:_mg.id};if(epA)params.exitPriceA=epA;if(epB)params.exitPriceB=epB;if(_mg.reason)params.closeReason=_mg.reason;await apiGet("closeTrade",params);refreshData();}catch(e){if(c)c.style.opacity="1";alert("Failed to close trade.");}}
 var divTargetId='',divType='';
 function openDivModal(id,type){divTargetId=id;divType=type;document.getElementById('divAmount').value='';var btn=document.getElementById('divSubmitBtn');if(type==='paid'){document.getElementById('divModalTitle').innerText='Add Paid Dividend';document.getElementById('divModalSub').innerText='Short leg dividend owed — enters as cost';btn.className='div-submit paid';btn.innerText='Record Paid Div';}else{document.getElementById('divModalTitle').innerText='Add Received Dividend';document.getElementById('divModalSub').innerText='Long leg dividend received — enters as income';btn.className='div-submit rcvd';btn.innerText='Record Received Div';}document.getElementById('divModal').style.display='flex';}
 function closeDivModal(){document.getElementById('divModal').style.display='none';}
 async function submitDividend(){var amt=parseFloat(document.getElementById('divAmount').value)||0;if(amt<=0){alert('Enter a positive dollar amount.');return;}closeDivModal();try{await apiGet('addDividend',{id:divTargetId,type:divType,amount:amt});refreshData();}catch(e){alert('Failed to record dividend.');}}
 var journalRowIdx=0;
-function openJournal(rowIdx,id,pnl,openDate,closeDate,holdDays,entryZ,exitZ,capGains,netDiv,note){journalRowIdx=rowIdx;document.getElementById('journalPairId').innerText=id;var pnlF=parseFloat(pnl)||0;var pnlClr=pnlF>=0?'var(--low)':'var(--high)';var cgF=parseFloat(capGains)||0;var cgClr=cgF>=0?'var(--low)':'var(--high)';var ndF=parseFloat(netDiv)||0;var ndClr=ndF>=0?'var(--low)':'var(--high)';document.getElementById('journalDetails').innerHTML='<div class="journal-detail-item"><div class="journal-detail-label">Net PnL</div><div class="journal-detail-val" style="color:'+pnlClr+'">'+(pnlF>=0?'+':'')+pnl+'$</div></div>'+'<div class="journal-detail-item"><div class="journal-detail-label">Cap Gains</div><div class="journal-detail-val" style="color:'+cgClr+'">'+(cgF>=0?'+':'')+capGains+'$</div></div>'+'<div class="journal-detail-item"><div class="journal-detail-label">Net Div</div><div class="journal-detail-val" style="color:'+ndClr+'">'+(ndF>=0?'+':'')+netDiv+'$</div></div>'+'<div class="journal-detail-item"><div class="journal-detail-label">Hold</div><div class="journal-detail-val">'+holdDays+'d</div></div>'+'<div class="journal-detail-item"><div class="journal-detail-label">Entry → Exit</div><div class="journal-detail-val">'+openDate+' → '+closeDate+'</div></div>'+'<div class="journal-detail-item"><div class="journal-detail-label">Z-Score</div><div class="journal-detail-val">'+parseFloat(entryZ).toFixed(2)+'σ → '+parseFloat(exitZ).toFixed(2)+'σ</div></div>';document.getElementById('journalNote').value=note||'';document.getElementById('journalSaved').classList.remove('show');document.getElementById('journalOverlay').classList.add('open');document.getElementById('journalDrawer').classList.add('open');}
+function openJournal(rowIdx,id,pnl,openDate,closeDate,holdDays,entryZ,exitZ,capGains,netDiv,note,closeReason,targetPnL,paidDiv,rcvdDiv,tradeGroupId){
+journalRowIdx=rowIdx;document.getElementById('journalPairId').innerText=id;
+var pnlF=parseFloat(pnl)||0;var pnlClr=pnlF>=0?'var(--low)':'var(--high)';
+var cgF=parseFloat(capGains)||0;var cgClr=cgF>=0?'var(--low)':'var(--high)';
+var ndF=parseFloat(netDiv)||0;var ndClr=ndF>=0?'var(--low)':'var(--high)';
+var pdF=parseFloat(paidDiv)||0;var rdF=parseFloat(rcvdDiv)||0;
+var tpF=parseFloat(targetPnL)||0;
+var html='';
+// Close reason badge
+if(closeReason){var rClr='var(--subtext)';if(closeReason==='Stop Loss')rClr='var(--high)';else if(closeReason==='Target Hit')rClr='var(--low)';else if(closeReason==='Time Stop')rClr='var(--yellow)';
+html+='<div style="margin-bottom:12px"><span style="padding:4px 10px;border-radius:6px;border:1px solid '+rClr+';color:'+rClr+';font-size:9px;font-weight:900;text-transform:uppercase">'+closeReason+'</span></div>';}
+// Main metrics grid
+html+='<div class="journal-detail-item"><div class="journal-detail-label">Net PnL</div><div class="journal-detail-val" style="color:'+pnlClr+'">'+(pnlF>=0?'+':'')+pnl+'$</div></div>';
+html+='<div class="journal-detail-item"><div class="journal-detail-label">Cap Gains</div><div class="journal-detail-val" style="color:'+cgClr+'">'+(cgF>=0?'+':'')+capGains+'$</div></div>';
+// Per-leg dividend breakdown
+html+='<div class="journal-detail-item"><div class="journal-detail-label">Div Paid (Short)</div><div class="journal-detail-val" style="color:var(--high)">-'+pdF.toFixed(2)+'$</div></div>';
+html+='<div class="journal-detail-item"><div class="journal-detail-label">Div Received (Long)</div><div class="journal-detail-val" style="color:var(--low)">+'+rdF.toFixed(2)+'$</div></div>';
+html+='<div class="journal-detail-item"><div class="journal-detail-label">Net Dividends</div><div class="journal-detail-val" style="color:'+ndClr+'">'+(ndF>=0?'+':'')+netDiv+'$</div></div>';
+html+='<div class="journal-detail-item"><div class="journal-detail-label">Hold</div><div class="journal-detail-val">'+holdDays+'d</div></div>';
+html+='<div class="journal-detail-item"><div class="journal-detail-label">Entry → Exit</div><div class="journal-detail-val">'+openDate+' → '+closeDate+'</div></div>';
+html+='<div class="journal-detail-item"><div class="journal-detail-label">Z-Score</div><div class="journal-detail-val">'+parseFloat(entryZ).toFixed(2)+'σ → '+parseFloat(exitZ).toFixed(2)+'σ</div></div>';
+// Target vs actual gauge
+if(tpF>0){var tpct=Math.round((pnlF/tpF)*100);var tClr=tpct>=100?'var(--low)':tpct>=50?'var(--yellow)':'var(--high)';
+html+='<div style="grid-column:1/-1;margin-top:8px;padding:10px;background:var(--white-03);border-radius:8px;border:1px solid var(--border)">';
+html+='<div style="font-size:9px;font-weight:900;color:var(--subtext);text-transform:uppercase;margin-bottom:6px">Target Performance</div>';
+html+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px"><span style="color:var(--text);font-size:12px;font-weight:900">'+tpct+'% captured</span><span style="color:var(--subtext);font-size:10px">$'+pnlF.toFixed(2)+' / $'+tpF.toFixed(2)+'</span></div>';
+html+='<div style="height:6px;background:rgba(255,255,255,.06);border-radius:3px"><div style="height:100%;width:'+Math.min(100,Math.max(0,tpct))+'%;background:'+tClr+';border-radius:3px"></div></div>';
+html+='</div>';}
+// Trade event timeline placeholder
+html+='<div id="journalTimeline" style="grid-column:1/-1;margin-top:12px"></div>';
+document.getElementById('journalDetails').innerHTML=html;
+document.getElementById('journalNote').value=note||'';
+document.getElementById('journalSaved').classList.remove('show');
+document.getElementById('journalOverlay').classList.add('open');
+document.getElementById('journalDrawer').classList.add('open');
+// Load trade events timeline
+if(tradeGroupId)loadJournalTimeline(tradeGroupId);
+}
+async function loadJournalTimeline(groupId){
+var el=document.getElementById('journalTimeline');if(!el)return;
+el.innerHTML='<div style="font-size:9px;color:var(--subtext)">Loading timeline...</div>';
+try{var data=await apiGet('getTradeEvents',{groupId:groupId});
+if(data&&data.ok&&data.events&&data.events.length>0){
+var h='<div style="font-size:9px;font-weight:900;color:var(--subtext);text-transform:uppercase;margin-bottom:8px">Trade Timeline</div>';
+data.events.forEach(function(ev){
+var evClr='var(--subtext)';var evIcon='';
+if(ev.eventType==='OPEN'){evClr='var(--accent)';evIcon='&#9654;';}
+else if(ev.eventType==='SCALE_IN'){evClr='var(--accent)';evIcon='&#43;';}
+else if(ev.eventType==='DIV_PAID'){evClr='var(--high)';evIcon='&#9660;';}
+else if(ev.eventType==='DIV_RECEIVED'){evClr='var(--low)';evIcon='&#9650;';}
+else if(ev.eventType==='PARTIAL_CLOSE'){evClr='var(--yellow)';evIcon='&#9674;';}
+else if(ev.eventType==='FULL_CLOSE'){evClr='var(--high)';evIcon='&#9632;';}
+var ts=ev.timestamp?new Date(ev.timestamp).toLocaleDateString():'';
+var priceInfo=(ev.priceA&&ev.priceB)?'$'+ev.priceA.toFixed(2)+' / $'+ev.priceB.toFixed(2):'';
+var sizeInfo=(ev.sizeA||ev.sizeB)?ev.sizeA+' / '+ev.sizeB:'';
+h+='<div style="display:flex;gap:8px;align-items:flex-start;padding:6px 0;border-bottom:1px solid rgba(255,255,255,.03)">';
+h+='<div style="color:'+evClr+';font-size:14px;min-width:16px;text-align:center">'+evIcon+'</div>';
+h+='<div style="flex:1"><div style="font-size:10px;font-weight:900;color:'+evClr+'">'+ev.eventType.replace(/_/g,' ')+'</div>';
+if(priceInfo)h+='<div style="font-size:9px;color:var(--subtext);font-family:JetBrains Mono">'+priceInfo+(sizeInfo?' · '+sizeInfo:'')+'</div>';
+if(ev.details)h+='<div style="font-size:9px;color:var(--subtext)">'+ev.details+'</div>';
+h+='</div><div style="font-size:9px;color:var(--subtext);white-space:nowrap">'+ts+'</div></div>';});
+el.innerHTML=h;}else{el.innerHTML='';}}catch(e){el.innerHTML='';}}
+
 function closeJournal(){document.getElementById('journalOverlay').classList.remove('open');document.getElementById('journalDrawer').classList.remove('open');}
 async function saveJournalNote(){var btn=document.getElementById('journalSaveBtn');var note=document.getElementById('journalNote').value;btn.disabled=true;btn.innerText='SAVING...';try{await apiGet('saveNote',{row:journalRowIdx,note:note});document.getElementById('journalSaved').classList.add('show');btn.innerText='SAVE NOTE';btn.disabled=false;var noteBtn=document.getElementById('nbtn-'+journalRowIdx);if(noteBtn){noteBtn.innerText=note?'Edit Note':'Add Note';noteBtn.className=note?'note-btn has-note':'note-btn';}}catch(e){btn.innerText='SAVE NOTE';btn.disabled=false;alert('Failed to save note.');}}
 async function doClearHistory(){if(!confirm('Clear all history? This cannot be undone.'))return;try{await apiGet("clearHistory");refreshData();}catch(e){alert('Failed to clear history.');}}
@@ -1879,16 +2014,74 @@ if(p.maxHoldDays!=null) exitPanel+=' \u00B7 Max hold: '+p.maxHoldDays+'d';
 if(p.sourcePortfolio) exitPanel+=' \u00B7 Source: '+p.sourcePortfolio;
 exitPanel+='</div>';
 }
-ph+='<div class="trade-card" id="card-'+i+'">'+'<div style="display:flex;justify-content:space-between;align-items:flex-start"><div><div style="font-weight:900;font-size:22px;color:var(--accent)">'+p.id+'</div><div style="display:flex;gap:6px;align-items:center;margin-top:4px"><div style="font-size:12px;color:var(--subtext);font-weight:700">Spread: $'+p.spr+'</div><div class="entry-indicator">ENTRY: '+ez.toFixed(2)+'σ</div></div></div><div style="font-family:\'JetBrains Mono\';font-weight:900;font-size:22px;color:'+c+'">'+(p.dollarPnL>=0?'+':'')+p.dollarPnL+'$</div></div>'+'<div class="target-ribbon"><div class="target-row"><div class="target-desc">CURRENT SPREAD</div><div class="target-val">$'+p.spr+' (Diff)</div></div><div class="target-row"><div class="target-desc">TARGET MEAN</div>'+tm+'</div></div>'+'<div style="display:flex;gap:12px;margin-top:20px;margin-bottom:20px"><div style="flex:1;padding:12px;background:rgba(255,255,255,.03);border-radius:10px;border:1px solid var(--border)"><div style="font-size:10px;color:var(--accent);font-weight:900;text-transform:uppercase;margin-bottom:6px">'+tA+'</div><div style="font-family:\'JetBrains Mono\';font-size:15px;font-weight:900;color:white">$'+p.pA+'</div><div style="font-size:10px;color:var(--subtext);margin-top:4px">Qty: '+p.sA+'</div></div><div style="flex:1;padding:12px;background:rgba(255,255,255,.03);border-radius:10px;border:1px solid var(--border)"><div style="font-size:10px;color:var(--accent);font-weight:900;text-transform:uppercase;margin-bottom:6px">'+tB+'</div><div style="font-family:\'JetBrains Mono\';font-size:15px;font-weight:900;color:white">$'+p.pB+'</div><div style="font-size:10px;color:var(--subtext);margin-top:4px">Qty: '+p.sB+'</div></div></div>'+'<div class="div-flow-row"><div class="div-flow-item"><div class="div-flow-label" style="color:var(--subtext)">Capital Gains</div><div class="div-flow-val" style="color:'+cgClr+'">'+(cg>=0?'+':'')+cg.toFixed(2)+'$</div></div><div class="div-flow-item"><div class="div-flow-label" style="color:var(--high)">Dividends Paid</div><div class="div-flow-val" style="color:var(--high)">-'+pd.toFixed(2)+'$</div><button class="div-btn paid" onclick="openDivModal(\''+si+'\',\'paid\')" style="margin-top:4px">+ Add</button></div><div class="div-flow-item"><div class="div-flow-label" style="color:var(--low)">Dividends Received</div><div class="div-flow-val" style="color:var(--low)">+'+rd.toFixed(2)+'$</div><button class="div-btn rcvd" onclick="openDivModal(\''+si+'\',\'received\')" style="margin-top:4px">+ Add</button></div><div class="div-flow-item"><div class="div-flow-label" style="color:var(--subtext)">Net Dividends</div><div class="div-flow-val" style="color:'+ndClr+'">'+(nd>=0?'+':'')+nd.toFixed(2)+'$</div></div></div>'+exitPanel+'<div class="progress-container"><div class="progress-bar" style="width:'+prog+'%;background:'+c+'"></div></div>'+'<div class="tc-progress-label"><span>Total Distance: <span class="tc-val">'+p.centGoal+'&cent;</span></span><span style="color:'+c+'">Remaining: <span class="tc-val">'+p.centRem+'&cent;</span></span></div>'+'<div style="display:flex;justify-content:space-between;margin-top:20px"><button class="scale-btn" onclick="openModal(\''+si+'\',\''+sa+'\',\''+sb+'\')">Scale</button><button class="close-trade-btn" onclick="openCloseModal(\''+si+'\',\'card-'+i+'\',\''+sa+'\',\''+sb+'\',\''+p.livePriceA+'\',\''+p.livePriceB+'\',\''+p.sA+'\',\''+p.sB+'\',\''+p.pA+'\',\''+p.pB+'\')">Close</button></div></div>';});}
+ph+='<div class="trade-card" id="card-'+i+'">'+'<div style="display:flex;justify-content:space-between;align-items:flex-start"><div><div style="font-weight:900;font-size:22px;color:var(--accent)">'+p.id+'</div><div style="display:flex;gap:6px;align-items:center;margin-top:4px"><div style="font-size:12px;color:var(--subtext);font-weight:700">Spread: $'+p.spr+'</div><div class="entry-indicator">ENTRY: '+ez.toFixed(2)+'σ</div></div></div><div style="font-family:\'JetBrains Mono\';font-weight:900;font-size:22px;color:'+c+'">'+(p.dollarPnL>=0?'+':'')+p.dollarPnL+'$</div></div>'+'<div class="target-ribbon"><div class="target-row"><div class="target-desc">CURRENT SPREAD</div><div class="target-val">$'+p.spr+' (Diff)</div></div><div class="target-row"><div class="target-desc">TARGET MEAN</div>'+tm+'</div></div>'+'<div style="display:flex;gap:12px;margin-top:20px;margin-bottom:20px"><div style="flex:1;padding:12px;background:rgba(255,255,255,.03);border-radius:10px;border:1px solid var(--border)"><div style="font-size:10px;color:var(--accent);font-weight:900;text-transform:uppercase;margin-bottom:6px">'+tA+'</div><div style="font-family:\'JetBrains Mono\';font-size:15px;font-weight:900;color:white">$'+p.pA+'</div><div style="font-size:10px;color:var(--subtext);margin-top:4px">Qty: '+p.sA+'</div></div><div style="flex:1;padding:12px;background:rgba(255,255,255,.03);border-radius:10px;border:1px solid var(--border)"><div style="font-size:10px;color:var(--accent);font-weight:900;text-transform:uppercase;margin-bottom:6px">'+tB+'</div><div style="font-family:\'JetBrains Mono\';font-size:15px;font-weight:900;color:white">$'+p.pB+'</div><div style="font-size:10px;color:var(--subtext);margin-top:4px">Qty: '+p.sB+'</div></div></div>'+'<div class="div-flow-row"><div class="div-flow-item"><div class="div-flow-label" style="color:var(--subtext)">Capital Gains</div><div class="div-flow-val" style="color:'+cgClr+'">'+(cg>=0?'+':'')+cg.toFixed(2)+'$</div></div><div class="div-flow-item"><div class="div-flow-label" style="color:var(--high)">Dividends Paid</div><div class="div-flow-val" style="color:var(--high)">-'+pd.toFixed(2)+'$</div><button class="div-btn paid" onclick="openDivModal(\''+si+'\',\'paid\')" style="margin-top:4px">+ Add</button></div><div class="div-flow-item"><div class="div-flow-label" style="color:var(--low)">Dividends Received</div><div class="div-flow-val" style="color:var(--low)">+'+rd.toFixed(2)+'$</div><button class="div-btn rcvd" onclick="openDivModal(\''+si+'\',\'received\')" style="margin-top:4px">+ Add</button></div><div class="div-flow-item"><div class="div-flow-label" style="color:var(--subtext)">Net Dividends</div><div class="div-flow-val" style="color:'+ndClr+'">'+(nd>=0?'+':'')+nd.toFixed(2)+'$</div></div></div>'+exitPanel+'<div class="progress-container"><div class="progress-bar" style="width:'+prog+'%;background:'+c+'"></div></div>'+'<div class="tc-progress-label"><span>Total Distance: <span class="tc-val">'+p.centGoal+'&cent;</span></span><span style="color:'+c+'">Remaining: <span class="tc-val">'+p.centRem+'&cent;</span></span></div>'+(p.sparkline&&p.sparkline.length>1?'<div class="tc-sparkline"><div class="tc-sparkline-header"><span class="tc-sparkline-label">30-Day P&amp;L</span><span class="tc-sparkline-val" style="color:'+c+'">'+(p.dollarPnL>=0?'+':'')+p.dollarPnL+'$</span></div>'+buildSparklineSvg(p.sparkline,c==='var(--low)'?'#10b981':'#ef4444')+'</div>':'')+'<div style="display:flex;justify-content:space-between;margin-top:20px"><button class="scale-btn" onclick="openManageModal(\''+si+'\',\'card-'+i+'\',\''+sa+'\',\''+sb+'\',\''+p.livePriceA+'\',\''+p.livePriceB+'\',\''+p.sA+'\',\''+p.sB+'\',\''+p.pA+'\',\''+p.pB+'\',\''+p.paidDiv+'\',\''+p.rcvdDiv+'\',\'add\')">Manage</button><button class="close-trade-btn" onclick="openManageModal(\''+si+'\',\'card-'+i+'\',\''+sa+'\',\''+sb+'\',\''+p.livePriceA+'\',\''+p.livePriceB+'\',\''+p.sA+'\',\''+p.sB+'\',\''+p.pA+'\',\''+p.pB+'\',\''+p.paidDiv+'\',\''+p.rcvdDiv+'\',\'close\')">Close</button></div></div>';});}
 document.getElementById('portfolioGrid').innerHTML=ph;
 renderHealthBar(data.portfolioData);
 checkExitSignalsClient();
-var hd=data.historyData||[];
+window._historyData=data.historyData||[];renderHistory(window._historyData);}
+var _histTypeFilter='all',_histSortKey='date',_histSortAsc=false;
+function histFilterType(type,btn){_histTypeFilter=type;var pills=btn.parentElement.querySelectorAll('.filter-pill');pills.forEach(function(p){p.classList.remove('active');});btn.classList.add('active');renderHistory(window._historyData);}
+function histSort(key){if(_histSortKey===key)_histSortAsc=!_histSortAsc;else{_histSortKey=key;_histSortAsc=false;}renderHistory(window._historyData);}
+function renderHistory(hd){
+if(!hd)hd=[];
 var totalPnl=0,wins=0,losses=0;hd.forEach(function(h){var p=parseFloat(h.pnl)||0;totalPnl+=p;if(p>0)wins++;else if(p<0)losses++;});
 var wr=hd.length>0?((wins/hd.length)*100).toFixed(0):'0';
 var pnlClr=totalPnl>=0?'var(--low)':'var(--high)';var pnlSign=totalPnl>=0?'+':'';
 document.getElementById('historySummary').innerHTML='<div class="macro-pill"><span style="color:var(--accent)">TRADES</span><span class="mp-count" style="color:var(--accent)">'+hd.length+'</span></div><div class="macro-pill"><span style="color:'+pnlClr+'">TOTAL PNL</span><span class="mp-count" style="color:'+pnlClr+'">'+pnlSign+totalPnl.toFixed(2)+'$</span></div><div class="macro-pill"><span style="color:var(--low)">WINS</span><span class="mp-count" style="color:var(--low)">'+wins+'</span></div><div class="macro-pill"><span style="color:var(--high)">LOSSES</span><span class="mp-count" style="color:var(--high)">'+losses+'</span></div><div class="macro-pill"><span style="color:var(--subtext)">WIN RATE</span><span class="mp-count" style="color:var(--subtext)">'+wr+'%</span></div>';
-var hh='<tbody>';hd.forEach(function(h){var p=parseFloat(h.pnl)||0;var pc=p>=0?'var(--low)':'var(--high)';var rc=parseFloat(h.returnPct)||0;var typeClr=h.closeType==='PARTIAL'?'var(--yellow)':'var(--subtext)';var cg=parseFloat(h.capGains)||0;var cgc=cg>=0?'var(--low)':'var(--high)';var nd=parseFloat(h.netDiv)||0;var ndc=nd>=0?'var(--low)':'var(--high)';var ndStr=nd!==0?((nd>=0?'+':'')+nd.toFixed(2)+'$'):'—';var hn=String(h.note||'').replace(/'/g,"\\'").replace(/\n/g,'\\n');var nbCls=h.note?'note-btn has-note':'note-btn';var nbLbl=h.note?'Edit Note':'Add Note';hh+='<tr><td><div style="font-weight:900;color:var(--accent)">'+h.id+'</div><div style="font-size:10px;color:var(--subtext);margin-top:2px">Z: '+h.entryZ.toFixed(2)+'σ → '+h.exitZ.toFixed(2)+'σ</div></td><td><div class="action-tag" style="color:'+typeClr+';border-color:'+typeClr+';font-size:8px">'+h.closeType+'</div></td><td><div class="mono-data" style="font-size:11px">$'+h.costA+' / $'+h.costB+'</div></td><td><div class="mono-data" style="font-size:11px">$'+h.exitPriceA+' / $'+h.exitPriceB+'</div></td><td><div class="mono-data" style="font-size:11px">'+h.sizeA+' / '+h.sizeB+'</div></td><td>'+h.openDate+'</td><td>'+h.closeDate+'</td><td>'+h.holdDays+'d</td><td><div class="mono-data" style="color:'+cgc+'">'+(cg>=0?'+':'')+cg.toFixed(2)+'$</div></td><td><div class="mono-data" style="color:'+ndc+'">'+ndStr+'</div></td><td><div class="mono-data" style="color:'+pc+';font-weight:900">'+(p>=0?'+':'')+h.pnl+'$</div></td><td><div class="mono-data" style="color:'+pc+'">'+(rc>=0?'+':'')+rc.toFixed(1)+'%</div></td><td><button class="'+nbCls+'" id="nbtn-'+h.rowIdx+'" onclick="openJournal('+h.rowIdx+',\''+h.id.replace(/'/g,"\\'")+'\',\''+h.pnl+'\',\''+h.openDate+'\',\''+h.closeDate+'\',\''+h.holdDays+'\',\''+h.entryZ+'\',\''+h.exitZ+'\',\''+h.capGains+'\',\''+h.netDiv+'\',\''+hn+'\')">'+nbLbl+'</button></td></tr>';});hh+='</tbody>';document.getElementById('historyTable').querySelector('tbody').outerHTML=hh;}
+// Filter
+var filtered=hd;
+if(_histTypeFilter!=='all')filtered=hd.filter(function(h){return h.closeType===_histTypeFilter;});
+// Sort
+var sorted=filtered.slice();
+sorted.sort(function(a,b){var v=0;if(_histSortKey==='pnl')v=(parseFloat(b.pnl)||0)-(parseFloat(a.pnl)||0);
+else if(_histSortKey==='hold')v=(b.holdDays||0)-(a.holdDays||0);
+else if(_histSortKey==='return')v=(parseFloat(b.returnPct)||0)-(parseFloat(a.returnPct)||0);
+else v=0; // date = default order from backend (already reverse chrono)
+if(_histSortAsc)v=-v;return v;});
+// Group by month for separators
+var hh='<tbody>';var lastMonth='';
+sorted.forEach(function(h){
+var closeMonth=h.closeDate&&h.closeDate!=='---'?h.closeDate.replace(/\/\d+$/,''):'';
+if(closeMonth&&closeMonth!==lastMonth){
+// Monthly separator row
+var monthTrades=sorted.filter(function(x){return x.closeDate&&x.closeDate.replace(/\/\d+$/,'')===closeMonth;});
+var monthPnl=0;monthTrades.forEach(function(x){monthPnl+=parseFloat(x.pnl)||0;});
+var mpClr=monthPnl>=0?'var(--low)':'var(--high)';
+hh+='<tr style="background:var(--bg)"><td colspan="15" style="padding:8px 16px;font-size:10px;font-weight:900;color:var(--subtext);text-transform:uppercase;letter-spacing:1px;border:none;background:var(--bg)"><span>'+closeMonth+'</span><span style="margin-left:12px;color:var(--accent)">'+monthTrades.length+' trades</span><span style="margin-left:12px;color:'+mpClr+'">'+(monthPnl>=0?'+':'')+monthPnl.toFixed(2)+'$</span></td></tr>';
+lastMonth=closeMonth;}
+var p=parseFloat(h.pnl)||0;var pc=p>=0?'var(--low)':'var(--high)';var rc=parseFloat(h.returnPct)||0;
+var typeClr=h.closeType==='PARTIAL'?'var(--yellow)':'var(--subtext)';
+var cg=parseFloat(h.capGains)||0;var cgc=cg>=0?'var(--low)':'var(--high)';
+var nd=parseFloat(h.netDiv)||0;var ndc=nd>=0?'var(--low)':'var(--high)';var ndStr=nd!==0?((nd>=0?'+':'')+nd.toFixed(2)+'$'):'—';
+// Hold days color
+var hdClr=h.holdDays<=7?'var(--low)':h.holdDays<=30?'var(--yellow)':'var(--high)';
+// Close reason badge
+var reasonBadge='';
+if(h.closeReason){var rClr='var(--subtext)';if(h.closeReason==='Stop Loss')rClr='var(--high)';else if(h.closeReason==='Target Hit')rClr='var(--low)';else if(h.closeReason==='Time Stop')rClr='var(--yellow)';
+reasonBadge='<div class="action-tag" style="color:'+rClr+';border-color:'+rClr+';font-size:7px;padding:2px 6px">'+h.closeReason+'</div>';}
+// Target vs actual
+var targetCell='—';
+if(h.targetPnL!=null&&h.targetPnL>0){var tpct=Math.round((p/h.targetPnL)*100);var tClr=tpct>=100?'var(--low)':tpct>=50?'var(--yellow)':'var(--high)';
+targetCell='<div class="mono-data" style="color:'+tClr+';font-size:10px">'+tpct+'%<span style="color:var(--subtext);font-weight:400"> of $'+h.targetPnL.toFixed(0)+'</span></div>';}
+// Trade group indicator
+var groupBadge='';if(h.tradeGroupId){var groupCount=sorted.filter(function(x){return x.tradeGroupId===h.tradeGroupId;}).length;if(groupCount>1)groupBadge='<div style="font-size:8px;color:var(--purple);margin-top:2px">'+groupCount+' linked</div>';}
+var hn=String(h.note||'').replace(/'/g,"\\'").replace(/\n/g,'\\n');var nbCls=h.note?'note-btn has-note':'note-btn';var nbLbl=h.note?'Edit Note':'Add Note';
+var hgid=String(h.tradeGroupId||'').replace(/'/g,"\\'");
+hh+='<tr><td><div style="font-weight:900;color:var(--accent)">'+h.id+'</div><div style="font-size:10px;color:var(--subtext);margin-top:2px">Z: '+h.entryZ.toFixed(2)+'σ → '+h.exitZ.toFixed(2)+'σ</div>'+groupBadge+'</td>';
+hh+='<td><div class="action-tag" style="color:'+typeClr+';border-color:'+typeClr+';font-size:8px">'+h.closeType+'</div></td>';
+hh+='<td>'+reasonBadge+'</td>';
+hh+='<td><div class="mono-data" style="font-size:11px">$'+h.costA+' / $'+h.costB+'</div></td>';
+hh+='<td><div class="mono-data" style="font-size:11px">$'+h.exitPriceA+' / $'+h.exitPriceB+'</div></td>';
+hh+='<td><div class="mono-data" style="font-size:11px">'+h.sizeA+' / '+h.sizeB+'</div></td>';
+hh+='<td>'+h.openDate+'</td><td>'+h.closeDate+'</td>';
+hh+='<td><span style="color:'+hdClr+';font-weight:900">'+h.holdDays+'d</span></td>';
+hh+='<td><div class="mono-data" style="color:'+cgc+'">'+(cg>=0?'+':'')+cg.toFixed(2)+'$</div></td>';
+hh+='<td><div class="mono-data" style="color:'+ndc+'">'+ndStr+'</div></td>';
+hh+='<td><div class="mono-data" style="color:'+pc+';font-weight:900">'+(p>=0?'+':'')+h.pnl+'$</div></td>';
+hh+='<td><div class="mono-data" style="color:'+pc+'">'+(rc>=0?'+':'')+rc.toFixed(1)+'%</div></td>';
+hh+='<td>'+targetCell+'</td>';
+hh+='<td><button class="'+nbCls+'" id="nbtn-'+h.rowIdx+'" onclick="openJournal('+h.rowIdx+',\''+h.id.replace(/'/g,"\\'")+'\',\''+h.pnl+'\',\''+h.openDate+'\',\''+h.closeDate+'\',\''+h.holdDays+'\',\''+h.entryZ+'\',\''+h.exitZ+'\',\''+h.capGains+'\',\''+h.netDiv+'\',\''+hn+'\',\''+String(h.closeReason||'').replace(/'/g,"\\'")+'\',\''+String(h.targetPnL||'').toString().replace(/'/g,"\\'")+'\',\''+String(h.paidDiv||'').toString().replace(/'/g,"\\'")+'\',\''+String(h.rcvdDiv||'').toString().replace(/'/g,"\\'")+'\',\''+hgid+'\')">'+nbLbl+'</button></td>';
+hh+='</tr>';});hh+='</tbody>';document.getElementById('historyTable').querySelector('tbody').outerHTML=hh;}
 // ── PORTFOLIO HEALTH BAR ──
 function healthZColor(z){var a=Math.abs(z);if(a>=1.8)return{c:'var(--high)',bg:'rgba(239,68,68,0.1)',b:'var(--high)',label:'EXTREME'};if(a>=1.0)return{c:'var(--yellow)',bg:'rgba(245,158,11,0.1)',b:'var(--yellow)',label:'ELEVATED'};if(a>=0.5)return{c:'var(--accent)',bg:'rgba(14,165,233,0.1)',b:'var(--accent)',label:'MILD'};return{c:'var(--low)',bg:'rgba(16,185,129,0.1)',b:'var(--low)',label:'NEUTRAL'};}
 function renderHealthBar(portfolioData){
