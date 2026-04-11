@@ -732,6 +732,7 @@ th .th-hint{font-weight:400;font-size:8px;letter-spacing:0;text-transform:none;c
 <button class="filter-pill" id="starredFilterBtn" onclick="toggleStarredFilter(this)">&#9733; Starred</button>
 <button class="filter-pill" id="divFilterBtn" onclick="toggleDivFilter(this)">&#128176; Ex-Div &le;7d</button>
 <span class="filter-label" style="margin-left:auto;font-size:8px" id="screenerAge"></span>
+<button class="filter-pill" onclick="exportAlertsCsv()" title="Download filtered alerts as CSV">&#11015; CSV</button>
 </div>
 <table><thead><tr><th>Pair</th><th>Spread</th><th>Ex-Dividend<span class="th-hint">next date per leg</span></th><th class="sortable" onclick="sortProfit()">Edge<span class="th-hint">exp. profit + yield spread</span> &#8645;</th><th class="sortable" onclick="sortZ()">Z-Score &#8645;</th><th class="sortable" onclick="sortLiq()">Avg Liquidity &#8645;</th><th class="sortable" onclick="sortAge()">Days Active &#8645;</th><th>Velocity<span class="th-hint">&sigma;/day convergence</span></th><th>Quality<span class="th-hint">ADF / half-life / cost</span></th><th>Signal</th><th style="text-align:right">Actions</th></tr></thead><tbody id="alertBody"></tbody></table>
 </div>
@@ -864,7 +865,7 @@ th .th-hint{font-weight:400;font-size:8px;letter-spacing:0;text-transform:none;c
 <div class="hist-sub-pill active" id="histSubClosed" onclick="switchHistSub('closed')">Closed Positions</div>
 <div class="hist-sub-pill" id="histSubJournal" onclick="switchHistSub('journal')">Journal Analytics</div>
 </div>
-<button onclick="doClearHistory()" style="background:rgba(239,68,68,.05);border:1.5px solid var(--high);color:var(--high);padding:10px 20px;border-radius:8px;font-size:10px;font-weight:900;cursor:pointer;text-transform:uppercase">Clear History</button>
+<div style="display:flex;gap:8px"><button onclick="exportHistoryCsv()" style="background:rgba(14,165,233,.06);border:1.5px solid var(--accent);color:var(--accent);padding:10px 20px;border-radius:8px;font-size:10px;font-weight:900;cursor:pointer;text-transform:uppercase">&#11015; Export CSV</button><button onclick="doClearHistory()" style="background:rgba(239,68,68,.05);border:1.5px solid var(--high);color:var(--high);padding:10px 20px;border-radius:8px;font-size:10px;font-weight:900;cursor:pointer;text-transform:uppercase">Clear History</button></div>
 </div>
 <div id="histClosedSection">
 <div id="historySummary" style="display:flex;gap:15px;margin-bottom:15px;flex-wrap:wrap"></div>
@@ -1154,6 +1155,9 @@ function sqPopulateCalc(idx){
   }
 }
 // ── COMPOSITE SETUP SCORE (0-100) — V3 (Quant-Audited) ──
+// STATUS: DEPRECATED — no longer rendered in the alerts table (removed in commit 3cdbbcc
+// when the dashboard was restructured). Retained for reference and possible future reuse.
+// The quality column now surfaces ADF/half-life/call-risk directly as standalone badges.
 // Ranks alert quality for pair trading entry. Higher = better setup.
 //
 // COMPONENT BREAKDOWN (max theoretical ~91 before penalties):
@@ -1309,6 +1313,12 @@ function computeSetupScore(r, maxEP) {
 }
 function cleanIdFE(id) { return String(id).replace(/\|/g, '_').replace(/[^a-zA-Z0-9_-]/g, '').toUpperCase(); }
 function escHtml(s){if(s==null)return'';return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
+// ── CSV EXPORT HELPERS ──
+function csvCell(v){if(v==null)return'';var s=String(v);if(/[",\n\r]/.test(s))return '"'+s.replace(/"/g,'""')+'"';return s;}
+function csvRows(headers,rows){var out=headers.map(csvCell).join(',')+'\r\n';for(var i=0;i<rows.length;i++)out+=rows[i].map(csvCell).join(',')+'\r\n';return out;}
+function downloadCsv(filename,csv){try{var blob=new Blob(['\ufeff'+csv],{type:'text/csv;charset=utf-8;'});var url=URL.createObjectURL(blob);var a=document.createElement('a');a.href=url;a.download=filename;document.body.appendChild(a);a.click();document.body.removeChild(a);setTimeout(function(){URL.revokeObjectURL(url);},200);showToast('Exported '+filename,'ok',2500);}catch(e){showToast('Export failed: '+(e.message||e),'error');}}
+function exportAlertsCsv(){try{var rows=Array.from(document.querySelectorAll('#alertBody tr.alert-row')).filter(function(r){return r.style.display!=='none';});if(rows.length===0){showToast('No alerts to export','warn',2500);return;}var headers=['PairID','TickerA','TickerB','Sector','Price A','Price B','Spread','Z-Score','Edge','Liquidity','Age (d)','DivDays','Mode'];var out=rows.map(function(row){var tickers=(row.getAttribute('data-tickers')||'').split(' ');var tA=tickers[0]||'',tB=tickers[1]||'';var key=(tA+'|'+tB).toUpperCase().replace(/[^A-Z0-9|]/g,'');var r=window._alertDataMap[key]||{};var pA=r.pA||'',pB=r.pB||'';var spread=(pA!==''&&pB!=='')?(parseFloat(pA)-parseFloat(pB)).toFixed(4):'';return [r.id||'',tA,tB,row.getAttribute('data-sec')||'',pA,pB,spread,row.getAttribute('data-z')||'',row.getAttribute('data-profit')||'',row.getAttribute('data-liq')||'',row.getAttribute('data-age')||'',row.getAttribute('data-divdays')||'',currentMode||''];});var ts=new Date().toISOString().slice(0,19).replace(/[:T]/g,'-');downloadCsv('alerts_'+currentMode+'_'+ts+'.csv',csvRows(headers,out));}catch(e){showToast('Export failed: '+(e.message||e),'error');}}
+function exportHistoryCsv(){try{var hd=window._historyData||[];if(hd.length===0){showToast('No history to export','warn',2500);return;}var headers=['PairID','CloseType','CloseReason','EntryZ','ExitZ','CostA','CostB','ExitPriceA','ExitPriceB','SizeA','SizeB','OpenDate','CloseDate','HoldDays','CapGains','PaidDiv','RcvdDiv','NetPnL','ReturnPct','TargetPnL','SourcePortfolio','Note'];var rows=hd.map(function(h){return [h.id||'',h.closeType||'',h.closeReason||'',h.entryZ||'',h.exitZ||'',h.costA||'',h.costB||'',h.exitPriceA||'',h.exitPriceB||'',h.sizeA||'',h.sizeB||'',h.openDate||'',h.closeDate||'',h.holdDays||'',h.capGains||'',h.paidDiv||'',h.rcvdDiv||'',h.pnl||'',h.returnPct||'',h.targetPnL||'',h.sourcePortfolio||'',h.note||''];});var ts=new Date().toISOString().slice(0,19).replace(/[:T]/g,'-');downloadCsv('history_'+ts+'.csv',csvRows(headers,rows));}catch(e){showToast('Export failed: '+(e.message||e),'error');}}
 function showToast(msg,type,durationMs){type=type||'error';durationMs=durationMs||4000;var t=document.createElement('div');t.className='toast '+type;t.textContent=msg;document.body.appendChild(t);requestAnimationFrame(function(){t.classList.add('show');});setTimeout(function(){t.classList.remove('show');setTimeout(function(){t.remove();},300);},durationMs);}
 // ── ROBUSTNESS HELPERS (frontend mirror of backend logic for display) ──
 function robGradeColor(grade) {
@@ -1674,7 +1684,11 @@ function pickSector(sec,label){activeSector=sec;var lbl=document.getElementById(
 document.addEventListener('click',function(e){var dd=document.getElementById('secDropdown');if(dd&&!dd.contains(e.target))dd.classList.remove('open');});
 function sortAge(){sortBy('data-age');}function sortZ(){sortBy('data-z',true);}function sortLiq(){sortBy('data-liq');}function sortProfit(){sortBy('data-profit');}
 function sortBy(attr,abs){const tb=document.querySelector("#alertBody");const rows=Array.from(tb.querySelectorAll("tr.alert-row"));rows.sort((a,b)=>{let av=parseFloat(a.getAttribute(attr))||0,bv=parseFloat(b.getAttribute(attr))||0;if(abs){av=Math.abs(av);bv=Math.abs(bv);}return sortAsc?(bv-av):(av-bv);});rows.forEach(r=>tb.appendChild(r));sortAsc=!sortAsc;applyFilters();}
-function toggleLive(){if(liveTimer){clearInterval(liveTimer);liveTimer=null;}if(document.getElementById('autoRefresh').checked){refreshData();liveTimer=setInterval(()=>{if(document.getElementById('entryModal').style.display!=='block')refreshData();},300000);}}
+function toggleLive(){if(liveTimer){clearInterval(liveTimer);liveTimer=null;}if(document.getElementById('autoRefresh').checked){refreshData();liveTimer=setInterval(()=>{if(document.hidden)return;if(document.getElementById('entryModal').style.display!=='block')refreshData();},300000);}}
+// Pause polling when tab is hidden, resume on visibility change
+document.addEventListener('visibilitychange',function(){if(document.hidden&&liveTimer){/* keep interval installed but checks document.hidden before firing */}});
+// Cleanup timers on page unload
+window.addEventListener('beforeunload',function(){if(liveTimer){clearInterval(liveTimer);liveTimer=null;}if(typeof _titleFlashTimer!=='undefined'&&_titleFlashTimer){clearInterval(_titleFlashTimer);_titleFlashTimer=null;}});
 async function refreshData(){try{setConnStatus("loading");const data=await apiGet("getData",{mode:currentMode});if(data&&data.ok){updateUI(data);setConnStatus("ok");}else{setConnStatus("err");showToast('Data refresh failed'+(data&&data.message?' \u2014 '+data.message:''),'error');}}catch(e){setConnStatus("err");showToast('Connection error: '+(e.message||e),'error');}}
 // ── SCREENER CACHE ──
 async function loadScreenerCache(){try{var data=await apiGet('getScreenerData');if(data&&data.ok&&data.screenerData){screenerCache={};data.screenerData.forEach(function(s){screenerCache[cleanIdFE(s.id)]=s;});var ageEl=document.getElementById('screenerAge');if(ageEl&&data.screenerData.length>0){var ts=data.screenerData[0].ts;if(ts){var d=new Date(ts);var hrs=Math.round((Date.now()-d.getTime())/3600000);ageEl.innerText='Screener: '+data.screenerData.length+' pairs analyzed'+(hrs>0?' ('+hrs+'h ago)':'');}}console.log('[TerminalPro] Screener cache loaded:',data.screenerData.length,'pairs');// console.log('[Kelly Debug] Screener avgMae sample:',data.screenerData.slice(0,5).map(function(s){return s.id+': avgMae='+s.avgMae+' ep30='+s.ep30+' wr30='+s.wr30;}));}}catch(e){console.log('[TerminalPro] Screener cache unavailable');showToast('Screener cache unavailable','warn',3000);}}
@@ -2167,14 +2181,14 @@ var pill=document.getElementById('healthZPill');
 pill.innerText=(avgZ>=0?'+':'')+avgZ.toFixed(2)+'σ';
 pill.style.color=style.c;pill.style.borderColor=style.b;pill.style.background=style.bg;
 var status=document.getElementById('healthStatus');
-status.innerHTML='<span class="dot" style="background:'+style.c+';box-shadow:0 0 8px '+style.c+'"></span>'+style.label+' — '+portfolioData.length+' pairs';
+status.innerHTML='<span class="dot" style="background:'+style.c+';box-shadow:0 0 8px '+style.c+'"></span>'+escHtml(style.label)+' — '+portfolioData.length+' pairs';
 status.style.color=style.c;
 // Sector bars
 var secEl=document.getElementById('sectorBars');
 var secKeys=Object.keys(sectorMap).sort(function(a,b){return sectorMap[b]-sectorMap[a];});
 var sh='';secKeys.forEach(function(s){var pct=wTot>0?(sectorMap[s]/wTot*100):0;
 var clr=pct>50?'var(--high)':(pct>25?'var(--yellow)':'var(--accent)');
-sh+='<div class="sector-bar-row"><div class="sector-bar-label">'+s+'</div><div class="sector-bar-track"><div class="sector-bar-fill" style="width:'+pct+'%;background:'+clr+'"></div></div><div class="sector-bar-pct">'+pct.toFixed(0)+'%</div></div>';});
+sh+='<div class="sector-bar-row"><div class="sector-bar-label">'+escHtml(s)+'</div><div class="sector-bar-track"><div class="sector-bar-fill" style="width:'+pct+'%;background:'+clr+'"></div></div><div class="sector-bar-pct">'+pct.toFixed(0)+'%</div></div>';});
 secEl.innerHTML=sh;
 // Balance: net delta + strategy ratio
 var longExp=0,shortExp=0;
@@ -2201,11 +2215,12 @@ var bd=data.basketData;if(!bd.rollingZ)return;
 var windows=['30d','60d','90d'];var ids=['rz30','rz60','rz90'];var subIds=['rzSub30','rzSub60','rzSub90'];
 for(var i=0;i<windows.length;i++){var w=bd.rollingZ[windows[i]];var el=document.getElementById(ids[i]);var sub=document.getElementById(subIds[i]);
 if(!w||w.insufficient){el.innerText='—';el.style.color='var(--subtext)';sub.innerText=w?w.dataPoints+'d data':'no data';}
+else if(w.lowVolatility){el.innerText='~0σ';el.style.color='var(--subtext)';el.title='Volatility below noise floor — Z-score not meaningful';sub.innerText='low vol ('+w.dataPoints+'d)';}
 else{el.innerText=(w.z>=0?'+':'')+w.z.toFixed(2)+'σ';var s=healthZColor(w.z);el.style.color=s.c;sub.innerText=w.dataPoints+'d window';}}
 // Display max drawdown if available
 if(bd.maxDrawdownPct!==undefined){var ddEl=document.getElementById('maxDrawdown');if(ddEl){ddEl.innerText=bd.maxDrawdownPct.toFixed(1)+'%';ddEl.style.color=bd.maxDrawdownPct>15?'var(--high)':bd.maxDrawdownPct>8?'var(--yellow)':'var(--low)';ddEl.title='Max portfolio drawdown from peak: $'+bd.maxDrawdown.toFixed(2);}}
 // Show concentration warning
-if(bd.concentrationWarning){var cwEl=document.getElementById('concWarning');if(cwEl){cwEl.style.display='';cwEl.innerHTML='<span style="color:var(--yellow);font-weight:900">&#9888; CONCENTRATED</span> '+bd.concentrationWarning.pct.toFixed(0)+'% in '+bd.concentrationWarning.sector;}}
+if(bd.concentrationWarning){var cwEl=document.getElementById('concWarning');if(cwEl){cwEl.style.display='';cwEl.innerHTML='<span style="color:var(--yellow);font-weight:900">&#9888; CONCENTRATED</span> '+bd.concentrationWarning.pct.toFixed(0)+'% in '+escHtml(bd.concentrationWarning.sector);}}
 }catch(e){console.log('[TerminalPro] Basket analytics fetch error:',e.message);}}
 function toggleHealthBar(){var bar=document.getElementById('healthBar');if(bar.classList.contains('collapsed')){bar.classList.remove('collapsed');bar.classList.add('expanded');}else{bar.classList.remove('expanded');bar.classList.add('collapsed');}}
 // ── PORTFOLIO ANALYTICS TAB ──
@@ -2213,10 +2228,10 @@ var paCurrentMode='live';
 var sbLegCounter=0;
 async function tabAnalytics(el){document.querySelectorAll('.tab-content').forEach(x=>x.classList.remove('active'));document.querySelectorAll('.nav-item').forEach(x=>x.classList.remove('active'));document.getElementById('analytics').classList.add('active');el.classList.add('active');if(paCurrentMode==='live')await loadLiveAnalytics();}
 function switchPaMode(mode){paCurrentMode=mode;var liveBtn=document.getElementById('paModeLive'),sbBtn=document.getElementById('paModeSandbox');var liveEl=document.getElementById('paLiveSection'),sbEl=document.getElementById('paSandboxSection');liveBtn.className='pa-mode-pill'+(mode==='live'?' active-live':'');sbBtn.className='pa-mode-pill'+(mode==='sandbox'?' active-sandbox':'');liveEl.style.display=mode==='live'?'':'none';sbEl.style.display=mode==='sandbox'?'':'none';if(mode==='live')loadLiveAnalytics();else if(document.getElementById('sbLegs').children.length===0){sbAddLeg();sbAddLeg();}}
-async function loadLiveAnalytics(){var el=document.getElementById('paLiveContent');el.innerHTML='<div class="pa-loading">Fetching live portfolio analytics...</div>';try{setConnStatus('loading');var data=await apiGet('getPortfolioAnalytics',{paMode:'live'});if(data&&data.ok&&data.analyticsData){renderAnalytics(data.analyticsData,el);setConnStatus('ok');}else{el.innerHTML='<div class="pa-empty"><div class="pa-empty-icon">&#9888;</div><div class="pa-empty-title">Error</div><div>'+(data&&data.analyticsData&&data.analyticsData.error?data.analyticsData.error:'Failed to load analytics')+'</div></div>';setConnStatus('err');}}catch(e){el.innerHTML='<div class="pa-empty"><div class="pa-empty-icon">&#9888;</div><div class="pa-empty-title">Connection Error</div><div>'+e.message+'</div></div>';setConnStatus('err');}}
+async function loadLiveAnalytics(){var el=document.getElementById('paLiveContent');el.innerHTML='<div class="pa-loading">Fetching live portfolio analytics...</div>';try{setConnStatus('loading');var data=await apiGet('getPortfolioAnalytics',{paMode:'live'});if(data&&data.ok&&data.analyticsData){renderAnalytics(data.analyticsData,el);setConnStatus('ok');}else{el.innerHTML='<div class="pa-empty"><div class="pa-empty-icon">&#9888;</div><div class="pa-empty-title">Error</div><div>'+escHtml(data&&data.analyticsData&&data.analyticsData.error?data.analyticsData.error:'Failed to load analytics')+'</div></div>';setConnStatus('err');}}catch(e){el.innerHTML='<div class="pa-empty"><div class="pa-empty-icon">&#9888;</div><div class="pa-empty-title">Connection Error</div><div>'+escHtml(e.message)+'</div></div>';setConnStatus('err');}}
 function renderCrossMatrix(ad,targetEl){
 var agg=ad.aggregateMetrics;var pairs=ad.crossPairs||[];
-if(!agg){targetEl.innerHTML='<div class="pa-empty"><div class="pa-empty-icon">&#9888;</div><div class="pa-empty-title">Error</div><div>'+(ad.error||'No aggregate data')+'</div></div>';return;}
+if(!agg){targetEl.innerHTML='<div class="pa-empty"><div class="pa-empty-icon">&#9888;</div><div class="pa-empty-title">Error</div><div>'+escHtml(ad.error||'No aggregate data')+'</div></div>';return;}
 var h='';
 // ── Tier 1: Aggregate Banner ──
 var zAgg=healthZColor(agg.z90||0);
@@ -2441,9 +2456,9 @@ d+='<div class="pa-sparkline-wrap" style="margin-top:8px">'+buildSparklineSvg(p.
 d+='</div>';
 return d;}
 function renderAnalytics(ad,targetEl){
-if(ad.error&&!ad.metrics){targetEl.innerHTML='<div class="pa-empty"><div class="pa-empty-icon">&#9888;</div><div class="pa-empty-title">Error</div><div>'+ad.error+'</div></div>';return;}
+if(ad.error&&!ad.metrics){targetEl.innerHTML='<div class="pa-empty"><div class="pa-empty-icon">&#9888;</div><div class="pa-empty-title">Error</div><div>'+escHtml(ad.error)+'</div></div>';return;}
 var m=ad.metrics;if(!m||(!m.rollingZ&&!m.error)){targetEl.innerHTML='<div class="pa-empty"><div class="pa-empty-icon">&#128202;</div><div class="pa-empty-title">'+(ad.mode==='live'?'No Open Positions':'No Results')+'</div><div>'+(ad.mode==='live'?'Open trades in the Active Portfolio tab to see analytics here.':'Add legs and click Calculate Basket.')+'</div></div>';return;}
-if(m.error){targetEl.innerHTML='<div class="pa-empty"><div class="pa-empty-icon">&#9888;</div><div class="pa-empty-title">Calculation Error</div><div>'+m.error+'</div></div>';return;}
+if(m.error){targetEl.innerHTML='<div class="pa-empty"><div class="pa-empty-icon">&#9888;</div><div class="pa-empty-title">Calculation Error</div><div>'+escHtml(m.error)+'</div></div>';return;}
 var h='';
 // Banner
 h+='<div class="pa-banner">';
@@ -2701,13 +2716,15 @@ h+='<div class="pa-windows">';
 for(var i=0;i<windows.length;i++){
 var w=rz[windows[i].k];
 var hasData=w&&!w.insufficient;
+var isLowVol=hasData&&w.lowVolatility;
 var z=hasData?w.z:0;
 var zs=healthZColor(z);
 var ep=hasData?w.expectedProfit:0;
 var epClr=ep>=0?'var(--low)':'var(--high)';
 var wr=winRates[windows[i].k];
 h+='<div class="pa-window-card">';
-h+='<div class="pa-window-label">'+windows[i].l+'<span class="pa-window-badge">'+(hasData?w.dataPoints+'d data':'insufficient data')+'</span></div>';
+var badgeText=!hasData?'insufficient data':(isLowVol?'low vol ('+w.dataPoints+'d)':w.dataPoints+'d data');
+h+='<div class="pa-window-label">'+windows[i].l+'<span class="pa-window-badge"'+(isLowVol?' title="Volatility below noise floor — Z-score not meaningful"':'')+'>'+badgeText+'</span></div>';
 if(hasData){
 h+='<div class="pa-metric-row"><span class="pa-metric-label">Z-Score</span><span class="pa-metric-val big" style="color:'+zs.c+'">'+(z>=0?'+':'')+z.toFixed(2)+'&sigma;</span></div>';
 // Win rate (mean reversion probability) — hero metric
@@ -2778,7 +2795,7 @@ function zHeatColor(z){if(z>=2.5)return'rgba(16,185,129,0.35)';if(z>=1.5)return'
 function zTextColor(z){if(z>=2.5)return'var(--low)';if(z>=1.5)return'var(--low)';if(z<=-2.5)return'var(--high)';if(z<=-1.5)return'var(--high)';return'var(--subtext)';}
 function signalStyle(sig){if(sig==='EXTREMELY CHEAP')return{c:'var(--low)',bg:'rgba(16,185,129,0.1)',b:'var(--low)'};if(sig==='CHEAP')return{c:'var(--low)',bg:'transparent',b:'var(--low)'};if(sig==='EXPENSIVE')return{c:'var(--high)',bg:'transparent',b:'var(--high)'};if(sig==='EXTREMELY EXPENSIVE')return{c:'var(--high)',bg:'rgba(239,68,68,0.1)',b:'var(--high)'};return{c:'var(--subtext)',bg:'transparent',b:'var(--border)'};}
 async function tabMacro(el){document.querySelectorAll('.tab-content').forEach(function(x){x.classList.remove('active');});document.querySelectorAll('.nav-item').forEach(function(x){x.classList.remove('active');});document.getElementById('macroVal').classList.add('active');el.classList.add('active');await loadMacroValuation();}
-async function loadMacroValuation(){try{setConnStatus('loading');var data=await apiGet('getMacroValuation');if(data&&data.ok&&data.macroValData){macroData=data.macroValData.data||[];macroCreditAvg=data.macroValData.creditAvg||{};renderTreasuryBanner(data.macroValData.treasuryYields||{});renderMacroTable(macroData,macroCreditAvg);setConnStatus('ok');}else{setConnStatus('err');document.getElementById('macroBody').innerHTML='<tr><td colspan="10" class="macro-empty">No macro valuation data. Run <b>dailyMacroRefresh()</b> in Apps Script.</td></tr>';}}catch(e){setConnStatus('err');document.getElementById('macroBody').innerHTML='<tr><td colspan="10" class="macro-empty">Error loading data: '+e.message+'</td></tr>';}}
+async function loadMacroValuation(){try{setConnStatus('loading');var data=await apiGet('getMacroValuation');if(data&&data.ok&&data.macroValData){macroData=data.macroValData.data||[];macroCreditAvg=data.macroValData.creditAvg||{};renderTreasuryBanner(data.macroValData.treasuryYields||{});renderMacroTable(macroData,macroCreditAvg);setConnStatus('ok');}else{setConnStatus('err');document.getElementById('macroBody').innerHTML='<tr><td colspan="10" class="macro-empty">No macro valuation data. Run <b>dailyMacroRefresh()</b> in Apps Script.</td></tr>';}}catch(e){setConnStatus('err');document.getElementById('macroBody').innerHTML='<tr><td colspan="10" class="macro-empty">Error loading data: '+escHtml(e.message)+'</td></tr>';}}
 function renderTreasuryBanner(ty){var el=document.getElementById('treasuryBanner');if(!el)return;var bmOrder=['US2Y','US5Y','US7Y','US10Y','US30Y'];var bmLabels={'US2Y':'US 2Y','US5Y':'US 5Y','US7Y':'US 7Y','US10Y':'US 10Y','US30Y':'US 30Y'};var h='<div style="font-size:10px;font-weight:900;color:var(--subtext);text-transform:uppercase;letter-spacing:0.5px;margin-right:8px">US Treasuries</div>';for(var i=0;i<bmOrder.length;i++){var k=bmOrder[i];var v=ty[k];var yld=v?v.toFixed(2)+'%':'—';h+='<div style="display:flex;align-items:baseline;gap:5px;padding:4px 12px;background:rgba(255,255,255,0.04);border-radius:6px"><span style="font-size:10px;font-weight:700;color:var(--subtext)">'+bmLabels[k]+'</span><span style="font-size:15px;font-weight:900;color:var(--accent);font-family:monospace">'+yld+'</span></div>';}el.innerHTML=h;}
 function renderMacroTable(items,creditAvg){
 var bmKeys=['US2Y','US5Y','US7Y','US10Y','US30Y'];
@@ -2932,12 +2949,12 @@ recs.push({tA:alert.tA,tB:alert.tB,z:parseFloat(alert.z),stdev:parseFloat(stdev.
 var openCount=document.querySelectorAll('#portfolioGrid .trade-card').length;
 var exposure=0;document.querySelectorAll('#portfolioGrid .trade-card').forEach(function(c){var vals=c.querySelectorAll('.mono-data');/* approximate */});
 renderSizer({maxLossPerTrade:maxLoss,openPositions:openCount,currentExposure:0,recommendations:recs});
-}catch(e){document.getElementById('psLoading').innerHTML='<span style="color:var(--high)">Error: '+e.message+'</span>';}
+}catch(e){document.getElementById('psLoading').innerHTML='<span style="color:var(--high)">Error: '+escHtml(e.message)+'</span>';}
 finally{btn.disabled=false;btn.innerText='CALCULATE SIZING';}
 }
 function renderSizer(sd){
 document.getElementById('psLoading').style.display='none';
-if(sd.error){document.getElementById('psSummary').style.display='block';document.getElementById('psSummary').innerHTML='<div style="color:var(--high)">'+sd.error+'</div>';return;}
+if(sd.error){document.getElementById('psSummary').style.display='block';document.getElementById('psSummary').innerHTML='<div style="color:var(--high)">'+escHtml(sd.error)+'</div>';return;}
 // Summary cards
 document.getElementById('psSummary').style.display='block';
 document.getElementById('psSummary').innerHTML=
@@ -3313,7 +3330,7 @@ wrap.innerHTML=''
 +'</div>'
 +'<button onclick="document.getElementById(\'sweepResultWrap\').style.display=\'none\'" style="background:none;border:none;color:var(--subtext);cursor:pointer;font-size:14px;padding:0 4px" title="Close">&times;</button>'
 +'</div>';
-}catch(err){wrap.innerHTML='<span style="color:var(--high);font-size:11px;font-weight:700">Error: '+err.message+'</span>';}
+}catch(err){wrap.innerHTML='<span style="color:var(--high);font-size:11px;font-weight:700">Error: '+escHtml(err.message)+'</span>';}
 }
 function sweepStat(label,val,color){
 return '<div style="text-align:center;min-width:55px"><div style="font-size:9px;color:var(--subtext);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:2px">'+label+'</div><div style="font-size:13px;font-weight:900;color:'+color+';font-family:\'JetBrains Mono\',monospace">'+val+'</div></div>';
@@ -3329,8 +3346,8 @@ maxHold:document.getElementById('osMaxHold').value,
 mode:document.getElementById('osMode').value
 },300000);
 if(data&&data.ok&&data.sweepData){renderOptimalSweep(data.sweepData);}
-else{document.getElementById('osLoading').innerHTML='<div style="color:var(--high)">Sweep failed: '+(data&&data.message?data.message:'unknown error')+'</div>';}
-}catch(e){document.getElementById('osLoading').innerHTML='<div style="color:var(--high)">Error: '+e.message+'</div>';}
+else{document.getElementById('osLoading').innerHTML='<div style="color:var(--high)">Sweep failed: '+escHtml(data&&data.message?data.message:'unknown error')+'</div>';}
+}catch(e){document.getElementById('osLoading').innerHTML='<div style="color:var(--high)">Error: '+escHtml(e.message)+'</div>';}
 finally{btn.disabled=false;btn.innerText='RUN SWEEP';}
 }
 function renderOptimalSweep(sw){
@@ -3408,8 +3425,8 @@ maxHold:document.getElementById('btMaxHold').value,
 mode:btMode
 },300000);
 if(data&&data.ok&&data.backtestData){data.backtestData._btMode=btMode;renderBacktest(data.backtestData);}
-else{document.getElementById('btLoading').innerHTML='<div style="color:var(--high)">Backtest failed: '+(data&&data.message?data.message:'unknown error')+'</div>';}
-}catch(e){document.getElementById('btLoading').innerHTML='<div style="color:var(--high)">Error: '+e.message+'</div>';}
+else{document.getElementById('btLoading').innerHTML='<div style="color:var(--high)">Backtest failed: '+escHtml(data&&data.message?data.message:'unknown error')+'</div>';}
+}catch(e){document.getElementById('btLoading').innerHTML='<div style="color:var(--high)">Error: '+escHtml(e.message)+'</div>';}
 finally{btn.disabled=false;btn.innerText='RUN BACKTEST';}
 }
 function renderBacktest(bt){
@@ -3467,7 +3484,7 @@ var ph='';
 ptb.innerHTML=ph||'<tr><td colspan="4" style="color:var(--subtext);text-align:center">No pair data</td></tr>';
 // ── ACTIONABLE SIGNALS ──
 window._lastBacktest=bt;
-try{renderActionableSignals(bt);}catch(sigErr){console.error('renderActionableSignals error:',sigErr);var sigEl=document.getElementById('btSignals');if(sigEl)sigEl.innerHTML='<div style="color:var(--high);text-align:center;padding:20px">Failed to render signals: '+sigErr.message+'</div>';}
+try{renderActionableSignals(bt);}catch(sigErr){console.error('renderActionableSignals error:',sigErr);var sigEl=document.getElementById('btSignals');if(sigEl)sigEl.innerHTML='<div style="color:var(--high);text-align:center;padding:20px">Failed to render signals: '+escHtml(sigErr.message)+'</div>';}
 }
 // Store last backtest for portfolio exit tracking
 window._lastBacktest=null;
@@ -4097,7 +4114,7 @@ function renderExitSignals() {
       var icon = s.severity === 'danger' ? '&#9888;' : (s.severity === 'warning' ? '&#9200;' : '&#9989;');
       var trigLabels2 = {'STATISTICAL_TARGET':'TARGET REACHED','TIME_STOP':'TIME STOP','STOP_LOSS':'STOP LOSS','PARTIAL_PROFIT':'TAKE PARTIAL','FULL_TARGET':'EXIT \u2014 TARGET HIT','STAGNATION':'STAGNANT'};
       var typeLabel = trigLabels2[s.trigger] || s.trigger;
-      banner.innerHTML = '<div class="exit-banner-icon">' + icon + '</div><div class="exit-banner-body"><div class="exit-banner-type">' + typeLabel + '</div><div class="exit-banner-msg">' + s.message + '</div></div>';
+      banner.innerHTML = '<div class="exit-banner-icon">' + icon + '</div><div class="exit-banner-body"><div class="exit-banner-type">' + escHtml(typeLabel) + '</div><div class="exit-banner-msg">' + escHtml(s.message) + '</div></div>';
       var progBar = card.querySelector('.progress-container');
       if (progBar) card.insertBefore(banner, progBar);
       else card.appendChild(banner);

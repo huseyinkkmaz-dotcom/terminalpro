@@ -586,8 +586,13 @@ function getMacroData() {
     var sheet = SpreadsheetApp.getActive().getSheetByName('MacroData');
     if (!sheet) return {};
     var data = sheet.getRange("A2:C4").getValues();
+    // GOOGLEFINANCE("TNX") historically returned the CBOE index (10x actual yield,
+    // e.g. 45.2 for 4.52%). Newer API responses sometimes return the raw yield.
+    // Autodetect: values >= 10 are assumed to be the index form.
+    var rawTnx = parseFloat(data[0][1]);
+    var yieldPct = isNaN(rawTnx) ? 0 : (rawTnx >= 10 ? rawTnx / 10 : rawTnx);
     return {
-      us10y: { val: (parseFloat(data[0][1])/10).toFixed(2)+"%", chg: parseFloat(data[0][2]) },
+      us10y: { val: yieldPct.toFixed(2)+"%", chg: parseFloat(data[0][2]) },
       tlt:   { val: "$"+parseFloat(data[1][1]).toFixed(2), chg: parseFloat(data[1][2]) },
       pff:   { val: "$"+parseFloat(data[2][1]).toFixed(2), chg: parseFloat(data[2][2]) }
     };

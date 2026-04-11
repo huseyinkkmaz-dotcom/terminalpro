@@ -340,3 +340,37 @@ Tier 1 shipped: full-history lookback (no 90d cap), tri-state ADF (pass/weak/fai
 |-----------|---------------|----------------|----------------|
 | BAC-B | 2026-03-15 | 2026-02-20T06:00:00 | CONFIRMED |
 | PSA-F | 2026-06-15 | 2026-02-20T06:00:00 | ESTIMATED |
+
+## Hardening Priority Matrix (session progress tracker)
+
+Running audit of the 18-item consolidated priority matrix. Check this section first on resume so you know where you left off. Update statuses in place as items are finished.
+
+| #  | Issue | Sev | Status | Commit(s) | Notes |
+|----|---|---|---|---|---|
+| 1  | XSS via innerHTML (frontend) | CRIT | DONE | 7c55041, (current) | `escHtml()` helper added; applied to all high-risk API error / diagnostic / user-facing interpolation (loadLiveAnalytics, renderCrossMatrix, renderAnalytics, renderSizer, runOptimalSweep, runBacktest, renderActionableSignals, exit banner s.message, healthStatus label, sector labels, concentration warning, loadMacroValuation). Remaining innerHTML usages (~119) are either static strings or safe numeric interpolation. |
+| 2  | Trade race condition (no locking) | CRIT | DONE | b6c6e57 | `LockService.getDocumentLock()` wraps saveTradeToSheet / closeTradeInSheet / partialCloseTradeInSheet / addDividendToTrade. |
+| 3  | No input validation on trades | CRIT | DONE | b6c6e57, 7c55041 | Frontend: price/size range validation in doSubmit / mgDoAdd / mgDoReduce / mgDoClose. Backend: saveTradeToSheet validates positive prices, non-zero size, $10k price / 100k share caps. |
+| 4  | ADF over-detection (small n) | HIGH | DONE | b6c6e57 | MacKinnon (1994) response-surface critical values via `getAdfCriticalValues_()`, minimum sample raised 20 → 30. |
+| 5  | Silent API failures | HIGH | DONE | 7c55041 | `apiGet()` retries with exponential backoff, toast notifications added (error/warn/ok). refreshData shows toast on failure. |
+| 6  | N² portfolio lookup | HIGH | DONE | b6c6e57 | `getOpenTrades()` now uses hash-map lookup (was O(N) per trade). |
+| 7  | Setup failure without recovery | HIGH | DONE | b6c6e57 | Prerequisite errors (missing Pairs sheet) now halt setup rather than looping the retry trigger. |
+| 8  | Z-score returns 0 for low stdev | HIGH | DONE | b6c6e57, (current) | Backend: `lowVolatility: true` flag on rollingZ objects when std ≤ MIN_STDEV. Frontend: health bar + portfolio analytics windows now surface "low vol" badge and tooltip instead of silent 0σ. |
+| 9  | No responsive breakpoints | MED | DONE | 7c55041 | CSS breakpoints at 1200px / 768px / 480px for tablet / mobile. |
+| 10 | Probability engine spread bias | MED | DONE | b6c6e57 | `computeHistoricalProbabilitiesWide_` now only matches triggers on the same side of the mean as the current signal. |
+| 11 | TNX division by 10 (verify) | MED | DONE | (current) | `getMacroData()` now autodetects: values ≥ 10 treated as CBOE index form (÷10), values < 10 treated as raw yield. Future-proofs against GOOGLEFINANCE API changes. |
+| 12 | Memory leaks (timers) | MED | DONE | (current) | `toggleLive()` skips refresh when `document.hidden`; `beforeunload` handler clears `liveTimer` + `_titleFlashTimer`. Audit confirmed `_searchTimer`, `safetyTimer`, `_titleFlashTimer` were already properly managed. |
+| 13 | `cleanIdFE` collision risk | MED | DONE | 7c55041 | Now preserves pipe (`|`) and hyphen (`-`) so `BAC-B\|BAC-M` anchors correctly to the DOM. |
+| 14 | No data export (CSV) | MED | DONE | (current) | CSV helpers: `csvCell`, `csvRows`, `downloadCsv`. Buttons: "⬇ CSV" in alerts filter bar (exports visible filtered rows from `_alertDataMap`), "⬇ Export CSV" in History tab (exports `_historyData`). UTF-8 BOM for Excel, proper quoting of embedded commas/quotes/newlines. |
+| 15 | No retry logic on API calls | MED | DONE | 7c55041 | `apiGet()` wraps the fetch in a retry loop, up to 2 retries, exponential backoff (2s / 4s), only on AbortError / NetworkError / HTTP 5xx. |
+| 16 | doPost incomplete | LOW | DONE | b6c6e57 | `doPost` now routes partialClose / addDividend and rejects unknown actions with a clear error. |
+| 17 | Composite score undocumented | LOW | DONE | (current) | `computeSetupScore` inline block-comment already documents all 10 components. Function marked DEPRECATED — the score system was removed in commit 3cdbbcc; quality column now surfaces ADF/half-life/call-risk as standalone badges. |
+| 18 | Dead code / hidden features | LOW | PARTIAL | (current) | `computeSetupScore` flagged as DEPRECATED in-place (150 lines of dead code preserved for reference). Score-related CSS classes (`.score-bar*`, `.score-ring`, `.score-badge`, `.score-cell`) also dead. Full removal deferred to avoid risky bulk deletion in the same commit as other hardening. Audit confirmed `loadTreasuryBanner` / `renderTreasuryBanner` ARE called (agent report was wrong); `_searchTimer`, `safetyTimer`, `_titleFlashTimer` all properly managed. |
+
+**All 18 matrix items now DONE except #18 (PARTIAL — dead-code physical removal deferred to a future cleanup commit).**
+
+### Follow-up cleanup TODOs (safe to tackle next session)
+
+- [ ] Delete the dead `computeSetupScore()` function (lines ~1157-1312 in `frontend/index.html`) and the unused `.score-bar`, `.score-bar-fill`, `.score-cell`, `.score-badge`, `.score-ring*` CSS rules (lines 284-285, 494-498).
+- [ ] Audit the other ~100 remaining `innerHTML =` assignments for lower-risk interpolations (static/numeric) and migrate to `textContent` where trivially safe.
+- [ ] Add integration tests for the new CSV export helpers (`csvCell`, `csvRows`).
+- [ ] Consider rolling ADF surveillance (Tier 3 from ADF backlog above).
