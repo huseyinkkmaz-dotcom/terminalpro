@@ -68,10 +68,10 @@ function setupAllBatched() {
     if (state.phase === 0) {
       Logger.log('Phase 0: Building Levels sheet...');
       var pairsSheet = ss.getSheetByName('Pairs');
-      if (!pairsSheet) { Logger.log('ERROR: Pairs sheet not found. Create it first.'); return; }
+      if (!pairsSheet) throw new Error('Pairs sheet not found. Create it first, then re-run setupAllBatched().');
       var pairs = pairsSheet.getDataRange().getValues();
       var numPairs = pairs.length - 1;
-      if (numPairs < 1) { Logger.log('ERROR: Pairs sheet is empty.'); return; }
+      if (numPairs < 1) throw new Error('Pairs sheet is empty. Add at least one pair, then re-run setupAllBatched().');
 
       var levels = getOrCreateSheet_(ss, 'Levels');
       levels.getRange(1, 1, 1, 7).setValues([['PairID', 'Mean', 'StDev', 'Lower_5', 'Upper_95', 'HistCount', 'Historical Spread Data →']]);
@@ -230,8 +230,15 @@ function setupAllBatched() {
 
   } catch (e) {
     Logger.log('ERROR in phase ' + state.phase + ': ' + e.toString());
-    // Save state so the trigger can retry from this phase
-    saveState_(props, state, 'Error occurred, will retry: ' + e.toString());
+    // Prerequisite errors (missing sheets) should not retry — clear state to prevent infinite loop
+    var msg = e.toString();
+    if (msg.indexOf('not found') !== -1 || msg.indexOf('is empty') !== -1) {
+      props.deleteProperty('SETUP_STATE');
+      Logger.log('SETUP HALTED: prerequisite error. Fix the issue and re-run setupAllBatched().');
+    } else {
+      // Transient errors — save state so the trigger can retry from this phase
+      saveState_(props, state, 'Error occurred, will retry: ' + msg);
+    }
   }
 }
 

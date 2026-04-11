@@ -19,13 +19,36 @@
 var MIN_STDEV = 0.001; // Minimum meaningful standard deviation — used across alerts, backtests, and basket metrics
 var MIN_WIN_RATE_SAMPLES = 20; // Minimum trigger events required for a win rate to be considered reliable (raised from 5 for statistical rigor)
 
-// ADF test critical values (MacKinnon, 1994) — approximate for n=50-100 observations
-// Format: {significance_level: critical_t_statistic}
+// ADF test critical values — size-adjusted via MacKinnon (1994) response surface.
+// getAdfCriticalValues_(n) returns sample-appropriate thresholds.
+// Fallback constants for n≈100 (used only where n is unavailable):
 var ADF_CRITICAL_VALUES = {
   '1pct': -3.51,
   '5pct': -2.89,
   '10pct': -2.58
 };
+
+/**
+ * Size-adjusted ADF critical values using MacKinnon (1994) response surface.
+ * Formula: c(p,n) = τ_∞ + β₁/n + β₂/n²
+ * Coefficients for case 2 (constant, no trend), 1 regressor.
+ * For small n (<50), critical values are substantially more negative
+ * than the asymptotic values, reducing false stationarity detections.
+ */
+function getAdfCriticalValues_(n) {
+  // MacKinnon response surface coefficients: [tau_inf, beta1, beta2]
+  var coeffs = {
+    '1pct':  [-3.4336, -5.999,  -29.25],
+    '5pct':  [-2.8621, -2.738,  -8.36],
+    '10pct': [-2.5671, -1.438,  -4.48]
+  };
+  var cv = {};
+  for (var key in coeffs) {
+    var c = coeffs[key];
+    cv[key] = c[0] + c[1] / n + c[2] / (n * n);
+  }
+  return cv;
+}
 
 // Engle-Granger cointegration critical values (MacKinnon, 1996) — N=2 variables, with constant, no trend.
 // More stringent than raw ADF because the residuals come from an estimated cointegrating vector.
@@ -52,7 +75,7 @@ var EG_CRITICAL_VALUES = {
  */
 function adfTest_(series) {
   var n = series.length;
-  if (n < 20) return { tStat: 0, isStationary: false, error: 'Insufficient data (need 20+, got ' + n + ')' };
+  if (n < 30) return { tStat: 0, isStationary: false, error: 'Insufficient data (need 30+, got ' + n + ')' };
 
   // Compute first differences
   var dy = [];
@@ -122,11 +145,14 @@ function adfTest_(series) {
 
   var tStat = beta[1] / seBeta1;
 
+  // Use size-adjusted critical values to avoid over-detection with small samples
+  var cv = getAdfCriticalValues_(T);
+
   return {
     tStat: parseFloat(tStat.toFixed(3)),
-    isStationary: tStat < ADF_CRITICAL_VALUES['5pct'],
-    confidence: tStat < ADF_CRITICAL_VALUES['1pct'] ? '99%' : tStat < ADF_CRITICAL_VALUES['5pct'] ? '95%' : tStat < ADF_CRITICAL_VALUES['10pct'] ? '90%' : 'none',
-    criticalValues: ADF_CRITICAL_VALUES,
+    isStationary: tStat < cv['5pct'],
+    confidence: tStat < cv['1pct'] ? '99%' : tStat < cv['5pct'] ? '95%' : tStat < cv['10pct'] ? '90%' : 'none',
+    criticalValues: cv,
     nObs: T,
     lag: 1,
     beta: parseFloat(beta[1].toFixed(6))
@@ -519,13 +545,22 @@ function doGet(e) {
 function doPost(e) {
   try {
     var payload = JSON.parse(e.postData.contents);
-    var action = payload.action || 'getData';
+    var action = payload.action || '';
+    if (!action) return ContentService.createTextOutput(JSON.stringify({ok:false,message:'Missing action'})).setMimeType(ContentService.MimeType.JSON);
     if (action === 'saveTrade') {
       saveTradeToSheet(payload);
       return ContentService.createTextOutput(JSON.stringify({ok:true,message:"Trade saved"})).setMimeType(ContentService.MimeType.JSON);
     } else if (action === 'closeTrade') {
-      closeTradeInSheet(payload.id||"");
+      closeTradeInSheet(payload.id||"", payload.exitPriceA, payload.exitPriceB, payload.closeReason);
       return ContentService.createTextOutput(JSON.stringify({ok:true,message:"Trade closed"})).setMimeType(ContentService.MimeType.JSON);
+    } else if (action === 'partialClose') {
+      partialCloseTradeInSheet(payload.id||"", payload.reduceA, payload.reduceB, payload.exitPriceA, payload.exitPriceB, payload.closeReason);
+      return ContentService.createTextOutput(JSON.stringify({ok:true,message:"Position reduced"})).setMimeType(ContentService.MimeType.JSON);
+    } else if (action === 'addDividend') {
+      addDividendToTrade(payload.id, payload.type, parseFloat(payload.amount)||0);
+      return ContentService.createTextOutput(JSON.stringify({ok:true,message:"Dividend recorded"})).setMimeType(ContentService.MimeType.JSON);
+    } else {
+      return ContentService.createTextOutput(JSON.stringify({ok:false,message:"Unknown POST action: "+action})).setMimeType(ContentService.MimeType.JSON);
     }
   } catch (err) {
     return ContentService.createTextOutput(JSON.stringify({ok:false,message:err.toString()})).setMimeType(ContentService.MimeType.JSON);
@@ -1007,6 +1042,11 @@ function getOpenTrades() {
     }
     // Pre-load TickerHistory for sparkline computation
     var histMap = readTickerHistMap_(ss);
+    // Build hash map for O(1) live row lookup (replaces O(N) scan per trade)
+    var liveRowMap = {};
+    for (var lri = 0; lri < liveRows.length; lri++) {
+      if (liveRows[lri][0]) liveRowMap[cleanId(liveRows[lri][0])] = liveRows[lri];
+    }
     var now = new Date();
     var results = [];
     for (var j = 1; j < openData.length; j++) {
@@ -1016,10 +1056,7 @@ function getOpenTrades() {
         var info = parseTickerInfo(rawId);
         var tA_Name = info.tA, tB_Name = info.tB, displayId = info.id;
         var openAnchor = cleanId(rawId);
-        var pair = null;
-        for (var k = 0; k < liveRows.length; k++) {
-          if (liveRows[k][0] && cleanId(liveRows[k][0]) === openAnchor) { pair = liveRows[k]; break; }
-        }
+        var pair = liveRowMap[openAnchor] || null;
         var strategy = creditIds[openAnchor] ? 'credit' : 'intra';
         var costA = parseMoney(openData[j][2]);
         var costB = parseMoney(openData[j][3]);
@@ -1317,11 +1354,13 @@ function getBasketAnalytics() {
         var denom = slice.length > 1 ? slice.length - 1 : 1;
         var std = Math.sqrt(sq / denom);
         var current = basketValues[basketValues.length - 1];
+        var zVal = std > MIN_STDEV ? parseFloat(((current - mean) / std).toFixed(2)) : 0;
         rollingZ[n + 'd'] = {
-          z: std > MIN_STDEV ? parseFloat(((current - mean) / std).toFixed(2)) : 0,
+          z: zVal,
           mean: parseFloat(mean.toFixed(4)),
           std: parseFloat(std.toFixed(4)),
-          dataPoints: slice.length
+          dataPoints: slice.length,
+          lowVolatility: std <= MIN_STDEV
         };
       } else {
         rollingZ[n + 'd'] = { z: 0, mean: 0, std: 0, dataPoints: basketValues.length, insufficient: true };
@@ -1497,7 +1536,8 @@ function computeBasketMetrics_(legs, histMap, customWindows) {
         mean: parseFloat(mean.toFixed(2)),
         std: parseFloat(std.toFixed(2)),
         expectedProfit: parseFloat(expectedProfit.toFixed(4)),
-        dataPoints: slice.length
+        dataPoints: slice.length,
+        lowVolatility: std <= MIN_STDEV
       };
     } else {
       rollingZ[n + 'd'] = { z: 0, mean: 0, std: 0, expectedProfit: 0, dataPoints: dailyValues.length, insufficient: true };
@@ -2068,8 +2108,12 @@ function computeHistoricalProbabilitiesWide_(dailyValues, refValue, rollingZ, to
   var lastTriggerDay = -5;
   for (var i = 0; i < len - 5; i++) {
     if (Math.abs(dailyValues[i] - refValue) <= tolerance && (i - lastTriggerDay) >= 3) {
-      triggers.push(i);
-      lastTriggerDay = i;
+      // Only match triggers on the same side of the mean to avoid spread sign bias
+      var trigAbove = dailyValues[i] >= mean90;
+      if (trigAbove === isAboveMean) {
+        triggers.push(i);
+        lastTriggerDay = i;
+      }
     }
   }
   result.triggers = triggers.length;
@@ -2736,6 +2780,21 @@ function getLivePairData_(ss, pairId) {
   return null;
 }
 function saveTradeToSheet(trade) {
+  var lock = LockService.getDocumentLock();
+  if (!lock.tryLock(10000)) throw new Error('Could not acquire lock — another trade operation is in progress. Try again.');
+  try { return saveTradeToSheet_(trade); } finally { lock.releaseLock(); }
+}
+function saveTradeToSheet_(trade) {
+  // Input validation
+  if (!trade || !trade.id || String(trade.id).trim() === '') throw new Error('Missing pair ID');
+  var pA = parseMoney(trade.priceA);
+  var pB = parseMoney(trade.priceB);
+  var sA = parseMoney(trade.sizeA);
+  var sB = parseMoney(trade.sizeB);
+  if (pA <= 0 || pB <= 0) throw new Error('Prices must be positive numbers (got A=' + trade.priceA + ', B=' + trade.priceB + ')');
+  if (sA === 0 && sB === 0) throw new Error('At least one leg must have a non-zero size');
+  if (pA > 10000 || pB > 10000) throw new Error('Price exceeds $10,000 — check for typos');
+  if (Math.abs(sA) > 100000 || Math.abs(sB) > 100000) throw new Error('Size exceeds 100,000 shares — check for typos');
   var ss = SpreadsheetApp.getActive();
   var sheet = ss.getSheetByName('OpenTrades');
   if (!sheet) throw new Error('OpenTrades sheet not found. Run setupAllBatched() first.');
@@ -2840,6 +2899,11 @@ function saveTradeToSheet(trade) {
   return true;
 }
 function closeTradeInSheet(id, customExitA, customExitB, closeReason) {
+  var lock = LockService.getDocumentLock();
+  if (!lock.tryLock(10000)) throw new Error('Could not acquire lock — another trade operation is in progress. Try again.');
+  try { return closeTradeInSheet_(id, customExitA, customExitB, closeReason); } finally { lock.releaseLock(); }
+}
+function closeTradeInSheet_(id, customExitA, customExitB, closeReason) {
   var ss = SpreadsheetApp.getActive();
   var sheet = ss.getSheetByName('OpenTrades');
   if (!sheet || sheet.getLastRow() <= 1) return true;
@@ -2886,6 +2950,11 @@ function closeTradeInSheet(id, customExitA, customExitB, closeReason) {
   return true;
 }
 function partialCloseTradeInSheet(id, reduceA, reduceB, customExitA, customExitB, closeReason) {
+  var lock = LockService.getDocumentLock();
+  if (!lock.tryLock(10000)) throw new Error('Could not acquire lock — another trade operation is in progress. Try again.');
+  try { return partialCloseTradeInSheet_(id, reduceA, reduceB, customExitA, customExitB, closeReason); } finally { lock.releaseLock(); }
+}
+function partialCloseTradeInSheet_(id, reduceA, reduceB, customExitA, customExitB, closeReason) {
   var ss = SpreadsheetApp.getActive();
   var sheet = ss.getSheetByName('OpenTrades');
   if (!sheet || sheet.getLastRow() <= 1) return true;
@@ -2997,6 +3066,11 @@ function getTradeEvents_(ss, groupId) {
 // ============================================================
 // OpenTrades columns: A(0):PairID B(1):EntryZ C(2):CostA D(3):CostB E(4):SizeA F(5):SizeB G(6):Timestamp H(7):PaidDiv I(8):ReceivedDiv J(9):TargetExitZ K(10):ProfitCapturePct L(11):TargetPnL M(12):PartialAtPct N(13):SourcePortfolio O(14):MaxHoldDays P(15):TradeGroupID
 function addDividendToTrade(id, type, amount) {
+  var lock = LockService.getDocumentLock();
+  if (!lock.tryLock(10000)) throw new Error('Could not acquire lock — another trade operation is in progress. Try again.');
+  try { return addDividendToTrade_(id, type, amount); } finally { lock.releaseLock(); }
+}
+function addDividendToTrade_(id, type, amount) {
   if (!id || !type || !amount || amount <= 0) throw new Error('Invalid dividend input');
   var ss = SpreadsheetApp.getActive();
   var sheet = ss.getSheetByName('OpenTrades');
