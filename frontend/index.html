@@ -520,6 +520,47 @@ th .th-hint{font-weight:400;font-size:8px;letter-spacing:0;text-transform:none;c
 /* Column tooltips for abbreviations */
 .col-tooltip{position:relative;cursor:help;border-bottom:1px dotted var(--subtext)}
 .col-tooltip:hover::after{content:attr(data-tip);position:absolute;bottom:100%;left:50%;transform:translateX(-50%);background:var(--card);border:1px solid var(--border);padding:4px 8px;border-radius:4px;font-size:9px;white-space:nowrap;z-index:10;color:var(--text);font-weight:400;text-transform:none;letter-spacing:0}
+.toast{position:fixed;bottom:24px;right:24px;padding:12px 20px;border-radius:8px;font-size:11px;font-weight:700;z-index:9999;opacity:0;transform:translateY(10px);transition:opacity .3s,transform .3s;pointer-events:none;max-width:400px}
+.toast.show{opacity:1;transform:translateY(0);pointer-events:auto}
+.toast.error{background:rgba(239,68,68,.15);border:1px solid var(--high);color:var(--high)}
+.toast.warn{background:rgba(245,158,11,.15);border:1px solid var(--yellow);color:var(--yellow)}
+.toast.ok{background:rgba(16,185,129,.15);border:1px solid var(--low);color:var(--low)}
+/* ── RESPONSIVE BREAKPOINTS ── */
+@media(max-width:1200px){
+  .container{padding:0 16px;margin:20px auto}
+  .portfolio-grid{grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:20px}
+  .macro-detail-grid{grid-template-columns:repeat(3,1fr)}
+  .exposure-pill-box{flex-wrap:wrap;gap:10px}
+}
+@media(max-width:768px){
+  .nav-bar{flex-wrap:wrap;padding:0 8px}
+  .nav-item{padding:10px 14px;font-size:9px;letter-spacing:1px}
+  .live-switch{margin-left:auto}
+  .container{padding:0 10px;margin:12px auto}
+  table{font-size:11px}
+  th,td{padding:8px 10px}
+  .portfolio-grid{grid-template-columns:1fr}
+  .macro-detail-grid{grid-template-columns:repeat(2,1fr)}
+  .strategy-switch{width:100%}
+  .strat-pill{flex:1;text-align:center;padding:10px 12px;font-size:9px}
+  .modal-content{width:90%;margin:5% auto;padding:24px}
+  .journal-drawer{width:100%;max-width:100%}
+  .health-bar.expanded{max-height:800px}
+  .macro-summary{flex-wrap:wrap}
+  .macro-filter-bar{flex-wrap:wrap}
+  .trend-tape{max-width:120px}
+  .top-spread-compact{font-size:10px;flex-wrap:wrap}
+  .toast{left:12px;right:12px;bottom:12px;max-width:none}
+}
+@media(max-width:480px){
+  .nav-item{padding:8px 10px;font-size:8px}
+  th,td{padding:6px 8px;font-size:10px}
+  .pair-link{font-size:12px}
+  .trade-card{padding:16px;border-radius:10px}
+  .macro-detail-grid{grid-template-columns:1fr}
+  .watch-grid{grid-template-columns:1fr}
+  .exposure-pill-box{flex-direction:column}
+}
 </style>
 </head>
 <body>
@@ -1113,11 +1154,25 @@ function sqPopulateCalc(idx){
   }
 }
 // ── COMPOSITE SETUP SCORE (0-100) — V3 (Quant-Audited) ──
-// Key changes from V2:
-// - ADF stationarity as hard gate (non-stationary pairs capped at 30)
-// - Half-life replaces arbitrary age sweet spot
-// - Removed correlated components (Z-mag + EP + age were triple-counting)
-// - Call risk penalty for above-par callables
+// Ranks alert quality for pair trading entry. Higher = better setup.
+//
+// COMPONENT BREAKDOWN (max theoretical ~91 before penalties):
+//   1. Z-Score magnitude      0-15 pts   Sweet spot 2.0-3.0σ; extreme >3.5 penalized
+//   2. Net Expected Profit    0-15 pts   Absolute $ thresholds: $0.20/$0.50/$1.00/$1.50
+//   3. Liquidity              0-10 pts   Log-scale: log10(avgVol/1000) × 3.3
+//   4. Volume Spike           0-3  pts   Binary: 1.5× avg volume = institutional interest
+//   5. Z-Trend momentum       0-12 pts   Weighted convergence of last 4 hourly Z readings
+//   6. Half-life quality      0-12 pts   OU half-life 3-30d ideal + age/HL ratio 0.5-2.0×
+//   7. Yield carry            0-6  pts   Avg coupon yield / 7 × 6
+//   8. Div proximity          -5/+3 pts  Short leg ex-div ≤10d: -5; long leg ≤10d: +3
+//   9. Call risk penalty      0 to -8    Above-par premium × 2 per leg (capped 4 each)
+//  10. Screener bonus         0-5  pts   Pre-computed 30d win rate: ≥70%=5, ≥60%=3, ≥50%=1
+// 10b. Robustness modifier    -5/+5 pts  Robustness score bands; suspicious WR/noise flags
+//  11. Regime awareness       -2/+3 pts  MEAN_REVERT=+3, TRENDING=-2, VOLATILE+lowZ=-1
+//  ADF nudge                  -5/+5 pts  PASS=+5, WEAK=0, FAIL=-5 (informational, no cap)
+//
+// Final score clamped to [0, 100].
+// r = alert row object, maxEP = unused (kept for signature compat)
 function computeSetupScore(r, maxEP) {
   var score = 0;
   var az = Math.abs(parseFloat(r.z) || 0);
@@ -1252,7 +1307,9 @@ function computeSetupScore(r, maxEP) {
   var finalScore = Math.max(0, Math.min(100, Math.round(score)));
   return finalScore;
 }
-function cleanIdFE(id) { return String(id).replace(/[^a-zA-Z0-9]/g, '').toUpperCase(); }
+function cleanIdFE(id) { return String(id).replace(/\|/g, '_').replace(/[^a-zA-Z0-9_-]/g, '').toUpperCase(); }
+function escHtml(s){if(s==null)return'';return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
+function showToast(msg,type,durationMs){type=type||'error';durationMs=durationMs||4000;var t=document.createElement('div');t.className='toast '+type;t.textContent=msg;document.body.appendChild(t);requestAnimationFrame(function(){t.classList.add('show');});setTimeout(function(){t.classList.remove('show');setTimeout(function(){t.remove();},300);},durationMs);}
 // ── ROBUSTNESS HELPERS (frontend mirror of backend logic for display) ──
 function robGradeColor(grade) {
   if (grade === 'A') return { c: 'var(--low)', bg: 'rgba(16,185,129,.12)', border: 'rgba(16,185,129,.4)' };
@@ -1349,8 +1406,8 @@ async function analyzeAlert(btn, tA, tB, pA, pB, z, rowId) {
       btn.classList.remove('done'); btn.innerHTML = '&#9881;';
       // Show error inline so user can see it
       var errH = '<tr class="analyze-row" id="ar-' + rowId + '"><td colspan="10"><div style="padding:12px;color:var(--high);font-size:11px;font-weight:700">';
-      errH += 'Analysis Error: ' + errMsg;
-      if (dbg) errH += '<br><span style="color:var(--subtext);font-weight:400">Debug: histMapSize=' + dbg.histMapSize + ', histA=' + dbg.histA + ', histB=' + dbg.histB + (dbg.sampleTickers ? ', sampleTickers=[' + dbg.sampleTickers.join(',') + ']' : '') + '</span>';
+      errH += 'Analysis Error: ' + escHtml(errMsg);
+      if (dbg) errH += '<br><span style="color:var(--subtext);font-weight:400">Debug: histMapSize=' + escHtml(dbg.histMapSize) + ', histA=' + escHtml(dbg.histA) + ', histB=' + escHtml(dbg.histB) + (dbg.sampleTickers ? ', sampleTickers=[' + escHtml(dbg.sampleTickers.join(',')) + ']' : '') + '</span>';
       errH += '</div></td></tr>';
       var aRow = btn.closest('tr');
       if (aRow) aRow.insertAdjacentHTML('afterend', errH);
@@ -1450,12 +1507,16 @@ async function apiGet(action,params={},timeoutMs){
   var ck=_cacheKey(action,params);var cached=_apiCache[ck];if(cached&&(Date.now()-cached.ts)<API_CACHE_TTL){console.log("[TerminalPro] apiGet cache hit:",action);return cached.data;}
   console.log("[TerminalPro] apiGet:",action,params);
   const url=new URL(GAS_URL);url.searchParams.set("action",action);for(const[k,v]of Object.entries(params))url.searchParams.set(k,v);
-  const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),timeoutMs||30000);
-  try{console.log("[TerminalPro] Fetching:",url.toString());const res=await fetch(url.toString(),{signal:controller.signal});clearTimeout(timer);console.log("[TerminalPro] Response status:",res.status);if(!res.ok)throw new Error("HTTP "+res.status+" "+res.statusText);const text=await res.text();console.log("[TerminalPro] Response length:",text.length,"chars");try{const json=JSON.parse(text);console.log("[TerminalPro] Parsed OK. ok=",json.ok,"alertData count=",(json.alertData?json.alertData.length:"N/A"));_apiCache[ck]={data:json,ts:Date.now()};return json;}catch(e){console.error("[TerminalPro] Non-JSON response:",text.substring(0,500));throw new Error("Non-JSON response — redeploy GAS as 'Anyone'");}}catch(e){clearTimeout(timer);if(e.name==='AbortError')throw new Error("Request timed out (30s). GAS may be unreachable — check deployment URL and permissions.");throw e;}
+  var maxRetries=2;var attempt=0;
+  while(true){
+    attempt++;
+    const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),timeoutMs||30000);
+    try{console.log("[TerminalPro] Fetching (attempt "+attempt+"):",url.toString());const res=await fetch(url.toString(),{signal:controller.signal});clearTimeout(timer);console.log("[TerminalPro] Response status:",res.status);if(!res.ok)throw new Error("HTTP "+res.status+" "+res.statusText);const text=await res.text();console.log("[TerminalPro] Response length:",text.length,"chars");try{const json=JSON.parse(text);console.log("[TerminalPro] Parsed OK. ok=",json.ok,"alertData count=",(json.alertData?json.alertData.length:"N/A"));_apiCache[ck]={data:json,ts:Date.now()};return json;}catch(e){console.error("[TerminalPro] Non-JSON response:",text.substring(0,500));throw new Error("Non-JSON response — redeploy GAS as 'Anyone'");}}catch(e){clearTimeout(timer);var isNetworkError=e.name==='AbortError'||e.message.indexOf('Failed to fetch')!==-1||e.message.indexOf('NetworkError')!==-1||e.message.indexOf('HTTP 5')!==-1;if(isNetworkError&&attempt<=maxRetries){var delay=Math.pow(2,attempt)*1000;console.log("[TerminalPro] Retry "+attempt+"/"+maxRetries+" in "+delay+"ms...");await new Promise(function(r){setTimeout(r,delay);});continue;}if(e.name==='AbortError')throw new Error("Request timed out after "+attempt+" attempt(s). GAS may be unreachable.");throw e;}
+  }
 }
 function setConnStatus(s,msg){document.getElementById("connDot").className="conn-dot "+s;document.getElementById("connDot").title=msg||"API Status";}
-function showApiError(msg){var el=document.getElementById("alertBody");if(el)el.innerHTML='<tr><td colspan="10" style="text-align:center;color:var(--high);padding:40px;font-weight:900;font-size:12px">API ERROR: '+msg+'<br><span style="color:var(--subtext);font-weight:400;font-size:11px;margin-top:8px;display:block">Check browser console for details. Ensure GAS is deployed as "Anyone" (not "Anyone with Google account").</span></td></tr>';}
-function showInitializing(data){var el=document.getElementById("alertBody");if(!el)return;var msg='<tr><td colspan="10" style="text-align:center;padding:60px;font-size:12px">';msg+='<div style="font-size:28px;margin-bottom:12px">&#9881;</div>';msg+='<div style="color:var(--yellow);font-weight:900;font-size:14px;margin-bottom:8px">System Initializing</div>';msg+='<div style="color:var(--subtext);margin-bottom:16px">'+(data.statusMessage||'Sheets are being built. Please wait.')+'</div>';if(data.setupPhase>=0&&data.setupPhase<7){var phases=["Intra Levels","Intra Live","Supporting Sheets","Credit Pairs","Credit Levels","Credit Live","Triggers","Done"];msg+='<div style="color:var(--accent);font-weight:900;font-size:11px">Setup progress: Phase '+data.setupPhase+'/7 — '+phases[data.setupPhase]+'</div>';}msg+='<div style="color:var(--subtext);margin-top:16px;font-size:11px">Auto-refreshing in 30 seconds...</div>';msg+='</td></tr>';el.innerHTML=msg;}
+function showApiError(msg){var el=document.getElementById("alertBody");if(el)el.innerHTML='<tr><td colspan="10" style="text-align:center;color:var(--high);padding:40px;font-weight:900;font-size:12px">API ERROR: '+escHtml(msg)+'<br><span style="color:var(--subtext);font-weight:400;font-size:11px;margin-top:8px;display:block">Check browser console for details. Ensure GAS is deployed as "Anyone" (not "Anyone with Google account").</span></td></tr>';}
+function showInitializing(data){var el=document.getElementById("alertBody");if(!el)return;var msg='<tr><td colspan="10" style="text-align:center;padding:60px;font-size:12px">';msg+='<div style="font-size:28px;margin-bottom:12px">&#9881;</div>';msg+='<div style="color:var(--yellow);font-weight:900;font-size:14px;margin-bottom:8px">System Initializing</div>';msg+='<div style="color:var(--subtext);margin-bottom:16px">'+escHtml(data.statusMessage||'Sheets are being built. Please wait.')+'</div>';if(data.setupPhase>=0&&data.setupPhase<7){var phases=["Intra Levels","Intra Live","Supporting Sheets","Credit Pairs","Credit Levels","Credit Live","Triggers","Done"];msg+='<div style="color:var(--accent);font-weight:900;font-size:11px">Setup progress: Phase '+data.setupPhase+'/7 — '+phases[data.setupPhase]+'</div>';}msg+='<div style="color:var(--subtext);margin-top:16px;font-size:11px">Auto-refreshing in 30 seconds...</div>';msg+='</td></tr>';el.innerHTML=msg;}
 function showDiag(d,ad,data){if(data&&data.status==="initializing"){showInitializing(data);return;}if(ad&&ad.length>0)return;var el=document.getElementById("alertBody");if(!el)return;var msg='<tr><td colspan="10" style="text-align:center;padding:40px;font-size:12px">';if(!d||!d.totalRows){msg+='<div style="color:var(--yellow);font-weight:900">No data rows found in sheet</div><div style="color:var(--subtext);margin-top:8px">Run <b>setupAllBatched()</b> in the Apps Script editor to build the Live sheet.</div>';}else{msg+='<div style="color:var(--yellow);font-weight:900;margin-bottom:12px">'+d.totalRows+' pairs checked — '+d.passed+' passed all filters</div>';if(d.sheetUsed){msg+='<div style="color:var(--subtext);margin-bottom:12px;font-size:11px">Reading from: <b>'+d.sheetUsed+'</b></div>';}msg+='<table style="margin:0 auto;text-align:left;border-spacing:8px 4px"><tr><td style="color:var(--subtext);padding:4px 12px">Blacklisted:</td><td style="color:var(--high);font-weight:900">'+(d.blacklisted||0)+'</td></tr><tr><td style="color:var(--subtext);padding:4px 12px">Intra-only (credit skip):</td><td style="color:var(--high);font-weight:900">'+(d.intraOnly||0)+'</td></tr><tr><td style="color:var(--subtext);padding:4px 12px">No PairID:</td><td style="color:var(--high);font-weight:900">'+d.noId+'</td></tr><tr><td style="color:var(--subtext);padding:4px 12px">No price data:</td><td style="color:var(--high);font-weight:900">'+d.noPrice+'</td></tr><tr><td style="color:var(--subtext);padding:4px 12px">No valid history (StDev=0):</td><td style="color:var(--high);font-weight:900">'+(d.noHistory||d.lowHist||0)+'</td></tr><tr><td style="color:var(--subtext);padding:4px 12px">Missing coupon:</td><td style="color:var(--high);font-weight:900">'+d.noCoupon+'</td></tr><tr><td style="color:var(--subtext);padding:4px 12px">Div dates &gt;45d apart:</td><td style="color:var(--high);font-weight:900">'+(d.divTooFar||0)+'</td></tr><tr><td style="color:var(--subtext);padding:4px 12px">|Z| &lt; 1.8:</td><td style="color:var(--low);font-weight:900">'+d.lowZ+'</td></tr><tr><td style="color:var(--subtext);padding:4px 12px">Passed (signals):</td><td style="color:var(--accent);font-weight:900">'+d.passed+'</td></tr></table>';if(d.sampleRows&&d.sampleRows.length>0){msg+='<div style="margin-top:20px;color:var(--yellow);font-weight:900;font-size:11px;margin-bottom:8px">SAMPLE RAW DATA (first '+d.sampleRows.length+' rows)</div>';msg+='<div style="overflow-x:auto;max-width:100%"><table style="margin:0 auto;text-align:left;border-spacing:6px 3px;font-size:10px;font-family:monospace">';msg+='<tr style="color:var(--accent);font-weight:900"><td>Row</td><td>PairID</td><td>PriceA</td><td>PriceB</td><td>Z-Score</td><td>Mean</td><td>StDev</td><td>HistCnt</td><td>CouponA</td><td>CouponB</td></tr>';for(var i=0;i<d.sampleRows.length;i++){var r=d.sampleRows[i];var pClr=(parseFloat(r.priceA)>0&&parseFloat(r.priceB)>0)?'var(--low)':'var(--high)';var hClr=parseFloat(r.stdev)>0.001?'var(--low)':'var(--high)';var cClr=(r.couponA!==""&&r.couponA!==null&&r.couponA!==""&&r.couponB!==""&&r.couponB!==null)?'var(--low)':'var(--high)';var zClr=Math.abs(parseFloat(r.zScore)||0)>=1.8?'var(--low)':'var(--high)';msg+='<tr><td style="color:var(--subtext)">'+r.row+'</td><td style="color:var(--subtext);max-width:120px;overflow:hidden;text-overflow:ellipsis">'+r.pairId+'</td><td style="color:'+pClr+'">'+r.priceA+'</td><td style="color:'+pClr+'">'+r.priceB+'</td><td style="color:'+zClr+'">'+(parseFloat(r.zScore)||0).toFixed(2)+'</td><td style="color:var(--subtext)">'+(parseFloat(r.mean)||0).toFixed(3)+'</td><td style="color:var(--subtext)">'+(parseFloat(r.stdev)||0).toFixed(4)+'</td><td style="color:'+hClr+'">'+r.histCount+'</td><td style="color:'+cClr+'">'+(r.couponA===""||r.couponA===null?"(empty)":r.couponA)+'</td><td style="color:'+cClr+'">'+(r.couponB===""||r.couponB===null?"(empty)":r.couponB)+'</td></tr>';}msg+='</table></div>';}}msg+='</td></tr>';el.innerHTML=msg;console.log("[TerminalPro] Diagnostics:",JSON.stringify(d));}
 function hideLoader(){var o=document.getElementById("loadingOverlay");if(o){o.classList.add("hidden");setTimeout(function(){o.style.display="none";},500);}}
 window.addEventListener("DOMContentLoaded",async()=>{
@@ -1468,7 +1529,7 @@ async function switchMode(mode,el){if(mode===currentMode)return;currentMode=mode
 function tab(t,el){document.querySelectorAll('.tab-content').forEach(x=>x.classList.remove('active'));document.querySelectorAll('.nav-item').forEach(x=>x.classList.remove('active'));document.getElementById(t).classList.add('active');el.classList.add('active');}
 function openModal(id,tA,tB,exitParams){activeId=id;window._pendingExitParams=exitParams||null;document.getElementById('modalTitle').innerText=id;document.getElementById('lblA').innerText=(tA||"PRICE A")+" PRICE";document.getElementById('lblB').innerText=(tB||"PRICE B")+" PRICE";document.getElementById('pA').value="";document.getElementById('pB').value="";document.getElementById('sA').value="0";document.getElementById('sB').value="0";var epInfo=document.getElementById('exitParamsInfo');if(epInfo){if(exitParams&&exitParams.targetExitZ){epInfo.style.display='block';epInfo.innerHTML='<span style="color:var(--low);font-weight:900">Exit targets will be stamped:</span> Exit Z: '+parseFloat(exitParams.targetExitZ).toFixed(1)+'σ · Profit capture: '+(exitParams.profitCapturePct||'—')+'% · Max hold: '+(exitParams.maxHoldDays||'—')+'d';}else{epInfo.style.display='none';}}document.getElementById('entryModal').style.display='block';}
 function closeModal(){document.getElementById('entryModal').style.display='none';}
-async function doSubmit(){try{var params={id:activeId,priceA:document.getElementById('pA').value,priceB:document.getElementById('pB').value,sizeA:document.getElementById('sA').value,sizeB:document.getElementById('sB').value};var ep=window._pendingExitParams;if(ep){if(ep.targetExitZ)params.targetExitZ=ep.targetExitZ;if(ep.profitCapturePct)params.profitCapturePct=ep.profitCapturePct;if(ep.partialAtPct)params.partialAtPct=ep.partialAtPct;if(ep.sourcePortfolio)params.sourcePortfolio=ep.sourcePortfolio;if(ep.maxHoldDays)params.maxHoldDays=ep.maxHoldDays;}window._pendingExitParams=null;await apiGet("saveTrade",params);closeModal();refreshData();}catch(e){alert("Failed to save.");}}
+async function doSubmit(){try{var pA=parseFloat(document.getElementById('pA').value);var pB=parseFloat(document.getElementById('pB').value);var sA=parseFloat(document.getElementById('sA').value);var sB=parseFloat(document.getElementById('sB').value);if(isNaN(pA)||isNaN(pB)||pA<=0||pB<=0){alert('Enter valid positive prices for both legs.');return;}if((isNaN(sA)||sA===0)&&(isNaN(sB)||sB===0)){alert('Enter a non-zero share count for at least one leg.');return;}if(pA>10000||pB>10000){alert('Price exceeds $10,000 — check for typos.');return;}if(Math.abs(sA)>100000||Math.abs(sB)>100000){alert('Size exceeds 100,000 shares — check for typos.');return;}var params={id:activeId,priceA:pA,priceB:pB,sizeA:sA,sizeB:sB};var ep=window._pendingExitParams;if(ep){if(ep.targetExitZ)params.targetExitZ=ep.targetExitZ;if(ep.profitCapturePct)params.profitCapturePct=ep.profitCapturePct;if(ep.partialAtPct)params.partialAtPct=ep.partialAtPct;if(ep.sourcePortfolio)params.sourcePortfolio=ep.sourcePortfolio;if(ep.maxHoldDays)params.maxHoldDays=ep.maxHoldDays;}window._pendingExitParams=null;await apiGet("saveTrade",params);closeModal();refreshData();}catch(e){alert("Failed to save: "+(e.message||e));}}
 // ── UNIFIED MANAGE POSITION MODAL ──
 var _mg={id:'',cardId:'',tA:'',tB:'',pA:0,pB:0,sA:0,sB:0,costA:0,costB:0,paidDiv:0,rcvdDiv:0,reason:''};
 var _mgReasons=['Target Hit','Time Stop','Stop Loss','Manual','Thesis Changed'];
@@ -1527,9 +1588,9 @@ var cg=((epA-_mg.costA)*_mg.sA)+((epB-_mg.costB)*_mg.sB);
 var nd=_mg.rcvdDiv-_mg.paidDiv;var net=cg+nd;var clr=net>=0?'var(--low)':'var(--high)';
 document.getElementById('mgClosePnlPreview').style.display='block';
 document.getElementById('mgClosePnlPreview').innerHTML='<div style="font-size:9px;font-weight:900;color:var(--subtext);text-transform:uppercase;margin-bottom:8px">PnL Preview</div><div style="display:flex;justify-content:space-between"><span style="color:var(--subtext)">Cap Gains</span><span style="color:'+(cg>=0?'var(--low)':'var(--high)')+'">'+(cg>=0?'+':'')+cg.toFixed(2)+'$</span></div><div style="display:flex;justify-content:space-between"><span style="color:var(--subtext)">Net Div</span><span style="color:'+(nd>=0?'var(--low)':'var(--high)')+'">'+(nd>=0?'+':'')+nd.toFixed(2)+'$</span></div><div style="border-top:1px solid var(--border);margin-top:6px;padding-top:6px;display:flex;justify-content:space-between;font-weight:900"><span style="color:var(--text)">Net PnL</span><span style="color:'+clr+'">'+(net>=0?'+':'')+net.toFixed(2)+'$</span></div>';}
-async function mgDoAdd(){closeManageModal();try{await apiGet("saveTrade",{id:_mg.id,priceA:document.getElementById('mgAddPriceA').value,priceB:document.getElementById('mgAddPriceB').value,sizeA:document.getElementById('mgAddSizeA').value,sizeB:document.getElementById('mgAddSizeB').value});refreshData();}catch(e){alert("Failed to add shares.");}}
-async function mgDoReduce(){var rA=document.getElementById('mgReduceA').value||0;var rB=document.getElementById('mgReduceB').value||0;var epA=document.getElementById('mgReducePriceA').value.trim();var epB=document.getElementById('mgReducePriceB').value.trim();closeManageModal();var c=document.getElementById(_mg.cardId);if(c)c.style.opacity="0.5";try{var params={id:_mg.id,reduceA:rA,reduceB:rB};if(epA)params.exitPriceA=epA;if(epB)params.exitPriceB=epB;if(_mg.reason)params.closeReason=_mg.reason;await apiGet("partialClose",params);refreshData();}catch(e){if(c)c.style.opacity="1";alert("Failed to reduce position.");}}
-async function mgDoClose(){var epA=document.getElementById('mgClosePriceA').value.trim();var epB=document.getElementById('mgClosePriceB').value.trim();closeManageModal();var c=document.getElementById(_mg.cardId);if(c)c.style.opacity="0.5";try{var params={id:_mg.id};if(epA)params.exitPriceA=epA;if(epB)params.exitPriceB=epB;if(_mg.reason)params.closeReason=_mg.reason;await apiGet("closeTrade",params);refreshData();}catch(e){if(c)c.style.opacity="1";alert("Failed to close trade.");}}
+async function mgDoAdd(){var pA=parseFloat(document.getElementById('mgAddPriceA').value);var pB=parseFloat(document.getElementById('mgAddPriceB').value);var sA=parseFloat(document.getElementById('mgAddSizeA').value);var sB=parseFloat(document.getElementById('mgAddSizeB').value);if(isNaN(pA)||isNaN(pB)||pA<=0||pB<=0){alert('Enter valid positive prices.');return;}if((isNaN(sA)||sA===0)&&(isNaN(sB)||sB===0)){alert('Enter a non-zero share count.');return;}closeManageModal();try{await apiGet("saveTrade",{id:_mg.id,priceA:pA,priceB:pB,sizeA:sA,sizeB:sB});refreshData();}catch(e){alert("Failed to add shares: "+(e.message||e));}}
+async function mgDoReduce(){var rA=parseFloat(document.getElementById('mgReduceA').value)||0;var rB=parseFloat(document.getElementById('mgReduceB').value)||0;if(rA<=0&&rB<=0){alert('Enter a positive number of shares to reduce.');return;}var epA=document.getElementById('mgReducePriceA').value.trim();var epB=document.getElementById('mgReducePriceB').value.trim();if(epA&&(isNaN(parseFloat(epA))||parseFloat(epA)<=0)){alert('Exit price A must be a positive number.');return;}if(epB&&(isNaN(parseFloat(epB))||parseFloat(epB)<=0)){alert('Exit price B must be a positive number.');return;}closeManageModal();var c=document.getElementById(_mg.cardId);if(c)c.style.opacity="0.5";try{var params={id:_mg.id,reduceA:rA,reduceB:rB};if(epA)params.exitPriceA=parseFloat(epA);if(epB)params.exitPriceB=parseFloat(epB);if(_mg.reason)params.closeReason=_mg.reason;await apiGet("partialClose",params);refreshData();}catch(e){if(c)c.style.opacity="1";alert("Failed to reduce position: "+(e.message||e));}}
+async function mgDoClose(){var epA=document.getElementById('mgClosePriceA').value.trim();var epB=document.getElementById('mgClosePriceB').value.trim();if(epA&&(isNaN(parseFloat(epA))||parseFloat(epA)<=0)){alert('Exit price A must be a positive number.');return;}if(epB&&(isNaN(parseFloat(epB))||parseFloat(epB)<=0)){alert('Exit price B must be a positive number.');return;}closeManageModal();var c=document.getElementById(_mg.cardId);if(c)c.style.opacity="0.5";try{var params={id:_mg.id};if(epA)params.exitPriceA=parseFloat(epA);if(epB)params.exitPriceB=parseFloat(epB);if(_mg.reason)params.closeReason=_mg.reason;await apiGet("closeTrade",params);refreshData();}catch(e){if(c)c.style.opacity="1";alert("Failed to close trade: "+(e.message||e));}}
 var divTargetId='',divType='';
 function openDivModal(id,type){divTargetId=id;divType=type;document.getElementById('divAmount').value='';var btn=document.getElementById('divSubmitBtn');if(type==='paid'){document.getElementById('divModalTitle').innerText='Add Paid Dividend';document.getElementById('divModalSub').innerText='Short leg dividend owed — enters as cost';btn.className='div-submit paid';btn.innerText='Record Paid Div';}else{document.getElementById('divModalTitle').innerText='Add Received Dividend';document.getElementById('divModalSub').innerText='Long leg dividend received — enters as income';btn.className='div-submit rcvd';btn.innerText='Record Received Div';}document.getElementById('divModal').style.display='flex';}
 function closeDivModal(){document.getElementById('divModal').style.display='none';}
@@ -1613,10 +1674,10 @@ function pickSector(sec,label){activeSector=sec;var lbl=document.getElementById(
 document.addEventListener('click',function(e){var dd=document.getElementById('secDropdown');if(dd&&!dd.contains(e.target))dd.classList.remove('open');});
 function sortAge(){sortBy('data-age');}function sortZ(){sortBy('data-z',true);}function sortLiq(){sortBy('data-liq');}function sortProfit(){sortBy('data-profit');}
 function sortBy(attr,abs){const tb=document.querySelector("#alertBody");const rows=Array.from(tb.querySelectorAll("tr.alert-row"));rows.sort((a,b)=>{let av=parseFloat(a.getAttribute(attr))||0,bv=parseFloat(b.getAttribute(attr))||0;if(abs){av=Math.abs(av);bv=Math.abs(bv);}return sortAsc?(bv-av):(av-bv);});rows.forEach(r=>tb.appendChild(r));sortAsc=!sortAsc;applyFilters();}
-function toggleLive(){if(document.getElementById('autoRefresh').checked){refreshData();liveTimer=setInterval(()=>{if(document.getElementById('entryModal').style.display!=='block')refreshData();},300000);}else clearInterval(liveTimer);}
-async function refreshData(){try{setConnStatus("loading");const data=await apiGet("getData",{mode:currentMode});if(data&&data.ok){updateUI(data);setConnStatus("ok");}else setConnStatus("err");}catch(e){setConnStatus("err");}}
+function toggleLive(){if(liveTimer){clearInterval(liveTimer);liveTimer=null;}if(document.getElementById('autoRefresh').checked){refreshData();liveTimer=setInterval(()=>{if(document.getElementById('entryModal').style.display!=='block')refreshData();},300000);}}
+async function refreshData(){try{setConnStatus("loading");const data=await apiGet("getData",{mode:currentMode});if(data&&data.ok){updateUI(data);setConnStatus("ok");}else{setConnStatus("err");showToast('Data refresh failed'+(data&&data.message?' \u2014 '+data.message:''),'error');}}catch(e){setConnStatus("err");showToast('Connection error: '+(e.message||e),'error');}}
 // ── SCREENER CACHE ──
-async function loadScreenerCache(){try{var data=await apiGet('getScreenerData');if(data&&data.ok&&data.screenerData){screenerCache={};data.screenerData.forEach(function(s){screenerCache[cleanIdFE(s.id)]=s;});var ageEl=document.getElementById('screenerAge');if(ageEl&&data.screenerData.length>0){var ts=data.screenerData[0].ts;if(ts){var d=new Date(ts);var hrs=Math.round((Date.now()-d.getTime())/3600000);ageEl.innerText='Screener: '+data.screenerData.length+' pairs analyzed'+(hrs>0?' ('+hrs+'h ago)':'');}}console.log('[TerminalPro] Screener cache loaded:',data.screenerData.length,'pairs');console.log('[Kelly Debug] Screener avgMae sample:',data.screenerData.slice(0,5).map(function(s){return s.id+': avgMae='+s.avgMae+' ep30='+s.ep30+' wr30='+s.wr30;}));}}catch(e){console.log('[TerminalPro] Screener cache unavailable');}}
+async function loadScreenerCache(){try{var data=await apiGet('getScreenerData');if(data&&data.ok&&data.screenerData){screenerCache={};data.screenerData.forEach(function(s){screenerCache[cleanIdFE(s.id)]=s;});var ageEl=document.getElementById('screenerAge');if(ageEl&&data.screenerData.length>0){var ts=data.screenerData[0].ts;if(ts){var d=new Date(ts);var hrs=Math.round((Date.now()-d.getTime())/3600000);ageEl.innerText='Screener: '+data.screenerData.length+' pairs analyzed'+(hrs>0?' ('+hrs+'h ago)':'');}}console.log('[TerminalPro] Screener cache loaded:',data.screenerData.length,'pairs');// console.log('[Kelly Debug] Screener avgMae sample:',data.screenerData.slice(0,5).map(function(s){return s.id+': avgMae='+s.avgMae+' ep30='+s.ep30+' wr30='+s.wr30;}));}}catch(e){console.log('[TerminalPro] Screener cache unavailable');showToast('Screener cache unavailable','warn',3000);}}
 // ── MODEL PORTFOLIOS ──
 async function tabModelPortfolios(el){document.querySelectorAll('.tab-content').forEach(x=>x.classList.remove('active'));document.querySelectorAll('.nav-item').forEach(x=>x.classList.remove('active'));document.getElementById('modelPortfoliosTab').classList.add('active');el.classList.add('active');await loadModelPortfolios();}
 async function loadModelPortfolios(){
@@ -1849,9 +1910,9 @@ function mpLoadToSandbox(idx){
 }
 // ── WATCHLIST ──
 async function loadWatchlistIds(){try{const data=await apiGet("getWatchlist");if(data&&data.ok&&data.watchlistData){watchlistIds=new Set(data.watchlistData.map(function(w){return w.id.replace(/[^a-zA-Z0-9]/g,'').toUpperCase();}));document.querySelectorAll('.star-btn').forEach(function(btn){var btnKey=btn.id.replace('star-','').toUpperCase();if(watchlistIds.has(btnKey)){btn.innerHTML='&#9733;';btn.classList.add('saved');}});var ct=document.getElementById('watchCount');if(ct)ct.innerText=data.watchlistData.length>0?'('+data.watchlistData.length+')':'';}}catch(e){}}
-async function addToWatchlist(id,btn){try{var cid=id.replace(/[^a-zA-Z0-9]/g,'').toUpperCase();var wasStarred=watchlistIds.has(cid);if(wasStarred){btn.innerHTML='&#9734;';btn.classList.remove('saved');watchlistIds.delete(cid);await apiGet("removeWatchlist",{id:id});}else{btn.innerHTML='&#9733;';btn.classList.add('saved');watchlistIds.add(cid);await apiGet("saveWatchlist",{id:id,mode:currentMode});}// Update data-starred on alert row
-var row=btn.closest('tr.alert-row');if(row)row.setAttribute('data-starred',wasStarred?'0':'1');}catch(e){/* revert on error */}}
-async function removeFromWatchlistUI(id,cardEl){if(cardEl)cardEl.style.opacity='0.4';try{await apiGet("removeWatchlist",{id:id});await loadWatchlist();}catch(e){if(cardEl)cardEl.style.opacity='1';}}
+async function addToWatchlist(id,btn){try{var cid=cleanIdFE(id);var wasStarred=watchlistIds.has(cid);if(wasStarred){btn.innerHTML='&#9734;';btn.classList.remove('saved');watchlistIds.delete(cid);await apiGet("removeWatchlist",{id:id});}else{btn.innerHTML='&#9733;';btn.classList.add('saved');watchlistIds.add(cid);await apiGet("saveWatchlist",{id:id,mode:currentMode});}// Update data-starred on alert row
+var row=btn.closest('tr.alert-row');if(row)row.setAttribute('data-starred',wasStarred?'0':'1');}catch(e){showToast('Watchlist update failed: '+(e.message||e),'error');}}
+async function removeFromWatchlistUI(id,cardEl){if(cardEl)cardEl.style.opacity='0.4';try{await apiGet("removeWatchlist",{id:id});await loadWatchlist();}catch(e){if(cardEl)cardEl.style.opacity='1';showToast('Failed to remove from watchlist','error');}}
 async function tabWatchlist(el){document.querySelectorAll('.tab-content').forEach(x=>x.classList.remove('active'));document.querySelectorAll('.nav-item').forEach(x=>x.classList.remove('active'));document.getElementById('watchlist').classList.add('active');el.classList.add('active');await loadWatchlist();}
 async function loadWatchlist(){try{setConnStatus("loading");const data=await apiGet("getWatchlist");if(data&&data.ok){renderWatchlist(data.watchlistData||[]);setConnStatus("ok");}else setConnStatus("err");}catch(e){setConnStatus("err");}}
 function renderWatchlist(wd){var grid=document.getElementById('watchlistGrid');var ct=document.getElementById('watchCount');ct.innerText=wd.length>0?'('+wd.length+')':'';if(!wd||wd.length===0){grid.innerHTML='<div class="watch-empty"><div style="font-size:28px;margin-bottom:12px">&#9734;</div><div style="font-weight:900;margin-bottom:8px">No pairs on your Watchlist</div><div>Click the star icon on any alert to start watching it.</div></div>';return;}
@@ -2845,24 +2906,24 @@ var kellyShares=null,kellyFraction=null,winRate=null;
 var scrKey=cleanIdFE(p.id);
 var scr=screenerCache[scrKey];
 var kWinRate=null,kAvgWin=0,kAvgLoss=(scr&&parseFloat(scr.avgMae)>0)?parseFloat(scr.avgMae):spreadRisk;
-console.log('[Kelly Debug] Sizer pair='+p.id+' scrKey='+scrKey+' scrFound='+(!!scr)+' avgMae='+(scr?scr.avgMae:'N/A')+' spreadRisk='+spreadRisk.toFixed(4)+' kAvgLoss='+kAvgLoss.toFixed(4));
+// console.log('[Kelly Debug] Sizer pair='+p.id+' scrKey='+scrKey+' scrFound='+(!!scr)+' avgMae='+(scr?scr.avgMae:'N/A')+' spreadRisk='+spreadRisk.toFixed(4)+' kAvgLoss='+kAvgLoss.toFixed(4));
 if(scr&&scr.wr30!==undefined&&scr.ep30!==undefined){
 kWinRate=parseFloat(scr.wr30)/100;
 kAvgWin=parseFloat(scr.ep30)||0;
-console.log('[Kelly Debug]   → screener path: wr30='+scr.wr30+' ep30='+scr.ep30+' avgMae='+scr.avgMae);
+// console.log('[Kelly Debug]   → screener path: wr30='+scr.wr30+' ep30='+scr.ep30+' avgMae='+scr.avgMae);
 } else if(p.winRate>0&&p.avgWin>0&&p.avgLoss>0){
 kWinRate=p.winRate/100;
 kAvgWin=p.avgWin;
 kAvgLoss=p.avgLoss;
-console.log('[Kelly Debug]   → backtest path: winRate='+p.winRate+' avgWin='+p.avgWin+' avgLoss='+p.avgLoss);
+// console.log('[Kelly Debug]   → backtest path: winRate='+p.winRate+' avgWin='+p.avgWin+' avgLoss='+p.avgLoss);
 } else {
-console.log('[Kelly Debug]   → NO DATA: scr=',scr,' p.winRate='+p.winRate+' p.avgWin='+p.avgWin);
+// console.log('[Kelly Debug]   → NO DATA: scr=',scr,' p.winRate='+p.winRate+' p.avgWin='+p.avgWin);
 }
 if(kWinRate!==null&&kAvgWin>0&&kAvgLoss>0&&kWinRate>0&&kWinRate<=1){
 winRate=kWinRate;
 var b=kAvgWin/kAvgLoss;
 var kelly=Math.min((winRate*b-(1-winRate))/b,1.0);
-console.log('[Kelly Debug]   → RESULT: b='+b.toFixed(4)+' kelly='+kelly.toFixed(4)+' shares='+shares+' kellyShares='+Math.floor(shares*Math.min(kelly*0.5,1.0)));
+// console.log('[Kelly Debug]   → RESULT: b='+b.toFixed(4)+' kelly='+kelly.toFixed(4)+' shares='+shares+' kellyShares='+Math.floor(shares*Math.min(kelly*0.5,1.0)));
 if(kelly>0){kellyFraction=parseFloat((kelly*100).toFixed(1));kellyShares=Math.floor(shares*Math.min(kelly*0.5,1.0));}
 }
 recs.push({tA:alert.tA,tB:alert.tB,z:parseFloat(alert.z),stdev:parseFloat(stdev.toFixed(4)),shares:shares,notional:parseFloat(notional.toFixed(2)),maxLoss:parseFloat(maxLossActual.toFixed(2)),kellyShares:kellyShares,kellyFraction:kellyFraction,winRate:winRate!==null?parseFloat((winRate*100).toFixed(1)):null,expProfit:alert.expProfit,avgMae:scr?scr.avgMae:null,spreadRisk:parseFloat(spreadRisk.toFixed(4)),lossSource:scr&&parseFloat(scr.avgMae)>0?'MAE':'2\u03C3'});
@@ -2958,12 +3019,12 @@ var maxLossActual=shares*spreadRisk;
 var kellyShares=null,kellyFrac=null,winRate=null;
 var scrKey=cleanIdFE(pairId);
 var scr=screenerCache[scrKey];
-console.log('[Kelly Debug] Inline pair='+pairId+' scrKey='+scrKey+' scrFound='+(!!scr)+' avgMae='+(scr?scr.avgMae:'N/A')+' spreadRisk='+spreadRisk.toFixed(4));
+// console.log('[Kelly Debug] Inline pair='+pairId+' scrKey='+scrKey+' scrFound='+(!!scr)+' avgMae='+(scr?scr.avgMae:'N/A')+' spreadRisk='+spreadRisk.toFixed(4));
 if(scr&&scr.wr30!==undefined&&scr.ep30!==undefined){
 winRate=parseFloat(scr.wr30)/100;
 var avgW=parseFloat(scr.ep30)||0;
 var avgL=(scr&&parseFloat(scr.avgMae)>0)?parseFloat(scr.avgMae):spreadRisk;
-console.log('[Kelly Debug]   → inline: avgMae='+scr.avgMae+' avgL='+avgL.toFixed(4)+' avgW='+avgW.toFixed(4)+' wr='+scr.wr30);
+// console.log('[Kelly Debug]   → inline: avgMae='+scr.avgMae+' avgL='+avgL.toFixed(4)+' avgW='+avgW.toFixed(4)+' wr='+scr.wr30);
 if(avgW>0&&avgL>0&&winRate>0&&winRate<=1){
 var b2=avgW/avgL;
 var k2=Math.min((winRate*b2-(1-winRate))/b2,1.0);
