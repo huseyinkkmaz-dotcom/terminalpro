@@ -280,9 +280,7 @@ td:last-child{border-radius:0 6px 6px 0}
 .pa-empty{text-align:center;padding:80px 20px;color:var(--subtext)}
 .pa-empty-icon{font-size:40px;margin-bottom:16px}
 .pa-empty-title{font-weight:900;font-size:16px;margin-bottom:8px;color:var(--text)}
-/* ── Screener: Score Column + Filter Pills + Inline Analyze ── */
-.score-bar{width:40px;height:5px;border-radius:3px;background:rgba(255,255,255,.06);overflow:hidden}
-.score-bar-fill{height:100%;border-radius:3px;transition:width .3s}
+/* ── Screener: Filter Pills + Inline Analyze ── */
 .filter-pills{display:flex;gap:8px;align-items:center}
 .filter-pill{padding:6px 14px;border-radius:8px;font-size:10px;font-weight:900;text-transform:uppercase;letter-spacing:0.5px;cursor:pointer;border:1.5px solid var(--border);background:transparent;color:var(--subtext);transition:.2s}
 .filter-pill:hover{border-color:var(--accent);color:var(--accent)}
@@ -490,12 +488,6 @@ td:last-child{border-radius:0 6px 6px 0}
 .alert-row:hover .instr-tools{opacity:1}
 .instr-cell{display:flex;align-items:center;gap:10px}
 .instr-meta{display:flex;gap:6px;align-items:center;margin-top:3px;flex-wrap:wrap}
-/* Improved score badge */
-.score-cell{display:flex;align-items:center;gap:8px}
-.score-badge{font-family:'JetBrains Mono';font-weight:900;font-size:14px;padding:4px 10px;border-radius:6px;min-width:34px;text-align:center;line-height:1}
-.score-ring{width:28px;height:28px;border-radius:50%;position:relative;display:flex;align-items:center;justify-content:center}
-.score-ring svg{width:28px;height:28px;transform:rotate(-90deg)}
-.score-ring circle{fill:none;stroke-width:3}
 /* Improved macro bar with visual groups */
 .macro-bar-group{display:flex;align-items:center;gap:8px;padding:4px 12px;background:rgba(255,255,255,.02);border-radius:6px;border:1px solid rgba(255,255,255,.04)}
 /* Cleaner table headers */
@@ -1153,163 +1145,6 @@ function sqPopulateCalc(idx){
     analyticsTab.classList.add('active');
     document.querySelectorAll('.nav-item').forEach(function(x){if(x.textContent.trim().indexOf('Analytics')!==-1)x.classList.add('active');});
   }
-}
-// ── COMPOSITE SETUP SCORE (0-100) — V3 (Quant-Audited) ──
-// STATUS: DEPRECATED — no longer rendered in the alerts table (removed in commit 3cdbbcc
-// when the dashboard was restructured). Retained for reference and possible future reuse.
-// The quality column now surfaces ADF/half-life/call-risk directly as standalone badges.
-// Ranks alert quality for pair trading entry. Higher = better setup.
-//
-// COMPONENT BREAKDOWN (max theoretical ~91 before penalties):
-//   1. Z-Score magnitude      0-15 pts   Sweet spot 2.0-3.0σ; extreme >3.5 penalized
-//   2. Net Expected Profit    0-15 pts   Absolute $ thresholds: $0.20/$0.50/$1.00/$1.50
-//   3. Liquidity              0-10 pts   Log-scale: log10(avgVol/1000) × 3.3
-//   4. Volume Spike           0-3  pts   Binary: 1.5× avg volume = institutional interest
-//   5. Z-Trend momentum       0-12 pts   Weighted convergence of last 4 hourly Z readings
-//   6. Half-life quality      0-12 pts   OU half-life 3-30d ideal + age/HL ratio 0.5-2.0×
-//   7. Yield carry            0-6  pts   Avg coupon yield / 7 × 6
-//   8. Div proximity          -5/+3 pts  Short leg ex-div ≤10d: -5; long leg ≤10d: +3
-//   9. Call risk penalty      0 to -8    Above-par premium × 2 per leg (capped 4 each)
-//  10. Screener bonus         0-5  pts   Pre-computed 30d win rate: ≥70%=5, ≥60%=3, ≥50%=1
-// 10b. Robustness modifier    -5/+5 pts  Robustness score bands; suspicious WR/noise flags
-//  11. Regime awareness       -2/+3 pts  MEAN_REVERT=+3, TRENDING=-2, VOLATILE+lowZ=-1
-//  ADF nudge                  -5/+5 pts  PASS=+5, WEAK=0, FAIL=-5 (informational, no cap)
-//
-// Final score clamped to [0, 100].
-// r = alert row object, maxEP = unused (kept for signature compat)
-function computeSetupScore(r, maxEP) {
-  var score = 0;
-  var az = Math.abs(parseFloat(r.z) || 0);
-  var ep = parseFloat(r.expProfit) || 0;
-  var liq = parseFloat(r.liq) || 0;
-  var age = parseInt(r.age) || 0;
-  var yA = parseFloat(r.yA) || 0, yB = parseFloat(r.yB) || 0;
-  var adfPass = r.adfPass || false;
-  var adfState = r.adfState || (adfPass ? 'pass' : 'fail');
-  var halfLife = r.halfLife || null;
-  var halfLifeValid = r.halfLifeValid || false;
-
-  // ── ADF: informational nudge, not a hard cap (Tier 1 fix) ──
-  // PASS (5%) → +5, WEAK (10%) → 0, FAIL → -5. Half-life carries the weight.
-  var adfNudge = adfState === 'pass' ? 5 : (adfState === 'weak' ? 0 : -5);
-
-  // 1. Z-Score magnitude (0-15): entry signal strength
-  //    Sweet spot is half-life dependent: if HL known, 2.0-2.5 is ideal
-  //    Extreme Z (>3.5) gets a slight penalty (structural break risk)
-  if (az >= 2.0 && az <= 3.0) score += 15;
-  else if (az > 3.0 && az <= 3.5) score += 12; // high but possibly structural
-  else if (az > 3.5) score += 8; // extreme — likely structural if no ADF pass
-  else score += Math.max(0, (az - 1.8) / 0.2 * 7); // 1.8-2.0 ramp: 0-7pts
-
-  // 2. Net Expected Profit (0-15): already net of transaction costs from backend
-  //    No longer scaled to dataset max (removes instability)
-  //    Absolute thresholds: $0.50+ per share is meaningful for preferreds
-  if (ep >= 1.5) score += 15;
-  else if (ep >= 1.0) score += 12;
-  else if (ep >= 0.5) score += 8;
-  else if (ep >= 0.2) score += 4;
-  else score += 0; // sub-$0.20 net profit = not worth the risk
-
-  // 3. Liquidity (0-10): smooth log-scale
-  if (liq > 0) {
-    score += Math.min(10, Math.round(Math.log10(Math.max(1, liq / 1000)) * 3.3));
-  }
-
-  // 4. Volume Spike (0-3): institutional interest signal (reduced from 5)
-  if (r.volSpike) score += 3;
-
-  // 5. Z-Trend momentum (0-12): convergence signal
-  if (r.zTrend && r.zTrend.length >= 2) {
-    var absVals = r.zTrend.map(function(v) { return Math.abs(parseFloat(v) || 0); });
-    var recent = absVals.slice(-4);
-    var totalDelta = 0;
-    for (var i = 1; i < recent.length; i++) {
-      var weight = i / (recent.length - 1);
-      totalDelta += (recent[i-1] - recent[i]) * weight;
-    }
-    if (totalDelta > 0.3) score += 12;
-    else if (totalDelta > 0.1) score += 8;
-    else if (totalDelta > -0.1) score += 4;
-    else score += 0; // diverging
-  }
-
-  // 6. Half-life quality (0-12): replaces arbitrary age curve
-  //    Ideal: half-life exists, is 3-30 days, and age is near 1-2× half-life
-  if (halfLifeValid && halfLife > 0) {
-    // Half-life in tradeable range
-    if (halfLife >= 3 && halfLife <= 30) score += 8;
-    else if (halfLife > 30 && halfLife <= 60) score += 4;
-    else score += 1; // very slow or very fast reversion
-
-    // Age relative to half-life (is the trade ripe?)
-    if (halfLife > 0 && age > 0) {
-      var ageRatio = age / halfLife;
-      if (ageRatio >= 0.5 && ageRatio <= 2.0) score += 4; // in the sweet zone
-      else if (ageRatio > 2.0 && ageRatio <= 4.0) score += 2; // aging
-      // >4× half-life = likely structural, no bonus
-    }
-  } else {
-    // No half-life data: fall back to simple age heuristic (capped lower)
-    if (age >= 3 && age <= 15) score += 5;
-    else if (age >= 1 && age <= 2) score += 3;
-    else score += 1;
-  }
-
-  // 7. Yield carry (0-6): income buffer (reduced from 8)
-  var avgY = (yA + yB) / 2;
-  score += Math.min(6, avgY / 7 * 6);
-
-  // 8. Div proximity (penalty/bonus): context-dependent
-  if (r.exDivA || r.exDivB) {
-    var now = new Date();
-    var checkDiv = function(dt) {
-      if (!dt) return 999;
-      var d = new Date(dt + 'T00:00:00');
-      return Math.max(0, (d - now) / 86400000);
-    };
-    var divDaysA = checkDiv(r.exDivA), divDaysB = checkDiv(r.exDivB);
-    var z = parseFloat(r.z) || 0;
-    var shortLeg = z > 0 ? 'A' : 'B';
-    var shortDivDays = shortLeg === 'A' ? divDaysA : divDaysB;
-    var longDivDays = shortLeg === 'A' ? divDaysB : divDaysA;
-    if (shortDivDays <= 10) score -= 5;
-    if (longDivDays <= 10 && longDivDays < shortDivDays) score += 3;
-  }
-
-  // 9. Call risk penalty (-8): above-par callable preferred has asymmetric downside
-  if (r.callRiskA && r.callRiskA.abovePar) score -= Math.min(4, Math.round(r.callRiskA.premium * 2));
-  if (r.callRiskB && r.callRiskB.abovePar) score -= Math.min(4, Math.round(r.callRiskB.premium * 2));
-
-  // 10. Screener bonus (0-5): reduced from 7, requires sufficient samples
-  var scr = screenerCache[cleanIdFE(r.id)];
-  if (scr && scr.wr30 !== null) {
-    if (scr.wr30 >= 70) score += 5;
-    else if (scr.wr30 >= 60) score += 3;
-    else if (scr.wr30 >= 50) score += 1;
-  }
-
-  // 10b. Robustness modifier (-5 to +5)
-  if (scr && scr.robustness !== undefined) {
-    if (scr.robustness >= 60) score += 5;
-    else if (scr.robustness >= 45) score += 2;
-    else if (scr.robustness < 25) score -= 5;
-    else if (scr.robustness < 35) score -= 2;
-    if (scr.robustnessFlags && scr.robustnessFlags.indexOf('SUSPICIOUS_WR') !== -1) score -= 3;
-    if (scr.robustnessFlags && scr.robustnessFlags.indexOf('NOISE_LEVEL') !== -1) score -= 3;
-  }
-
-  // 11. Regime awareness (0-3)
-  if (window._regimeData && window._regimeData.regime) {
-    var reg = window._regimeData.regime;
-    if (reg === 'MEAN_REVERT') score += 3;
-    else if (reg === 'TRENDING') score -= 2;
-    else if (reg === 'VOLATILE' && az < 2.2) score -= 1;
-  }
-
-  // ADF nudge applied (no hard cap)
-  score += adfNudge;
-  var finalScore = Math.max(0, Math.min(100, Math.round(score)));
-  return finalScore;
 }
 function cleanIdFE(id) { return String(id).replace(/\|/g, '_').replace(/[^a-zA-Z0-9_-]/g, '').toUpperCase(); }
 function escHtml(s){if(s==null)return'';return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
@@ -2022,10 +1857,14 @@ h+='<td><div class="mono-data" style="font-size:11px;color:'+velClr+'">'+velocit
 var adfSt=r.adfState||(r.adfPass?'pass':'fail');var hlVal=r.halfLife;var hlValid=r.halfLifeValid;
 var callA=r.callRiskA;var callB=r.callRiskB;
 var qParts=[];
-// ADF badge — tri-state (PASS/WEAK/FAIL)
+// ADF badge — quad-state (PASS/RESCUED/WEAK/FAIL)
 if(adfSt==='pass'){qParts.push('<span style="color:var(--low);font-size:9px;font-weight:900" title="ADF passed at 5% — spread is statistically stationary ('+r.adfConf+'). Mean reversion is supported by the data.">&#10003; ADF</span>');}
+else if(adfSt==='rescued'){qParts.push('<span style="color:var(--low);font-size:9px;font-weight:900" title="ADF weak (10% only) but half-life is in the clean 5-25d window. Two independent stats agree mean reversion is tradeable.">&#10003; ADF*</span>');}
 else if(adfSt==='weak'){qParts.push('<span style="color:var(--yellow);font-size:9px;font-weight:900" title="ADF passed only at 10% — weak evidence of stationarity. Tradeable but verify with half-life.">~ ADF</span>');}
 else{qParts.push('<span style="color:var(--high);font-size:9px;font-weight:900" title="ADF failed — no evidence of mean reversion in the lookback window. Z-scores may be misleading.">&#10007; ADF</span>');}
+// Tier 3 — rolling 60d ADF regime warning
+if(r.adfRegime==='decaying'){qParts.push('<span style="color:var(--high);font-size:9px;font-weight:900;background:rgba(239,68,68,.12);padding:1px 4px;border-radius:3px" title="Full-window ADF passes but the trailing 60d ADF fails (t='+(r.rollingAdfT||'—')+'). This pair WAS cointegrated, ISN\u0027T ANYMORE — likely regime break. Trade with extra caution.">&#9888; DECAY</span>');}
+else if(r.adfRegime==='emerging'){qParts.push('<span style="color:var(--yellow);font-size:8px;font-weight:700" title="Full-window ADF fails but trailing 60d ADF passes. Pair may be newly cointegrated — treat as speculative.">EMERGING</span>');}
 // Half-life
 if(hlValid&&hlVal){qParts.push('<span style="color:var(--accent);font-size:9px;font-weight:700" title="OU half-life: '+hlVal+' trading days">HL:'+hlVal+'d</span>');}
 else{qParts.push('<span style="color:var(--subtext);font-size:9px" title="Half-life could not be computed">HL:—</span>');}

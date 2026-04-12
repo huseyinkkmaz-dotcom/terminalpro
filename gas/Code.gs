@@ -935,6 +935,56 @@ function getAlertData(mode) {
       // mechanics both use the nominal spread.
       var halfLifeResult = spreadSeries.length >= 20 ? ouHalfLife_(spreadSeries) : { halfLife: Infinity, isValid: false };
 
+      // Tier 2.2 — Half-life as secondary check for borderline ADF.
+      // If EG-ADF is WEAK (passed at 10% but not 5%), promote to "rescued" state when
+      // the OU half-life sits in a clean trading window (5-25 days). Two independent
+      // stats agreeing on mean reversion is stronger evidence than either alone.
+      var adfRescued = false;
+      if (adfState === 'weak' && halfLifeResult.isValid &&
+          halfLifeResult.halfLife >= 5 && halfLifeResult.halfLife <= 25) {
+        adfState = 'rescued';
+        adfRescued = true;
+      }
+
+      // Tier 3 — Rolling ADF on the trailing 60 observations.
+      // Runs an independent ADF on the last 60 EG residuals (nominal spread if no EG)
+      // and compares to the full-window state. Surfaces "was cointegrated, isn't anymore"
+      // pairs as regime-break warnings — the long window may still look stationary while
+      // recent behaviour has broken down.
+      var adfRegime = 'unknown';
+      var rollingAdfState = null;
+      var rollingAdfT = null;
+      try {
+        var rollSource = (egResult && egResult.residuals && egResult.residuals.length >= 60)
+          ? egResult.residuals
+          : (spreadSeries.length >= 60 ? spreadSeries : null);
+        if (rollSource) {
+          var tail60 = rollSource.slice(rollSource.length - 60);
+          var rollAdf = adfTest_(tail60);
+          if (rollAdf && !rollAdf.error) {
+            rollingAdfT = rollAdf.tStat;
+            // Grade the rolling ADF using the same EG critical values used on the full window
+            // so the comparison is apples-to-apples.
+            var rollPass = rollAdf.tStat < EG_CRITICAL_VALUES['5pct'];
+            var rollWeak = rollAdf.tStat < EG_CRITICAL_VALUES['10pct'];
+            rollingAdfState = rollPass ? 'pass' : (rollWeak ? 'weak' : 'fail');
+
+            var fullPass = (adfState === 'pass' || adfState === 'rescued' || adfState === 'weak');
+            if (fullPass && rollingAdfState === 'fail') {
+              adfRegime = 'decaying'; // danger — pair breaking down in recent window
+            } else if (!fullPass && rollingAdfState === 'pass') {
+              adfRegime = 'emerging'; // long-window fails but recent 60d looks stationary
+            } else if (fullPass && rollingAdfState === 'pass') {
+              adfRegime = 'stable';
+            } else {
+              adfRegime = 'weak';
+            }
+          }
+        }
+      } catch (rollErr) {
+        // Rolling ADF is informational — never block an alert on it.
+      }
+
       // Expected Profit = |Current Spread - 90-Day Mean| (distance to mean reversion)
       var expProfit = Math.abs(spread - mean);
 
@@ -975,6 +1025,11 @@ function getAlertData(mode) {
         adfPass: adfResult.isStationary || false,
         adfState: adfState,
         adfConf: adfResult.confidence || 'none',
+        adfRescued: adfRescued,
+        // Tier 3 — rolling 60d ADF regime awareness
+        adfRegime: adfRegime,
+        rollingAdfState: rollingAdfState,
+        rollingAdfT: rollingAdfT !== null ? parseFloat(rollingAdfT.toFixed(3)) : null,
         // Tier 2.1 — Engle-Granger hedge ratio (α, β from OLS priceA = α + β·priceB).
         // Returned for sizing and transparency. The stationarity gate (adfStat/adfPass above)
         // is now graded against EG criticals, not vanilla ADF.
