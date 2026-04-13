@@ -726,7 +726,7 @@ th .th-hint{font-weight:400;font-size:8px;letter-spacing:0;text-transform:none;c
 <span class="filter-label" style="margin-left:auto;font-size:8px" id="screenerAge"></span>
 <button class="filter-pill" onclick="exportAlertsCsv()" title="Download filtered alerts as CSV">&#11015; CSV</button>
 </div>
-<table><thead><tr><th>Pair</th><th>Spread</th><th>Ex-Dividend<span class="th-hint">next date per leg</span></th><th class="sortable" onclick="sortProfit()">Edge<span class="th-hint">exp. profit + yield spread</span> &#8645;</th><th class="sortable" onclick="sortZ()">Z-Score &#8645;</th><th class="sortable" onclick="sortLiq()">Avg Liquidity &#8645;</th><th class="sortable" onclick="sortAge()">Days Active &#8645;</th><th>Velocity<span class="th-hint">&sigma;/day convergence</span></th><th>Quality<span class="th-hint">ADF / half-life / cost</span></th><th>Signal</th><th style="text-align:right">Actions</th></tr></thead><tbody id="alertBody"></tbody></table>
+<table><thead><tr><th>Pair</th><th>Spread</th><th>Ex-Dividend<span class="th-hint">next date per leg</span></th><th class="sortable" onclick="sortProfit()">Edge<span class="th-hint">exp. profit + yield spread</span> &#8645;</th><th class="sortable" onclick="sortZ()">Z-Score &#8645;</th><th class="sortable" onclick="sortLiq()">Avg Liquidity &#8645;</th><th class="sortable" onclick="sortAge()">Days Active &#8645;</th><th>Velocity<span class="th-hint">&sigma;/day convergence</span></th><th class="sortable" onclick="sortHL()">Quality<span class="th-hint">sort by half-life</span> &#8645;</th><th>Signal</th><th style="text-align:right">Actions</th></tr></thead><tbody id="alertBody"></tbody></table>
 </div>
 <div id="portfolio" class="tab-content">
 <div class="exposure-pill-box"><div class="exp-pill"><span class="exp-label">LONG</span><span class="exp-val-long" id="valLong">$0</span></div><div class="exp-pill"><span class="exp-label">SHORT</span><span class="exp-val-short" id="valShort">$0</span></div></div>
@@ -1078,7 +1078,7 @@ let activeId = "";
 let sortAsc = true;
 let liveTimer = null;
 let watchlistIds = new Set(); // tracks pair IDs currently on watchlist
-let screenerCache = {}; // {cleanId: {wr30, wr60, wr90, avgMae, ...}}
+let screenerCache = {}; // {cleanId: {wr30, wr60, avgMae, ...}}
 // Score filter removed — using starred + div filters instead
 window._alertDataMap = {}; // {CLEANID: {z, stdev, pA, pB, expProfit, tA, tB, ...}} — live alert data for sizer
 window._allPairsMap = {}; // {CLEANID: {id, tA, tB, z}} — ALL valid pairs for sweep search (not just alerts)
@@ -1229,11 +1229,64 @@ function scoreColor(s) {
   return { c: 'var(--subtext)', bg: 'rgba(255,255,255,.04)' };
 }
 // ── INLINE ANALYZE ──
+function analyzeAlertFull(btn, tA, tB, pA, pB, z, rowId) {
+  // Force full API analysis — bypass screener cache
+  var existing = document.getElementById('ar-' + rowId);
+  if (existing) existing.remove();
+  if (btn) { btn.classList.remove('done'); btn.textContent = '\u2699'; }
+  // Temporarily clear cache for this pair so analyzeAlert skips it
+  var _ck = cleanIdFE(tA + '|' + tB);
+  var _saved = screenerCache[_ck]; delete screenerCache[_ck];
+  analyzeAlert(btn, tA, tB, pA, pB, z, rowId).then(function(){ if (_saved) screenerCache[_ck] = _saved; });
+}
 async function analyzeAlert(btn, tA, tB, pA, pB, z, rowId) {
   if (btn.classList.contains('loading')) return;
   // Toggle off if already analyzed
   var existingRow = document.getElementById('ar-' + rowId);
   if (existingRow) { existingRow.remove(); btn.classList.remove('done'); return; }
+  // Check screener cache first — avoid redundant API call if data is <24h old
+  var _cacheKey = cleanIdFE(tA + '|' + tB);
+  var _cached = screenerCache[_cacheKey];
+  if (_cached && _cached.ts) {
+    var _cacheAgeH = (Date.now() - new Date(_cached.ts).getTime()) / 3600000;
+    if (_cacheAgeH < 24 && _cached.wr30 != null) {
+      btn.classList.add('done'); btn.textContent = '\u2713';
+      var _dirA = z > 0 ? -1 : 1;
+      var _longTk = _dirA > 0 ? tA : tB, _shortTk = _dirA < 0 ? tA : tB;
+      var _wr30v = parseFloat(_cached.wr30)||0, _wr60v = parseFloat(_cached.wr60)||0;
+      var _ep30v = parseFloat(_cached.ep30)||0, _ep60v = parseFloat(_cached.ep60)||0;
+      var _trig = parseInt(_cached.triggers)||0;
+      var _wr30c = _wr30v>=60?'var(--low)':_wr30v>=40?'var(--yellow)':'var(--high)';
+      var _wr60c = _wr60v>=60?'var(--low)':_wr60v>=40?'var(--yellow)':'var(--high)';
+      var _ep30c = _ep30v>=0?'var(--low)':'var(--high)';
+      var _ep60c = _ep60v>=0?'var(--low)':'var(--high)';
+      var _bsMae = parseFloat(_cached.avgMae)||0, _bsP75 = parseFloat(_cached.p75Mae)||0;
+      var _bsWp = parseFloat(_cached.wideningProb)||0;
+      var _bsWpC = _bsWp>60?'var(--high)':_bsWp>40?'var(--yellow)':'var(--low)';
+      var _ch = '<tr class="analyze-row" id="ar-' + rowId + '"><td colspan="10"><div class="ar-wrap">';
+      _ch += '<div class="ar-card" style="flex:0 0 140px"><div class="ar-card-title">Trade Direction</div>';
+      _ch += '<div class="ar-direction" style="background:rgba(16,185,129,.1);color:var(--low);margin-bottom:6px">LONG ' + _longTk + '</div>';
+      _ch += '<div class="ar-direction" style="background:rgba(239,68,68,.08);color:var(--high)">SHORT ' + _shortTk + '</div>';
+      _ch += '<div style="margin-top:8px;font-size:9px;color:var(--subtext)">Triggers: ' + _trig + '</div>';
+      _ch += '<div style="margin-top:4px;font-size:8px;color:var(--yellow);font-weight:700">FROM SCREENER CACHE</div></div>';
+      _ch += '<div class="ar-card"><div class="ar-card-title">30D Window</div>';
+      _ch += '<div class="ar-winrate-hero" style="color:'+_wr30c+'">'+_wr30v.toFixed(0)+'%</div>';
+      _ch += '<div class="ar-winrate-sub">Win Rate (30d)</div>';
+      _ch += '<div class="ar-metric"><span class="ar-metric-label">Exp. Profit</span><span class="ar-metric-val" style="color:'+_ep30c+'">'+(_ep30v>=0?'+':'-')+'$'+Math.abs(_ep30v).toFixed(4)+'</span></div></div>';
+      _ch += '<div class="ar-card"><div class="ar-card-title">60D Window</div>';
+      _ch += '<div class="ar-winrate-hero" style="color:'+_wr60c+'">'+_wr60v.toFixed(0)+'%</div>';
+      _ch += '<div class="ar-winrate-sub">Win Rate (60d)</div>';
+      _ch += '<div class="ar-metric"><span class="ar-metric-label">Exp. Profit</span><span class="ar-metric-val" style="color:'+_ep60c+'">'+(_ep60v>=0?'+':'-')+'$'+Math.abs(_ep60v).toFixed(4)+'</span></div></div>';
+      _ch += '<div class="ar-card" style="border-color:rgba(239,68,68,.2)"><div class="ar-card-title" style="color:var(--high)">Downside Risk ('+_trig+' samples)</div>';
+      _ch += '<div class="ar-metric"><span class="ar-metric-label">Avg Max Loss</span><span class="ar-metric-val" style="color:var(--high)">-$'+Math.abs(_bsMae).toFixed(4)+'</span></div>';
+      _ch += '<div class="ar-metric"><span class="ar-metric-label">P75 Max Loss</span><span class="ar-metric-val" style="color:var(--high)">-$'+Math.abs(_bsP75).toFixed(4)+'</span></div>';
+      _ch += '<div class="ar-metric"><span class="ar-metric-label">Widen Prob</span><span class="ar-metric-val" style="color:'+_bsWpC+'">'+_bsWp.toFixed(0)+'%</span></div></div>';
+      _ch += '</div><div style="text-align:center;padding:6px"><button onclick="this.parentNode.parentNode.parentNode.remove();analyzeAlertFull(document.querySelector(\'[onclick*=&quot;'+rowId+'&quot;]\'),\''+tA+'\',\''+tB+'\','+pA+','+pB+','+z+',\''+rowId+'\')" style="background:none;border:1px solid var(--border);color:var(--subtext);border-radius:4px;padding:4px 12px;font-size:9px;cursor:pointer">Full Analysis (API call)</button></div></td></tr>';
+      var _aRow = btn.closest('tr');
+      if (_aRow) _aRow.insertAdjacentHTML('afterend', _ch);
+      return;
+    }
+  }
   btn.classList.add('loading'); btn.textContent = '\u231B';
   try {
     // Build custom windows from backtest maxHold if available, otherwise use defaults
@@ -1276,7 +1329,7 @@ async function analyzeAlert(btn, tA, tB, pA, pB, z, rowId) {
     if (prob.toleranceWidened) h += '<div style="font-size:8px;color:var(--yellow);margin-top:4px;font-style:italic">*Tolerance widened to 10%*</div>';
     h += '</div>';
     // Win Rate cards — dynamic windows from response (or fallback to 30/60/90)
-    var respWindows = ad.windows || [30, 60, 90];
+    var respWindows = ad.windows || [30, 60];
     var windows = respWindows.map(function(n){ return {k: n+'d', l: n+'D', days: n}; });
     for (var i = 0; i < windows.length; i++) {
       var wk = windows[i].k;
@@ -1517,7 +1570,7 @@ var _searchTimer=null;function search(){if(_searchTimer)clearTimeout(_searchTime
 function toggleSecDropdown(){var el=document.getElementById('secDropdown');if(el)el.classList.toggle('open');}
 function pickSector(sec,label){activeSector=sec;var lbl=document.getElementById('secLabel');if(lbl)lbl.innerText=label||'ALL SECTORS';var dd=document.getElementById('secDropdown');if(dd){dd.classList.remove('open');var items=dd.querySelectorAll('.sec-menu-item');items.forEach(function(it){it.classList.remove('active');if((!sec&&it.textContent.indexOf('All Sectors')!==-1)||(sec&&it.textContent.indexOf(sec)!==-1))it.classList.add('active');});}applyFilters();}
 document.addEventListener('click',function(e){var dd=document.getElementById('secDropdown');if(dd&&!dd.contains(e.target))dd.classList.remove('open');});
-function sortAge(){sortBy('data-age');}function sortZ(){sortBy('data-z',true);}function sortLiq(){sortBy('data-liq');}function sortProfit(){sortBy('data-profit');}
+function sortAge(){sortBy('data-age');}function sortZ(){sortBy('data-z',true);}function sortLiq(){sortBy('data-liq');}function sortProfit(){sortBy('data-profit');}function sortHL(){sortBy('data-hl');}
 function sortBy(attr,abs){const tb=document.querySelector("#alertBody");const rows=Array.from(tb.querySelectorAll("tr.alert-row"));rows.sort((a,b)=>{let av=parseFloat(a.getAttribute(attr))||0,bv=parseFloat(b.getAttribute(attr))||0;if(abs){av=Math.abs(av);bv=Math.abs(bv);}return sortAsc?(bv-av):(av-bv);});rows.forEach(r=>tb.appendChild(r));sortAsc=!sortAsc;applyFilters();}
 function toggleLive(){if(liveTimer){clearInterval(liveTimer);liveTimer=null;}if(document.getElementById('autoRefresh').checked){refreshData();liveTimer=setInterval(()=>{if(document.hidden)return;if(document.getElementById('entryModal').style.display!=='block')refreshData();},300000);}}
 // Pause polling when tab is hidden, resume on visibility change
@@ -1607,11 +1660,13 @@ function renderModelPortfolios(mp){
     var wpClr=wp<=20?'var(--low)':wp<=35?'var(--yellow)':'var(--high)';
     var acClr=ac<=0.3?'var(--low)':ac<=0.5?'var(--yellow)':'var(--high)';
     // Rank badge color
-    var rankColors=['linear-gradient(135deg,#fbbf24,#f59e0b)','linear-gradient(135deg,#94a3b8,#64748b)','linear-gradient(135deg,#cd7f32,#b8691a)','linear-gradient(135deg,#6366f1,#4f46e5)','linear-gradient(135deg,#a855f7,#7c3aed)'];
-    var rankBg=rankColors[idx]||rankColors[4];
+    var rankColors=['linear-gradient(135deg,#fbbf24,#f59e0b)','linear-gradient(135deg,#94a3b8,#64748b)','linear-gradient(135deg,#cd7f32,#b8691a)'];
+    var rankBg=rankColors[idx]||rankColors[2];
+    var rankNames=['Aggressive','Balanced','Diversified'];
+    var rankName=rankNames[idx]||(''+(idx+1));
     h+='<div style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:20px;position:relative;overflow:hidden">';
-    // Rank badge
-    h+='<div style="position:absolute;top:0;right:0;background:'+rankBg+';color:white;font-size:11px;font-weight:900;padding:6px 14px;border-radius:0 12px 0 12px">#'+(idx+1)+'</div>';
+    // Rank badge with name
+    h+='<div style="position:absolute;top:0;right:0;background:'+rankBg+';color:white;font-size:11px;font-weight:900;padding:6px 14px;border-radius:0 12px 0 12px">'+rankName+'</div>';
     // Header metrics
     var sp=parseFloat(p.stagnantRate)||Math.max(0,100-wr-wp);
     var spClr=sp>40?'var(--yellow)':sp>20?'var(--subtext)':'var(--low)';
@@ -1715,7 +1770,7 @@ function renderModelPortfolios(mp){
       h+='<td style="padding:8px;text-align:center;font-size:9px"><span style="color:var(--low);font-weight:900">L:'+((pz>0)?pr.tB:pr.tA)+'</span> <span style="color:var(--subtext)">/</span> <span style="color:var(--high);font-weight:900">S:'+((pz>0)?pr.tA:pr.tB)+'</span></td>';
       // Enter Trade button with exit params from model portfolio
       var _epIdx=window._mpExitParams.length;
-      window._mpExitParams.push({targetExitZ:parseFloat(pr.optExit||0.5).toFixed(2),profitCapturePct:pc!=null?pc.toFixed(0):'60',partialAtPct:'50',sourcePortfolio:'MP#'+p.rank,maxHoldDays:pDays||60});
+      window._mpExitParams.push({targetExitZ:parseFloat(pr.optExit||0.5).toFixed(2),profitCapturePct:pc!=null?pc.toFixed(0):'60',partialAtPct:'50',sourcePortfolio:rankName,maxHoldDays:pDays||60});
       var _prTa=(pr.tA||'').replace(/'/g,"\\'");
       var _prTb=(pr.tB||'').replace(/'/g,"\\'");
       var _prId=(pr.id||'').replace(/'/g,"\\'");
@@ -1796,7 +1851,8 @@ h+='<div class="watch-actions"><button class="watch-enter-btn" onclick="openModa
 h+='</div>';});
 grid.innerHTML=h;}
 function buildTrend(trend){if(!trend||!trend.length)return'<span style="color:var(--subtext);font-size:10px">No data</span>';var h='';var pills=trend.map(function(raw){return parseFloat(raw);}).filter(function(v){return!isNaN(v);});for(var i=0;i<pills.length;i++){var v=pills[i];var c='var(--subtext)';if(i>0){var p=pills[i-1];if(Math.abs(v)<Math.abs(p))c='var(--low)';else if(Math.abs(v)>Math.abs(p))c='var(--high)';var ar=Math.abs(v)<Math.abs(p)?'↘':'↗';var ac2=Math.abs(v)<Math.abs(p)?'var(--low)':'var(--high)';h+='<span class="trend-arrow" style="color:'+ac2+'">'+ar+'</span>';}h+='<div class="trend-pill" style="color:'+c+'">'+v+'σ</div>';}return h;}
-function renderMacro(m){if(!m||!m.us10y)return;document.getElementById('m_us10y').innerText=m.us10y.val;var c1=m.us10y.chg,e1=document.getElementById('c_us10y');e1.innerText='('+(c1>=0?'+':'')+(c1*100).toFixed(2)+'%)';e1.className='macro-chg '+(c1>=0?'chg-pos':'chg-neg');document.getElementById('m_tlt').innerText=m.tlt.val;var c2=m.tlt.chg,e2=document.getElementById('c_tlt');e2.innerText='('+(c2>=0?'+':'')+(c2*100).toFixed(2)+'%)';e2.className='macro-chg '+(c2>=0?'chg-pos':'chg-neg');document.getElementById('m_pff').innerText=m.pff.val;var c3=m.pff.chg,e3=document.getElementById('c_pff');e3.innerText='('+(c3>=0?'+':'')+(c3*100).toFixed(2)+'%)';e3.className='macro-chg '+(c3>=0?'chg-pos':'chg-neg');}
+var _rateChange30d=null;
+function renderMacro(m){if(!m||!m.us10y)return;document.getElementById('m_us10y').innerText=m.us10y.val;var c1=m.us10y.chg,e1=document.getElementById('c_us10y');e1.innerText='('+(c1>=0?'+':'')+(c1*100).toFixed(2)+'%)';e1.className='macro-chg '+(c1>=0?'chg-pos':'chg-neg');document.getElementById('m_tlt').innerText=m.tlt.val;var c2=m.tlt.chg,e2=document.getElementById('c_tlt');e2.innerText='('+(c2>=0?'+':'')+(c2*100).toFixed(2)+'%)';e2.className='macro-chg '+(c2>=0?'chg-pos':'chg-neg');document.getElementById('m_pff').innerText=m.pff.val;var c3=m.pff.chg,e3=document.getElementById('c_pff');e3.innerText='('+(c3>=0?'+':'')+(c3*100).toFixed(2)+'%)';e3.className='macro-chg '+(c3>=0?'chg-pos':'chg-neg');_rateChange30d=m.rateChange30d;}
 function renderAlerts(ad){if(!ad)return;document.getElementById('alerts').setAttribute('data-mode',currentMode);var maxEP=0;var fmt=function(t){return t?"'"+t.trim().replace(/-/g,'/P')+"'":"UNKNOWN";};var isCr=currentMode==='credit';var ac=isCr?'var(--purple)':'var(--accent)';
 // Store alert data globally for sizer + watch live Z lookup
 ad.forEach(function(r){var key=(r.tA+'|'+r.tB).toUpperCase().replace(/[^A-Z0-9|]/g,'');window._alertDataMap[key]=r;var rkey=(r.tB+'|'+r.tA).toUpperCase().replace(/[^A-Z0-9|]/g,'');window._alertDataMap[rkey]=r;});
@@ -1814,6 +1870,7 @@ var ep=r.expProfit||'0.00';
 // Screener badge
 var scrData=screenerCache[cleanIdFE(r.id)];
 var screenBadge='';if(scrData&&scrData.wr30!==null&&scrData.wr30!==''&&!isNaN(parseFloat(scrData.wr30))){var wrVal=parseFloat(scrData.wr30);var bClr=wrVal>=70?'rgba(16,185,129,.18)':wrVal>=60?'rgba(16,185,129,.1)':wrVal>=40?'rgba(245,158,11,.1)':'rgba(239,68,68,.08)';var bTxt=wrVal>=70?'var(--low)':wrVal>=60?'var(--low)':wrVal>=40?'var(--yellow)':'var(--high)';var bBorder=wrVal>=70?'rgba(16,185,129,.5)':'';screenBadge='<span class="screened-badge'+(wrVal>=70?' screened-hot':'')+'" style="background:'+bClr+';color:'+bTxt+(bBorder?';border-color:'+bBorder:';border-color:'+bTxt)+'" title="Pre-screened: '+wrVal+'% 30d win rate">'+Math.round(wrVal)+'% WR</span>';}
+var rateBadge='';if(_rateChange30d!==null&&Math.abs(_rateChange30d)>25){var rcDir=_rateChange30d>0?'+':'';rateBadge='<span class="screened-badge" style="background:rgba(245,158,11,.12);color:var(--yellow);border-color:rgba(245,158,11,.4);font-size:8px" title="10Y yield moved '+rcDir+Math.round(_rateChange30d)+'bp in 30d. Z-score convergence may be rate-driven, not spread-driven.">RATE MOVE '+rcDir+Math.round(_rateChange30d)+'bp</span>';}
 var aRid='arow'+rowIdx;
 var pAVal=r.pA||0,pBVal=r.pB||0;
 var analyzeBtn='<button class="analyze-btn" onclick="analyzeAlert(this,\''+sa+'\',\''+sb+'\','+pAVal+','+pBVal+','+z+',\''+aRid+'\')" title="Run probability analysis">&#9881;</button>';
@@ -1836,9 +1893,10 @@ var zBg=az>=3?'rgba(14,165,233,.15)':(az>=2.5?'rgba(14,165,233,.1)':(az>=2?'rgba
 var divDaysMin=999;
 if(r.exDivA){var dA=new Date(r.exDivA+'T00:00:00');var ddA=Math.max(0,(dA-new Date())/86400000);if(ddA<divDaysMin)divDaysMin=ddA;}
 if(r.exDivB){var dB=new Date(r.exDivB+'T00:00:00');var ddB=Math.max(0,(dB-new Date())/86400000);if(ddB<divDaysMin)divDaysMin=ddB;}
-h+='<tr class="alert-row" data-s="'+r.id.toLowerCase()+' '+(r.sec||'').toLowerCase()+' '+act.l.toLowerCase()+'" data-sec="'+(r.sec||'')+'" data-tickers="'+r.tA.toUpperCase()+' '+r.tB.toUpperCase()+'" data-z="'+r.z+'" data-age="'+ag+'" data-liq="'+al+'" data-profit="'+ep+'" data-starred="'+(watchlistIds.has(cleanIdFE(r.id))?'1':'0')+'" data-divdays="'+Math.floor(divDaysMin)+'" style="'+rowOpacity+'">';
+var hlSort=r.halfLifeValid&&r.halfLife?parseFloat(r.halfLife):999;
+h+='<tr class="alert-row" data-s="'+r.id.toLowerCase()+' '+(r.sec||'').toLowerCase()+' '+act.l.toLowerCase()+'" data-sec="'+(r.sec||'')+'" data-tickers="'+r.tA.toUpperCase()+' '+r.tB.toUpperCase()+'" data-z="'+r.z+'" data-age="'+ag+'" data-liq="'+al+'" data-profit="'+ep+'" data-starred="'+(watchlistIds.has(cleanIdFE(r.id))?'1':'0')+'" data-divdays="'+Math.floor(divDaysMin)+'" data-hl="'+hlSort+'" style="'+rowOpacity+'">';
 // Pair cell — name with screener badge + sector + range
-h+='<td><div class="instr-main"><a href="'+url+'" target="_blank" class="'+lk+'">'+r.id+'</a><div class="instr-meta">'+screenBadge+'<span class="range-tag" style="margin:0">'+r.rng+'</span><span style="font-size:9px;color:var(--subtext);font-weight:700;text-transform:uppercase">'+r.sec+'</span></div></div></td>';
+h+='<td><div class="instr-main"><a href="'+url+'" target="_blank" class="'+lk+'">'+r.id+'</a><div class="instr-meta">'+screenBadge+rateBadge+'<span class="range-tag" style="margin:0">'+r.rng+'</span><span style="font-size:9px;color:var(--subtext);font-weight:700;text-transform:uppercase">'+r.sec+'</span></div></div></td>';
 // Spread
 h+='<td><div class="mono-data">$'+r.spr+'</div></td>';
 // Ex-Div
@@ -2078,9 +2136,9 @@ h+='<div class="pa-banner">';
 h+='<div class="pa-banner-stat"><span class="pa-banner-label">Cross-Pairs</span><span class="pa-banner-val" style="color:var(--purple)">'+(agg.crossPairCount||0)+'</span></div>';
 h+='<div class="pa-banner-stat"><span class="pa-banner-label">Legs</span><span class="pa-banner-val" style="color:var(--text)">'+(agg.totalLongLegs||0)+'L / '+(agg.totalShortLegs||0)+'S</span></div>';
 h+='<div class="pa-banner-stat"><span class="pa-banner-label">Basket Z</span><span class="pa-banner-val" style="color:'+zAgg.c+'">'+(agg.z90>=0?'+':'')+agg.z90.toFixed(2)+'&sigma;</span></div>';
-var blWR=agg.wr90||0;var blWRClr=blWR>=60?'var(--low)':blWR>=40?'var(--yellow)':'var(--high)';
+var blWR=agg.wr60||0;var blWRClr=blWR>=60?'var(--low)':blWR>=40?'var(--yellow)':'var(--high)';
 h+='<div class="pa-banner-stat"><span class="pa-banner-label">Blended WR</span><span class="pa-banner-val" style="color:'+blWRClr+'">'+blWR.toFixed(0)+'%</span></div>';
-var epTotal=agg.ep90||0;var epClr=epTotal>=0?'var(--low)':'var(--high)';
+var epTotal=agg.ep60||0;var epClr=epTotal>=0?'var(--low)':'var(--high)';
 h+='<div class="pa-banner-stat"><span class="pa-banner-label">Total EP$</span><span class="pa-banner-val" style="color:'+epClr+'">'+(epTotal>=0?'+':'-')+'$'+Math.abs(epTotal).toFixed(0)+'</span></div>';
 var badTotal=agg.badAvg||0;
 h+='<div class="pa-banner-stat"><span class="pa-banner-label">Bad Scenario</span><span class="pa-banner-val" style="color:var(--high)">-$'+Math.abs(badTotal).toFixed(0)+'</span></div>';
@@ -2099,8 +2157,8 @@ h+='<div style="background:rgba(245,158,11,.08);border:1px solid var(--yellow);b
 if(agg.worstZPair){
 var wkZ=agg.worstZ||0;var wkClr=healthZColor(wkZ);
 h+='<div style="background:'+wkClr.bg+';border:1px solid '+wkClr.b+';border-radius:8px;padding:10px 16px;margin-bottom:16px;font-size:11px;display:flex;justify-content:space-between;align-items:center"><span style="color:'+wkClr.c+';font-weight:900;text-transform:uppercase;letter-spacing:0.5px">Weakest Link: '+agg.worstZPair+'</span><span style="color:'+wkClr.c+';font-family:JetBrains Mono;font-weight:900">'+(wkZ>=0?'+':'')+wkZ.toFixed(2)+'&sigma;</span></div>';}
-// ── Tier 2: Aggregate 30/60/90 Day Cards ──
-var windows=[{k:'30',l:'30-Day'},{k:'60',l:'60-Day'},{k:'90',l:'90-Day'}];
+// ── Tier 2: Aggregate 30/60 Day Cards ──
+var windows=[{k:'30',l:'30-Day'},{k:'60',l:'60-Day'}];
 h+='<div class="pa-windows">';
 for(var wi=0;wi<windows.length;wi++){
 var wk=windows[wi].k;
@@ -2136,7 +2194,6 @@ h+='<div id="'+cmDetailId+'" style="display:block">';
 h+='<div class="cm-sort-bar" id="cmSortBar">';
 h+='<span class="cm-sort-pill" onclick="cmSort(\'z90\',this)">|Z-90|</span>';
 h+='<span class="cm-sort-pill active" onclick="cmSort(\'wr30\',this)">WR-30 &#9660;</span>';
-h+='<span class="cm-sort-pill" onclick="cmSort(\'wr90\',this)">WR-90</span>';
 h+='<span class="cm-sort-pill" onclick="cmSort(\'ep30\',this)">EP$ 30</span>';
 h+='<span class="cm-sort-pill" onclick="cmSort(\'weight\',this)">Weight</span>';
 h+='</div>';
@@ -2145,8 +2202,8 @@ h+='<div class="cm-table-wrap"><table class="cm-table" id="cmTable">';
 h+='<thead><tr>';
 h+='<th>Pair</th><th>Wt%</th>';
 h+='<th>Z-30</th><th>Z-60</th><th>Z-90</th>';
-h+='<th>WR-30</th><th>WR-60</th><th>WR-90</th>';
-h+='<th>EP$ 30</th><th>EP$ 60</th><th>EP$ 90</th>';
+h+='<th>WR-30</th><th>WR-60</th>';
+h+='<th>EP$ 30</th><th>EP$ 60</th>';
 h+='<th>Bad$</th><th>Triggers</th>';
 h+='</tr></thead>';
 h+='<tbody>';
@@ -2160,26 +2217,26 @@ h+='<td>'+p.weight.toFixed(1)+'</td>';
 h+='<td colspan="10" style="color:var(--yellow);font-style:italic">'+p.error+'</td></tr>';
 continue;}
 var pz90=p.z90!=null?p.z90:0;var pzClr=healthZColor(pz90);
-var pwr30=p.wr30!=null?p.wr30:0;var pwr60=p.wr60!=null?p.wr60:0;var pwr90=p.wr90!=null?p.wr90:0;
-var pep30=p.ep30!=null?p.ep30:0;var pep60=p.ep60!=null?p.ep60:0;var pep90=p.ep90!=null?p.ep90:0;
+var pwr30=p.wr30!=null?p.wr30:0;var pwr60=p.wr60!=null?p.wr60:0;
+var pep30=p.ep30!=null?p.ep30:0;var pep60=p.ep60!=null?p.ep60:0;
 // Row quality class (based on 30d win rate)
 var rowQ=Math.abs(pz90)>=1.5&&pwr30>=70?'cm-row-strong':Math.abs(pz90)<1.0||pwr30<50?'cm-row-weak':'';
 var rowDetailId='cmPair_'+pi+'_'+Math.random().toString(36).substr(2,4);
-h+='<tr class="cm-row '+rowQ+'" data-z90="'+Math.abs(pz90).toFixed(4)+'" data-wr30="'+pwr30.toFixed(2)+'" data-wr90="'+pwr90.toFixed(2)+'" data-ep30="'+pep30.toFixed(2)+'" data-ep90="'+pep90.toFixed(2)+'" data-weight="'+p.weight.toFixed(4)+'" onclick="var d=document.getElementById(\''+rowDetailId+'\');d.style.display=d.style.display===\'none\'?\'table-row\':\'none\'">';
+h+='<tr class="cm-row '+rowQ+'" data-z90="'+Math.abs(pz90).toFixed(4)+'" data-wr30="'+pwr30.toFixed(2)+'" data-ep30="'+pep30.toFixed(2)+'" data-weight="'+p.weight.toFixed(4)+'" onclick="var d=document.getElementById(\''+rowDetailId+'\');d.style.display=d.style.display===\'none\'?\'table-row\':\'none\'">';
 h+='<td class="cm-pair-cell"><span class="cm-expand-arrow">&#9656;</span>'+p.longTicker+' <span style="color:var(--low);font-size:8px">L</span> <span style="color:var(--subtext);font-weight:400">x</span> '+p.shortTicker+' <span style="color:var(--high);font-size:8px">S</span></td>';
 h+='<td>'+p.weight.toFixed(1)+'%</td>';
 h+='<td style="color:'+(p.z30!=null?healthZColor(p.z30).c:'var(--subtext)')+'">'+cmFmtZ(p.z30)+'</td>';
 h+='<td style="color:'+(p.z60!=null?healthZColor(p.z60).c:'var(--subtext)')+'">'+cmFmtZ(p.z60)+'</td>';
 h+='<td style="color:'+pzClr.c+';font-weight:900">'+cmFmtZ(p.z90)+'</td>';
-// WR-30, WR-60, WR-90
-h+=cmWrCell(p.wr30);h+=cmWrCell(p.wr60);h+=cmWrCell(p.wr90);
-// EP$ 30, 60, 90
-h+=cmEpCell(p.ep30);h+=cmEpCell(p.ep60);h+=cmEpCell(p.ep90);
+// WR-30, WR-60
+h+=cmWrCell(p.wr30);h+=cmWrCell(p.wr60);
+// EP$ 30, 60
+h+=cmEpCell(p.ep30);h+=cmEpCell(p.ep60);
 h+='<td style="color:var(--high)">'+(p.badAvg!=null?'-$'+Math.abs(p.badAvg).toFixed(0):'—')+'</td>';
 h+='<td style="color:var(--subtext)">'+(p.triggers||0)+'</td>';
 h+='</tr>';
 // Expandable detail row
-h+='<tr id="'+rowDetailId+'" class="cm-detail-row" style="display:none"><td colspan="13">';
+h+='<tr id="'+rowDetailId+'" class="cm-detail-row" style="display:none"><td colspan="11">';
 h+=cmBuildPairDetail(p);
 h+='</td></tr>';
 }
@@ -2194,10 +2251,8 @@ var ep30=agg.ep30||0;var ep60=agg.ep60||0;
 var ep30Clr=ep30>=0?'var(--low)':'var(--high)';var ep60Clr=ep60>=0?'var(--low)':'var(--high)';
 h+='<span style="color:'+blWR30Clr+'">WR30: '+blWR30.toFixed(0)+'%</span>';
 h+='<span style="color:'+blWR60Clr+'">WR60: '+blWR60.toFixed(0)+'%</span>';
-h+='<span style="color:'+blWRClr+'">WR90: '+blWR.toFixed(0)+'%</span>';
 h+='<span style="color:'+ep30Clr+'">EP30: '+(ep30>=0?'+':'-')+'$'+Math.abs(ep30).toFixed(0)+'</span>';
 h+='<span style="color:'+ep60Clr+'">EP60: '+(ep60>=0?'+':'-')+'$'+Math.abs(ep60).toFixed(0)+'</span>';
-h+='<span style="color:'+epClr+'">EP90: '+(epTotal>=0?'+':'-')+'$'+Math.abs(epTotal).toFixed(0)+'</span>';
 h+='<span style="color:var(--high)">Bad: -$'+Math.abs(badTotal).toFixed(0)+'</span>';
 h+='</div>';
 h+='</div></div>';
@@ -2252,9 +2307,9 @@ d+='<div class="pa-bad-cell"><div class="pa-bad-cell-label">Widen Prob</div><div
 var bsStag=(bs.stagnantRate!=null)?bs.stagnantRate:Math.max(0,100-(bs.wideningProb||0)-50);var bsStagClr=bsStag>40?'var(--yellow)':bsStag>20?'var(--subtext)':'var(--low)';
 d+='<div class="pa-bad-cell"><div class="pa-bad-cell-label">Stagnant</div><div class="pa-bad-cell-val" style="color:'+bsStagClr+'">'+bsStag.toFixed(1)+'%</div></div>';
 d+='</div></div>';}
-// 30/60/90 mini cards
+// 30/60 mini cards
 var rz=p.rollingZ||{};var prob=p.probabilities||{};var winRates=prob.winRates||{};
-var mWins=[{k:'30d',l:'30D'},{k:'60d',l:'60D'},{k:'90d',l:'90D'}];
+var mWins=[{k:'30d',l:'30D'},{k:'60d',l:'60D'}];
 d+='<div class="cm-mini-windows">';
 for(var w=0;w<mWins.length;w++){
 var wData=rz[mWins[w].k];var hasData=wData&&!wData.insufficient;
@@ -2547,9 +2602,9 @@ h+='<div class="pa-bad-cell"><div class="pa-bad-cell-label">Stagnant</div><div c
 h+='</div>';
 }
 h+='</div>';
-// 30/60/90 window cards
+// 30/60 window cards
 var rz=m.rollingZ||{};
-var windows=[{k:'30d',l:'30-Day'},{k:'60d',l:'60-Day'},{k:'90d',l:'90-Day'}];
+var windows=[{k:'30d',l:'30-Day'},{k:'60d',l:'60-Day'}];
 var winRates=prob.winRates||{};
 h+='<div class="pa-windows">';
 for(var i=0;i<windows.length;i++){

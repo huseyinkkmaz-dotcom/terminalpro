@@ -605,7 +605,8 @@ function setupMacroSheet() {
 }
 function getMacroData() {
   try {
-    var sheet = SpreadsheetApp.getActive().getSheetByName('MacroData');
+    var ss = SpreadsheetApp.getActive();
+    var sheet = ss.getSheetByName('MacroData');
     if (!sheet) return {};
     var data = sheet.getRange("A2:C4").getValues();
     // GOOGLEFINANCE("TNX") historically returned the CBOE index (10x actual yield,
@@ -613,10 +614,35 @@ function getMacroData() {
     // Autodetect: values >= 10 are assumed to be the index form.
     var rawTnx = parseFloat(data[0][1]);
     var yieldPct = isNaN(rawTnx) ? 0 : (rawTnx >= 10 ? rawTnx / 10 : rawTnx);
+
+    // Rate regime: compute 30-day 10Y yield change from TreasuryHist
+    var rateChange30d = null; // basis points
+    try {
+      var thSheet = ss.getSheetByName('TreasuryHist');
+      if (thSheet && thSheet.getLastRow() > 2) {
+        var thData = thSheet.getDataRange().getValues();
+        var col10Y = -1;
+        for (var c = 0; c < thData[0].length; c++) {
+          if (String(thData[0][c]).trim().toUpperCase() === 'US10Y') { col10Y = c; break; }
+        }
+        if (col10Y >= 0) {
+          var yields = [];
+          for (var i = Math.max(1, thData.length - 35); i < thData.length; i++) {
+            var y = parseFloat(thData[i][col10Y]);
+            if (!isNaN(y) && y > 0) yields.push(y);
+          }
+          if (yields.length >= 20) {
+            rateChange30d = Math.round((yields[yields.length - 1] - yields[Math.max(0, yields.length - 21)]) * 10000) / 100;
+          }
+        }
+      }
+    } catch(e2) {}
+
     return {
       us10y: { val: yieldPct.toFixed(2)+"%", chg: parseFloat(data[0][2]) },
       tlt:   { val: "$"+parseFloat(data[1][1]).toFixed(2), chg: parseFloat(data[1][2]) },
-      pff:   { val: "$"+parseFloat(data[2][1]).toFixed(2), chg: parseFloat(data[2][2]) }
+      pff:   { val: "$"+parseFloat(data[2][1]).toFixed(2), chg: parseFloat(data[2][2]) },
+      rateChange30d: rateChange30d // basis points, null if unavailable
     };
   } catch(e) { return {}; }
 }
@@ -3633,25 +3659,21 @@ function runNightlyScreener() {
       if (new Date().getTime() - startTime > MAX_MS) { Logger.log('Screener: timeout after ' + i + ' pairs'); break; }
       var a = top[i];
       try {
-        var analysis = analyzeSinglePair_(a.tA, a.tB, parseFloat(a.pA) || 0, parseFloat(a.pB) || 0, parseFloat(a.z), [15, 30, 60, 90], a._mode);
+        var analysis = analyzeSinglePair_(a.tA, a.tB, parseFloat(a.pA) || 0, parseFloat(a.pB) || 0, parseFloat(a.z), [30, 60], a._mode);
         if (analysis && !analysis.error && analysis.metrics) {
           var prob = analysis.metrics.probabilities || {};
-          var wr15 = (prob.winRates && prob.winRates['15d']) ? prob.winRates['15d'].rate : null;
           var wr30 = (prob.winRates && prob.winRates['30d']) ? prob.winRates['30d'].rate : null;
           var wr60 = (prob.winRates && prob.winRates['60d']) ? prob.winRates['60d'].rate : null;
-          var wr90 = (prob.winRates && prob.winRates['90d']) ? prob.winRates['90d'].rate : null;
           var bs = prob.badScenario || {};
           results.push({
             id: a.id, tA: a.tA, tB: a.tB, mode: a._mode,
             z: parseFloat(a.z), expProfit: parseFloat(a.expProfit),
-            wr15: wr15, wr30: wr30, wr60: wr60, wr90: wr90,
+            wr30: wr30, wr60: wr60,
             avgMae: (bs.avgMae != null) ? bs.avgMae : null, p75Mae: (bs.p75Mae != null) ? bs.p75Mae : null,
             wideningProb: (bs.wideningProb != null) ? bs.wideningProb : null,
             stagnantRate: (bs.stagnantRate != null) ? bs.stagnantRate : null, triggers: prob.triggers || 0,
-            ep15: (analysis.metrics.rollingZ && analysis.metrics.rollingZ['15d']) ? analysis.metrics.rollingZ['15d'].expectedProfit : null,
             ep30: (analysis.metrics.rollingZ && analysis.metrics.rollingZ['30d']) ? analysis.metrics.rollingZ['30d'].expectedProfit : null,
             ep60: (analysis.metrics.rollingZ && analysis.metrics.rollingZ['60d']) ? analysis.metrics.rollingZ['60d'].expectedProfit : null,
-            ep90: (analysis.metrics.rollingZ && analysis.metrics.rollingZ['90d']) ? analysis.metrics.rollingZ['90d'].expectedProfit : null,
             ts: new Date().toISOString()
           });
         }
@@ -3661,15 +3683,15 @@ function runNightlyScreener() {
     var sheet = ss.getSheetByName('ScreenerCache');
     if (!sheet) {
       sheet = ss.insertSheet('ScreenerCache');
-      sheet.getRange(1,1,1,20).setValues([['PairID','TickerA','TickerB','Mode','Z','ExpProfit','WR30','WR60','WR90','AvgMAE','P75MAE','WidenProb','Triggers','EP30','EP60','UpdatedAt','WR15','EP15','EP90','StagnantRate']]);
+      sheet.getRange(1,1,1,16).setValues([['PairID','TickerA','TickerB','Mode','Z','ExpProfit','WR30','WR60','AvgMAE','P75MAE','WidenProb','Triggers','EP30','EP60','UpdatedAt','StagnantRate']]);
     } else {
-      if (sheet.getLastRow() > 1) sheet.getRange(2, 1, sheet.getLastRow() - 1, 20).clearContent();
+      if (sheet.getLastRow() > 1) sheet.getRange(2, 1, sheet.getLastRow() - 1, 16).clearContent();
     }
     if (results.length > 0) {
       var rows = results.map(function(r){
-        return [r.id, r.tA, r.tB, r.mode, r.z, r.expProfit, r.wr30, r.wr60, r.wr90, r.avgMae, r.p75Mae, r.wideningProb, r.triggers, r.ep30, r.ep60, r.ts, r.wr15, r.ep15, r.ep90, r.stagnantRate];
+        return [r.id, r.tA, r.tB, r.mode, r.z, r.expProfit, r.wr30, r.wr60, r.avgMae, r.p75Mae, r.wideningProb, r.triggers, r.ep30, r.ep60, r.ts, r.stagnantRate];
       });
-      sheet.getRange(2, 1, rows.length, 20).setValues(rows);
+      sheet.getRange(2, 1, rows.length, 16).setValues(rows);
     }
     Logger.log('Screener: processed ' + results.length + '/' + top.length + ' pairs in ' + ((new Date().getTime()-startTime)/1000).toFixed(1) + 's');
   } catch(e) {
@@ -4517,23 +4539,20 @@ function getScreenerData_() {
     for (var i = 1; i < data.length; i++) {
       var r = data[i];
       if (!r[0]) continue;
-      var scrTriggers = parseInt(r[12]) || 0;
+      var scrTriggers = parseInt(r[11]) || 0;
       var scrWr30 = parseFloat(r[6]) || 0;
-      var scrEp30 = parseFloat(r[13]) || 0;
-      var scrMae = parseFloat(r[9]) || 0;
+      var scrEp30 = parseFloat(r[12]) || 0;
+      var scrMae = parseFloat(r[8]) || 0;
       // Compute robustness: use triggers as trade count proxy, wr30 as win rate, ep30 as reward, avgMae as loss
       var scrRob = computeRobustnessScore_(scrTriggers, scrWr30, Math.max(0, scrEp30), scrMae > 0 ? scrMae : 0.5, {});
       results.push({
         id: r[0], tA: r[1], tB: r[2], mode: r[3],
         z: r[4], expProfit: r[5],
-        wr30: r[6], wr60: r[7], wr90: r[8],
-        avgMae: r[9], p75Mae: r[10], wideningProb: r[11],
-        triggers: r[12], ep30: r[13], ep60: r[14],
-        ts: r[15],
-        wr15: r[16] != null ? r[16] : null,
-        ep15: r[17] != null ? r[17] : null,
-        ep90: r[18] != null ? r[18] : null,
-        stagnantRate: r[19] != null ? r[19] : null,
+        wr30: r[6], wr60: r[7],
+        avgMae: r[8], p75Mae: r[9], wideningProb: r[10],
+        triggers: r[11], ep30: r[12], ep60: r[13],
+        ts: r[14],
+        stagnantRate: r[15] != null ? r[15] : null,
         robustness: scrRob.score,
         robustnessGrade: scrRob.grade,
         robustnessFlags: scrRob.flags
@@ -5636,7 +5655,7 @@ function runModelPortfolioGenerator(excludeTickers) {
     var SWEEP_RESERVE_MS = 30000;
     var SEARCH_DEADLINE = MAX_MS - SWEEP_RESERVE_MS;
     var PAIRS_PER_PORTFOLIO = Math.min(5, candidates.length);
-    var NUM_PORTFOLIOS = 10;
+    var NUM_PORTFOLIOS = 3;
     Logger.log('ModelPortfolio: PAIRS_PER_PORTFOLIO=' + PAIRS_PER_PORTFOLIO + ' (candidates=' + candidates.length + ')');
     if (PAIRS_PER_PORTFOLIO < 5) Logger.log('ModelPortfolio: ⚠ WARNING — degraded from 5 to ' + PAIRS_PER_PORTFOLIO + ' pairs/portfolio due to insufficient candidates. This is likely the root cause of undersized portfolios.');
 
@@ -5809,7 +5828,7 @@ function buildCandidatePool_(ss, histMap, startTime, maxMs, relaxed, excludeTick
 
     candidates.push({
       id: sp.id, tA: sp.tA, tB: sp.tB, mode: sp.mode, sector: spSector,
-      z: spZ, wr30: spWr, wr60: 0, wr90: 0,
+      z: spZ, wr30: spWr, wr60: 0,
       ep30: spEp, ep60: 0, widenProb: 0,
       avgMae: 0, p75Mae: 0,
       trades: spTrades, avgDaysToRevert: spAvgHold,
@@ -5833,13 +5852,12 @@ function buildCandidatePool_(ss, histMap, startTime, maxMs, relaxed, excludeTick
         screenerMap[scrId] = {
           wr30: parseFloat(scrData[sci][6]) || 0,
           wr60: parseFloat(scrData[sci][7]) || 0,
-          wr90: parseFloat(scrData[sci][8]) || 0,
-          avgMae: parseFloat(scrData[sci][9]) || 0,
-          p75Mae: parseFloat(scrData[sci][10]) || 0,
-          widenProb: parseFloat(scrData[sci][11]) || 0,
-          triggers: parseInt(scrData[sci][12]) || 0,
-          ep30: parseFloat(scrData[sci][13]) || 0,
-          ep60: parseFloat(scrData[sci][14]) || 0
+          avgMae: parseFloat(scrData[sci][8]) || 0,
+          p75Mae: parseFloat(scrData[sci][9]) || 0,
+          widenProb: parseFloat(scrData[sci][10]) || 0,
+          triggers: parseInt(scrData[sci][11]) || 0,
+          ep30: parseFloat(scrData[sci][12]) || 0,
+          ep60: parseFloat(scrData[sci][13]) || 0
         };
       }
     }
@@ -5883,7 +5901,7 @@ function buildCandidatePool_(ss, histMap, startTime, maxMs, relaxed, excludeTick
         candidates.push({
           id: alert.id, tA: alert.tA, tB: alert.tB,
           mode: alertModes[m], sector: aSector,
-          z: aZ, wr30: aWr, wr60: scr ? scr.wr60 : 0, wr90: scr ? scr.wr90 : 0,
+          z: aZ, wr30: aWr, wr60: scr ? scr.wr60 : 0,
           ep30: aEp, ep60: scr ? scr.ep60 : 0, widenProb: aWiden,
           avgMae: scr ? scr.avgMae : 0, p75Mae: aP75,
           trades: aTrades, avgDaysToRevert: aAvgDays,
@@ -6472,7 +6490,7 @@ function exhaustivePortfolioSearch_(candidates, crossMetrics, corrMatrix, k, sta
  */
 function diverseTopK_(scoredCombos, topK, maxOverlap) {
   maxOverlap = maxOverlap || 2;
-  var MAX_PAIR_APPEARANCES = 4; // A single pair can appear in at most 4 of the 10 portfolios
+  var MAX_PAIR_APPEARANCES = 2; // A single pair can appear in at most 2 of the 3 portfolios
   var selected = [];
   var pairUsageCount = {}; // index → number of portfolios it appears in
 
