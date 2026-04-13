@@ -297,6 +297,28 @@ function engleGrangerTest_(seriesA, seriesB) {
   };
 }
 
+/**
+ * Lightweight OLS hedge ratio: priceA = α + β·priceB.
+ * Returns β clamped to [0.3, 3.0]. Falls back to 1.0 for degenerate/insufficient data.
+ * Use for credit pair spread adjustment: hedgedSpread = priceA - β·priceB.
+ * Intra-company pairs should always use β = 1.0 (same issuer, same credit risk).
+ */
+function computeHedgeRatio_(seriesA, seriesB) {
+  var n = Math.min(seriesA.length, seriesB.length);
+  if (n < 20) return 1.0;
+  var a = seriesA.slice(seriesA.length - n);
+  var b = seriesB.slice(seriesB.length - n);
+  var sumB = 0, sumA = 0, sumBB = 0, sumAB = 0;
+  for (var i = 0; i < n; i++) {
+    sumB += b[i]; sumA += a[i]; sumBB += b[i] * b[i]; sumAB += a[i] * b[i];
+  }
+  var denom = n * sumBB - sumB * sumB;
+  if (Math.abs(denom) < 1e-14) return 1.0;
+  var beta = (n * sumAB - sumB * sumA) / denom;
+  if (beta < 0.3 || beta > 3.0 || isNaN(beta)) return 1.0;
+  return parseFloat(beta.toFixed(4));
+}
+
 // ============================================================
 // ROUTING
 // ============================================================
@@ -451,7 +473,7 @@ function doGet(e) {
         pairWindows = String(e.parameter.windows).split(',').map(function(v){ return parseInt(v); }).filter(function(v){ return v > 0 && !isNaN(v); });
         if (pairWindows.length === 0) pairWindows = null;
       }
-      result = { ok: true, analysisData: analyzeSinglePair_(pairTa, pairTb, pairPa, pairPb, pairZ, pairWindows) };
+      result = { ok: true, analysisData: analyzeSinglePair_(pairTa, pairTb, pairPa, pairPb, pairZ, pairWindows, mode) };
     }
     else if (action === 'getTradeAlerts') {
       result = { ok: true, tradeAlerts: getTradeAlerts_() };
@@ -481,7 +503,7 @@ function doGet(e) {
     else if (action === 'sweepPair') {
       var spTA = (e && e.parameter && e.parameter.tA) ? e.parameter.tA : '';
       var spTB = (e && e.parameter && e.parameter.tB) ? e.parameter.tB : '';
-      result = { ok: true, sweepResult: sweepSinglePair_(spTA, spTB) };
+      result = { ok: true, sweepResult: sweepSinglePair_(spTA, spTB, mode) };
     }
     else if (action === 'getExitAlerts') {
       result = { ok: true, exitAlerts: getExitAlerts_() };
@@ -912,9 +934,12 @@ function getAlertData(mode) {
       var minHistLen = Math.min(hA.length, hB.length);
       var hA_tail = hA.slice(hA.length - minHistLen);
       var hB_tail = hB.slice(hB.length - minHistLen);
+      // For credit pairs, use hedge-ratio-adjusted spread (priceA - β·priceB).
+      // β is pre-computed in WebCacheCredit col 25 (index 24) or computed fresh here.
+      var pairHedgeRatio = (mode === 'credit') ? computeHedgeRatio_(hA_tail, hB_tail) : 1.0;
       var spreadSeries = [];
       for (var h = 0; h < minHistLen; h++) {
-        spreadSeries.push(hA_tail[h] - hB_tail[h]);
+        spreadSeries.push(hA_tail[h] - pairHedgeRatio * hB_tail[h]);
       }
 
       // Tier 2.1 — Engle-Granger cointegration test.
@@ -931,8 +956,8 @@ function getAlertData(mode) {
       // Tri-state using EG thresholds: PASS (5%), WEAK (10%), FAIL.
       var adfWeak = adfResult.tStat && adfResult.tStat < EG_CRITICAL_VALUES['10pct'];
       var adfState = adfResult.isStationary ? 'pass' : (adfWeak ? 'weak' : 'fail');
-      // Half-life still runs on the nominal (trading) spread because the Z-score and exit
-      // mechanics both use the nominal spread.
+      // Half-life runs on the hedged spread (credit pairs use β-adjusted, intra uses nominal)
+      // consistent with how Z-scores and spreads are computed.
       var halfLifeResult = spreadSeries.length >= 20 ? ouHalfLife_(spreadSeries) : { halfLife: Infinity, isValid: false };
 
       // Tier 2.2 — Half-life as secondary check for borderline ADF.
@@ -1035,6 +1060,7 @@ function getAlertData(mode) {
         // is now graded against EG criticals, not vanilla ADF.
         egBeta: egResult && !egResult.error ? egResult.beta : null,
         egAlpha: egResult && !egResult.error ? egResult.alpha : null,
+        hedgeRatio: pairHedgeRatio,
         halfLife: halfLifeResult.isValid ? halfLifeResult.halfLife : null,
         halfLifeValid: halfLifeResult.isValid || false,
         callRiskA: callRiskA,
@@ -1989,9 +2015,10 @@ function computeHistoricalProbabilities_(dailyValues, refValue, rollingZ, totalW
       wMean = mean90;
     }
     // Mean reversion tolerance: spread counts as "touched mean" if it gets within 10% of distance to mean
+    // Floor of $0.10 reflects realistic round-trip cost for preferreds (bid-ask ~$0.05-0.15/side)
     var distToMean = Math.abs(refValue - wMean);
     var meanTolerance = distToMean * 0.10;
-    if (meanTolerance < 0.01) meanTolerance = 0.01; // minimum floor
+    if (meanTolerance < 0.10) meanTolerance = 0.10;
 
     // 1σ adverse threshold for widen definition
     var oneSigma = (rollingZ && rollingZ['90d'] && !rollingZ['90d'].insufficient) ? rollingZ['90d'].std : (fullRange * 0.15);
@@ -2217,7 +2244,7 @@ function computeHistoricalProbabilitiesWide_(dailyValues, refValue, rollingZ, to
     }
     var distToMean = Math.abs(refValue - wMean);
     var meanTolerance = distToMean * 0.10;
-    if (meanTolerance < 0.01) meanTolerance = 0.01;
+    if (meanTolerance < 0.10) meanTolerance = 0.10;
 
     var oneSigma = (rollingZ && rollingZ['90d'] && !rollingZ['90d'].insufficient) ? rollingZ['90d'].std : (fullRange * 0.15);
 
@@ -3045,10 +3072,13 @@ function partialCloseTradeInSheet_(id, reduceA, reduceB, customExitA, customExit
       // Preserve sign (long=+, short=-)
       var signA = sA >= 0 ? 1 : -1;
       var signB = sB >= 0 ? 1 : -1;
-      // Proportionally split div amounts between closed and remaining portions (per-leg average)
+      // Proportionally split div amounts weighted by dollar exposure per leg
       var ratioA = Math.abs(sA) > 0 ? closedA / Math.abs(sA) : 1;
       var ratioB = Math.abs(sB) > 0 ? closedB / Math.abs(sB) : 1;
-      var divRatio = (ratioA + ratioB) / 2;
+      var exposureA = costA * Math.abs(sA);
+      var exposureB = costB * Math.abs(sB);
+      var totalExposure = exposureA + exposureB;
+      var divRatio = totalExposure > 0 ? (ratioA * exposureA + ratioB * exposureB) / totalExposure : (ratioA + ratioB) / 2;
       var closedPaidDiv = Math.round(totalPaidDiv * divRatio * 100) / 100;
       var closedRcvdDiv = Math.round(totalRcvdDiv * divRatio * 100) / 100;
       // Use custom exit prices if provided, otherwise look up live prices
@@ -3499,7 +3529,7 @@ function getMacroValuationData() {
 // ═══════════════════════════════════════════════════════════════════
 // SINGLE-PAIR ANALYSIS — lightweight endpoint for inline alert analysis
 // ═══════════════════════════════════════════════════════════════════
-function analyzeSinglePair_(tA, tB, priceA, priceB, currentZ, customWindows) {
+function analyzeSinglePair_(tA, tB, priceA, priceB, currentZ, customWindows, pairMode) {
   try {
     var ss = SpreadsheetApp.getActive();
     var histMap = readTickerHistMap_(ss);
@@ -3528,11 +3558,16 @@ function analyzeSinglePair_(tA, tB, priceA, priceB, currentZ, customWindows) {
     }
 
     // Build two legs: if Z > 0 spread is above mean → short A, long B
+    // For credit pairs, adjust B leg size by hedge ratio β (priceA = α + β·priceB)
     var dirA = currentZ > 0 ? -1 : 1;
     var dirB = currentZ > 0 ? 1 : -1;
+    var hr = 1.0;
+    if (pairMode === 'credit' && histMap[tkA] && histMap[tkB]) {
+      hr = computeHedgeRatio_(histMap[tkA], histMap[tkB]);
+    }
     var legs = [
       { ticker: tkA, size: 100, direction: dirA },
-      { ticker: tkB, size: 100, direction: dirB }
+      { ticker: tkB, size: Math.round(100 * hr), direction: dirB }
     ];
     var metrics = computeBasketMetrics_(legs, histMap, customWindows);
     if (metrics.error) {
@@ -3598,7 +3633,7 @@ function runNightlyScreener() {
       if (new Date().getTime() - startTime > MAX_MS) { Logger.log('Screener: timeout after ' + i + ' pairs'); break; }
       var a = top[i];
       try {
-        var analysis = analyzeSinglePair_(a.tA, a.tB, parseFloat(a.pA) || 0, parseFloat(a.pB) || 0, parseFloat(a.z), [15, 30, 60, 90]);
+        var analysis = analyzeSinglePair_(a.tA, a.tB, parseFloat(a.pA) || 0, parseFloat(a.pB) || 0, parseFloat(a.z), [15, 30, 60, 90], a._mode);
         if (analysis && !analysis.error && analysis.metrics) {
           var prob = analysis.metrics.probabilities || {};
           var wr15 = (prob.winRates && prob.winRates['15d']) ? prob.winRates['15d'].rate : null;
@@ -3984,6 +4019,9 @@ function runBacktest_(zThreshold, exitZ, maxHold, mode) {
       var WINDOW = 90;
       if (len < WINDOW + 5) { pairsSkippedHist++; continue; }
 
+      // For credit pairs, use hedge-ratio-adjusted spread (priceA - β·priceB)
+      var hr = (pair.mode === 'credit') ? computeHedgeRatio_(pricesA, pricesB) : 1.0;
+
       pairsProcessed++;
       var tradesBefore = allTrades.length;
       var openTrade = null;
@@ -3991,14 +4029,14 @@ function runBacktest_(zThreshold, exitZ, maxHold, mode) {
         // Rolling window stats
         var sumSpr = 0, sumSprSq = 0;
         for (var w = day - WINDOW; w < day; w++) {
-          var spr = pricesA[w] - pricesB[w];
+          var spr = pricesA[w] - hr * pricesB[w];
           sumSpr += spr;
           sumSprSq += spr * spr;
         }
         var rollMean = sumSpr / WINDOW;
-        var rollVar = (sumSprSq / WINDOW) - (rollMean * rollMean);
-        var rollStdev = rollVar > 0 ? Math.sqrt(rollVar * WINDOW / (WINDOW - 1)) : 0;
-        var spread = pricesA[day] - pricesB[day];
+        var rollVar = (sumSprSq - WINDOW * rollMean * rollMean) / (WINDOW - 1);
+        var rollStdev = rollVar > 0 ? Math.sqrt(rollVar) : 0;
+        var spread = pricesA[day] - hr * pricesB[day];
         // Skip days with zero variance — no meaningful Z-score (prevents phantom signals)
         if (rollStdev <= MIN_STDEV) { if (openTrade) { /* keep trade open, just skip signal */ } continue; }
         var zScore = (spread - rollMean) / rollStdev;
@@ -4024,7 +4062,8 @@ function runBacktest_(zThreshold, exitZ, maxHold, mode) {
             var exitSpread = spread;
             var pnlA = (pricesA[day] - openTrade.entryPriceA) * openTrade.dirA;
             var pnlB = (pricesB[day] - openTrade.entryPriceB) * openTrade.dirB;
-            var tradePnl = (pnlA + pnlB) * 100; // per 100 shares
+            // A leg: 100 shares. B leg: 100*hr shares (hedge-ratio-adjusted for credit pairs)
+            var tradePnl = pnlA * 100 + pnlB * Math.round(100 * hr);
             allTrades.push({
               id: pair.id, tA: pair.tA, tB: pair.tB,
               mode: pair.mode, sector: pair.sector,
@@ -4556,23 +4595,24 @@ function runSensitivitySweep_(maxHold, mode, pairId) {
       if (len < WINDOW + 5) continue;
       var pA = histA.slice(histA.length - len);
       var pB = histB.slice(histB.length - len);
+      var hr = (pair.mode === 'credit') ? computeHedgeRatio_(pA, pB) : 1.0;
 
       // Compute Z-score for each day from WINDOW onward
       var zArr = new Array(len);
       for (var day = WINDOW; day < len; day++) {
         var sumSpr = 0, sumSprSq = 0;
         for (var w = day - WINDOW; w < day; w++) {
-          var spr = pA[w] - pB[w];
+          var spr = pA[w] - hr * pB[w];
           sumSpr += spr;
           sumSprSq += spr * spr;
         }
         var rollMean = sumSpr / WINDOW;
-        var rollVar = (sumSprSq / WINDOW) - (rollMean * rollMean);
-        var rollStdev = rollVar > 0 ? Math.sqrt(rollVar * WINDOW / (WINDOW - 1)) : 0;
+        var rollVar = (sumSprSq - WINDOW * rollMean * rollMean) / (WINDOW - 1);
+        var rollStdev = rollVar > 0 ? Math.sqrt(rollVar) : 0;
         // Zero variance → neutral Z (no phantom signal)
-        zArr[day] = rollStdev > MIN_STDEV ? (pA[day] - pB[day] - rollMean) / rollStdev : 0;
+        zArr[day] = rollStdev > MIN_STDEV ? (pA[day] - hr * pB[day] - rollMean) / rollStdev : 0;
       }
-      zSeriesList.push({ z: zArr, pA: pA, pB: pB, len: len, start: WINDOW });
+      zSeriesList.push({ z: zArr, pA: pA, pB: pB, len: len, start: WINDOW, hr: hr });
     }
 
     // Phase 2: Sweep parameter grid
@@ -4601,7 +4641,8 @@ function runSensitivitySweep_(maxHold, mode, pairId) {
             } else {
               var hold = day - openEntry.day;
               if (Math.abs(z) <= exitZ || hold >= maxHold) {
-                var pnl = ((series.pA[day] - openEntry.pA) * openEntry.dirA + (series.pB[day] - openEntry.pB) * openEntry.dirB) * 100;
+                var shr = series.hr || 1.0;
+                var pnl = (series.pA[day] - openEntry.pA) * openEntry.dirA * 100 + (series.pB[day] - openEntry.pB) * openEntry.dirB * Math.round(100 * shr);
                 trades++;
                 totalPnl += pnl;
                 if (pnl > 0) { wins++; grossWin += pnl; } else { grossLoss += Math.abs(pnl); }
@@ -4650,7 +4691,7 @@ function runSensitivitySweep_(maxHold, mode, pairId) {
 // ═══════════════════════════════════════════════════════════════════
 // SINGLE PAIR SWEEP — parameter optimization for a user-specified pair
 // ═══════════════════════════════════════════════════════════════════
-function sweepSinglePair_(tA, tB) {
+function sweepSinglePair_(tA, tB, pairMode) {
   try {
     tA = (tA || '').toUpperCase().trim();
     tB = (tB || '').toUpperCase().trim();
@@ -4673,20 +4714,21 @@ function sweepSinglePair_(tA, tB) {
     // Align from end (most recent days match)
     var pA = histA.slice(histA.length - len);
     var pB = histB.slice(histB.length - len);
+    var hr = (pairMode === 'credit') ? computeHedgeRatio_(pA, pB) : 1.0;
 
     // Compute rolling Z-score series using 90-day window (matches Live sheet)
     var zArr = new Array(len);
     for (var day = WINDOW; day < len; day++) {
       var sumSpr = 0, sumSprSq = 0;
       for (var w = day - WINDOW; w < day; w++) {
-        var spr = pA[w] - pB[w];
+        var spr = pA[w] - hr * pB[w];
         sumSpr += spr;
         sumSprSq += spr * spr;
       }
       var rollMean = sumSpr / WINDOW;
-      var rollVar = (sumSprSq / WINDOW) - (rollMean * rollMean);
-      var rollStdev = rollVar > 0 ? Math.sqrt(rollVar * WINDOW / (WINDOW - 1)) : 0;
-      zArr[day] = rollStdev > MIN_STDEV ? (pA[day] - pB[day] - rollMean) / rollStdev : 0;
+      var rollVar = (sumSprSq - WINDOW * rollMean * rollMean) / (WINDOW - 1);
+      var rollStdev = rollVar > 0 ? Math.sqrt(rollVar) : 0;
+      zArr[day] = rollStdev > MIN_STDEV ? (pA[day] - hr * pB[day] - rollMean) / rollStdev : 0;
     }
 
     // Current Z: look up from WebCache/WebCacheCredit for exact match with alerts
@@ -4708,6 +4750,7 @@ function sweepSinglePair_(tA, tB) {
     var bestCombo = null;
     var allCombos = [];
 
+    var hrB = Math.round(100 * hr); // B leg shares (hedge-ratio-adjusted)
     for (var hi = 0; hi < holdGrid.length; hi++) {
       var maxHold = holdGrid[hi];
       for (var ei = 0; ei < entryGrid.length; ei++) {
@@ -4728,7 +4771,7 @@ function sweepSinglePair_(tA, tB) {
             } else {
               var hold = day - openEntry.day;
               if (Math.abs(z) <= exitZ || hold >= maxHold) {
-                var pnl = ((pA[day] - openEntry.pA) * openEntry.dirA + (pB[day] - openEntry.pB) * openEntry.dirB) * 100;
+                var pnl = (pA[day] - openEntry.pA) * openEntry.dirA * 100 + (pB[day] - openEntry.pB) * openEntry.dirB * hrB;
                 trades++;
                 totalPnl += pnl;
                 holdSum += hold;
@@ -4864,26 +4907,28 @@ function runOptimalSweep_(maxHold, mode) {
       if (len < WINDOW + 5) { pairsSkippedHist++; continue; }
       var pA = histA.slice(histA.length - len);
       var pB = histB.slice(histB.length - len);
+      var hr = (pair.mode === 'credit') ? computeHedgeRatio_(pA, pB) : 1.0;
 
       // Compute rolling Z-score series
       var zArr = new Array(len);
       for (var day = WINDOW; day < len; day++) {
         var sumSpr = 0, sumSprSq = 0;
         for (var w = day - WINDOW; w < day; w++) {
-          var spr = pA[w] - pB[w];
+          var spr = pA[w] - hr * pB[w];
           sumSpr += spr;
           sumSprSq += spr * spr;
         }
         var rollMean = sumSpr / WINDOW;
-        var rollVar = (sumSprSq / WINDOW) - (rollMean * rollMean);
-        var rollStdev = rollVar > 0 ? Math.sqrt(rollVar * WINDOW / (WINDOW - 1)) : 0;
-        zArr[day] = rollStdev > MIN_STDEV ? (pA[day] - pB[day] - rollMean) / rollStdev : 0;
+        var rollVar = (sumSprSq - WINDOW * rollMean * rollMean) / (WINDOW - 1);
+        var rollStdev = rollVar > 0 ? Math.sqrt(rollVar) : 0;
+        zArr[day] = rollStdev > MIN_STDEV ? (pA[day] - hr * pB[day] - rollMean) / rollStdev : 0;
       }
 
       // Sweep all entry/exit combos, find the one with best avgPnl
       var bestAvgPnl = -Infinity;
       var bestCombo = null;
 
+      var hrB = Math.round(100 * hr); // B leg shares (hedge-ratio-adjusted)
       for (var ei = 0; ei < entryGrid.length; ei++) {
         var zThreshold = entryGrid[ei];
         for (var xi = 0; xi < exitGrid.length; xi++) {
@@ -4902,7 +4947,7 @@ function runOptimalSweep_(maxHold, mode) {
             } else {
               var hold = day - openEntry.day;
               if (Math.abs(z) <= exitZ || hold >= maxHold) {
-                var pnl = ((pA[day] - openEntry.pA) * openEntry.dirA + (pB[day] - openEntry.pB) * openEntry.dirB) * 100;
+                var pnl = (pA[day] - openEntry.pA) * openEntry.dirA * 100 + (pB[day] - openEntry.pB) * openEntry.dirB * hrB;
                 trades++;
                 totalPnl += pnl;
                 holdSum += hold;
@@ -5631,7 +5676,7 @@ function runModelPortfolioGenerator(excludeTickers) {
       for (var mp = 0; mp < portfolio.pairs.length; mp++) {
         if (new Date().getTime() - startTime > MAX_MS) break;
         var mpPair = portfolio.pairs[mp];
-        var sweep = miniSweepSinglePair_(mpPair.tA, mpPair.tB, histMap, 60);
+        var sweep = miniSweepSinglePair_(mpPair.tA, mpPair.tB, histMap, 60, mpPair.mode);
         if (sweep) {
           mpPair.optEntry = sweep.optEntry;
           mpPair.optExit = sweep.optExit;
@@ -6537,7 +6582,7 @@ function buildPortfolioFromCombo_(combo, candidates, corrMatrix, histMap) {
  * Finds the optimal entry/exit Z thresholds based on 90-day rolling Z-score history.
  * Returns { optEntry, optExit, optWR, optAvgPnl, optTrades, optProfitFactor } or null.
  */
-function miniSweepSinglePair_(tA, tB, histMap, maxHold) {
+function miniSweepSinglePair_(tA, tB, histMap, maxHold, pairMode) {
   maxHold = maxHold || 60;
   var WINDOW = 90;
   var histA = histMap[String(tA).toUpperCase().trim()];
@@ -6547,20 +6592,21 @@ function miniSweepSinglePair_(tA, tB, histMap, maxHold) {
   if (len < WINDOW + 5) return null;
   var pA = histA.slice(histA.length - len);
   var pB = histB.slice(histB.length - len);
+  var hr = (pairMode === 'credit') ? computeHedgeRatio_(pA, pB) : 1.0;
 
   // Compute rolling Z-score series
   var zArr = new Array(len);
   for (var day = WINDOW; day < len; day++) {
     var sumSpr = 0, sumSprSq = 0;
     for (var w = day - WINDOW; w < day; w++) {
-      var spr = pA[w] - pB[w];
+      var spr = pA[w] - hr * pB[w];
       sumSpr += spr;
       sumSprSq += spr * spr;
     }
     var rollMean = sumSpr / WINDOW;
-    var rollVar = (sumSprSq / WINDOW) - (rollMean * rollMean);
-    var rollStdev = rollVar > 0 ? Math.sqrt(rollVar * WINDOW / (WINDOW - 1)) : 0;
-    zArr[day] = rollStdev > MIN_STDEV ? (pA[day] - pB[day] - rollMean) / rollStdev : 0;
+    var rollVar = (sumSprSq - WINDOW * rollMean * rollMean) / (WINDOW - 1);
+    var rollStdev = rollVar > 0 ? Math.sqrt(rollVar) : 0;
+    zArr[day] = rollStdev > MIN_STDEV ? (pA[day] - hr * pB[day] - rollMean) / rollStdev : 0;
   }
 
   // ── Anti-overfitting constants ──
@@ -6573,6 +6619,7 @@ function miniSweepSinglePair_(tA, tB, histMap, maxHold) {
   var exitZValues = [0.0, 0.25, 0.5, 0.75, 1.0, 1.25, 1.5];
   var best = null;
 
+  var hrB = Math.round(100 * hr); // B leg shares (hedge-ratio-adjusted)
   for (var ei = 0; ei < entryZValues.length; ei++) {
     var zThreshold = entryZValues[ei];
     for (var xi = 0; xi < exitZValues.length; xi++) {
@@ -6591,7 +6638,7 @@ function miniSweepSinglePair_(tA, tB, histMap, maxHold) {
         } else {
           var hold = day - openEntry.day;
           if (Math.abs(z) <= exitZ || hold >= maxHold) {
-            var pnl = ((pA[day] - openEntry.pA) * openEntry.dirA + (pB[day] - openEntry.pB) * openEntry.dirB) * 100;
+            var pnl = (pA[day] - openEntry.pA) * openEntry.dirA * 100 + (pB[day] - openEntry.pB) * openEntry.dirB * hrB;
             trades++;
             totalPnl += pnl;
             holdSum += hold;

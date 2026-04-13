@@ -1772,7 +1772,6 @@ function computeCreditCache() {
       var priceA = dA.price;
       var priceB = dB.price;
       if (priceA > 0 && priceB > 0) validPrices++;
-      var spread = priceA - priceB;
 
       // Historical spread computation
       // IMPORTANT: Align from the END of each array, not the start.
@@ -1784,11 +1783,21 @@ function computeCreditCache() {
       var hB = histMap[tB] || [];
       var DEFAULT_LOOKBACK = 90;
 
-      // First pass: compute nominal spread series with all available history for half-life
+      // Compute OLS hedge ratio β: priceA = α + β·priceB
+      // Credit pairs use β-adjusted spread (priceA - β·priceB) instead of nominal (priceA - priceB)
+      // because different issuers at different price levels make nominal spread meaningless.
       var maxAvail = Math.min(hA.length, hB.length);
+      var hedgeRatio = maxAvail >= 20 ? computeHedgeRatio_(
+        hA.slice(hA.length - maxAvail),
+        hB.slice(hB.length - maxAvail)
+      ) : 1.0;
+
+      var spread = priceA - hedgeRatio * priceB;
+
+      // First pass: compute hedged spread series with all available history for half-life
       var spreadForHL = [];
       for (var k = 0; k < maxAvail; k++) {
-        spreadForHL.push(hA[hA.length - maxAvail + k] - hB[hB.length - maxAvail + k]);
+        spreadForHL.push(hA[hA.length - maxAvail + k] - hedgeRatio * hB[hB.length - maxAvail + k]);
       }
 
       // Compute half-life to determine adaptive lookback
@@ -1818,7 +1827,7 @@ function computeCreditCache() {
       var minLen = Math.min(hA.length, hB.length, LOOKBACK);
       var spreads = [];
       for (var k = 0; k < minLen; k++) {
-        spreads.push(hA[hA.length - minLen + k] - hB[hB.length - minLen + k]);
+        spreads.push(hA[hA.length - minLen + k] - hedgeRatio * hB[hB.length - minLen + k]);
       }
 
       var histCount = spreads.length;
@@ -1859,7 +1868,8 @@ function computeCreditCache() {
         mA.coupon !== '' ? mA.coupon : '', mB.coupon !== '' ? mB.coupon : '',
         mean, stdev, zScore, lower, upper,
         sector, histCount,
-        volAvgA, volAvgB, avgLiq, curVolA, curVolB, curVol, volSpike
+        volAvgA, volAvgB, avgLiq, curVolA, curVolB, curVol, volSpike,
+        hedgeRatio
       ]);
     }
 
@@ -1879,24 +1889,25 @@ function computeCreditCache() {
       'YieldA', 'YieldB', 'CouponA', 'CouponB',
       'Mean', 'StDev', 'Z-Score', 'Lower', 'Upper',
       'Sector', 'HistCount',
-      'AvgLiqA', 'AvgLiqB', 'AvgLiq', 'CurVolA', 'CurVolB', 'CurVol', 'VolSpike'
+      'AvgLiqA', 'AvgLiqB', 'AvgLiq', 'CurVolA', 'CurVolB', 'CurVol', 'VolSpike',
+      'HedgeRatio'
     ];
-    wcSheet.getRange(1, 1, 1, 24).setValues([headers]);
-    wcSheet.getRange(1, 1, 1, 24).setFontWeight('bold');
+    wcSheet.getRange(1, 1, 1, 25).setValues([headers]);
+    wcSheet.getRange(1, 1, 1, 25).setFontWeight('bold');
 
     if (results.length > 0) {
       // Write in chunks of 5000 rows
       var CHUNK = 5000;
       for (var c = 0; c < results.length; c += CHUNK) {
         var chunk = results.slice(c, Math.min(c + CHUNK, results.length));
-        wcSheet.getRange(c + 2, 1, chunk.length, 24).setValues(chunk);
+        wcSheet.getRange(c + 2, 1, chunk.length, 25).setValues(chunk);
       }
     }
 
     // Clear leftover rows from previous run (if pair count decreased)
     var lastRow = wcSheet.getLastRow();
     if (lastRow > results.length + 1) {
-      wcSheet.getRange(results.length + 2, 1, lastRow - results.length - 1, 24).clearContent();
+      wcSheet.getRange(results.length + 2, 1, lastRow - results.length - 1, 25).clearContent();
     }
 
     SpreadsheetApp.flush();
