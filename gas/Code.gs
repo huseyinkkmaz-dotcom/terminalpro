@@ -5067,8 +5067,8 @@ function checkExitSignals_(params) {
         var scrId = String(scrData[si][0] || '').toUpperCase().replace(/[^A-Z0-9|]/g, '');
         if (scrId) {
           screenerMap[scrId] = {
-            p75Mae: parseFloat(scrData[si][10]) || 0,
-            avgMae: parseFloat(scrData[si][9]) || 0
+            avgMae: parseFloat(scrData[si][8]) || 0,
+            p75Mae: parseFloat(scrData[si][9]) || 0
           };
         }
       }

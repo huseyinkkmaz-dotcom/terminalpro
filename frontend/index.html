@@ -1281,7 +1281,9 @@ async function analyzeAlert(btn, tA, tB, pA, pB, z, rowId) {
       _ch += '<div class="ar-metric"><span class="ar-metric-label">Avg Max Loss</span><span class="ar-metric-val" style="color:var(--high)">-$'+Math.abs(_bsMae).toFixed(4)+'</span></div>';
       _ch += '<div class="ar-metric"><span class="ar-metric-label">P75 Max Loss</span><span class="ar-metric-val" style="color:var(--high)">-$'+Math.abs(_bsP75).toFixed(4)+'</span></div>';
       _ch += '<div class="ar-metric"><span class="ar-metric-label">Widen Prob</span><span class="ar-metric-val" style="color:'+_bsWpC+'">'+_bsWp.toFixed(0)+'%</span></div></div>';
-      _ch += '</div><div style="text-align:center;padding:6px"><button onclick="this.parentNode.parentNode.parentNode.remove();analyzeAlertFull(document.querySelector(\'[onclick*=&quot;'+rowId+'&quot;]\'),\''+tA+'\',\''+tB+'\','+pA+','+pB+','+z+',\''+rowId+'\')" style="background:none;border:1px solid var(--border);color:var(--subtext);border-radius:4px;padding:4px 12px;font-size:9px;cursor:pointer">Full Analysis (API call)</button></div></td></tr>';
+      window._analyzeBtns = window._analyzeBtns || {};
+      window._analyzeBtns[rowId] = btn;
+      _ch += '</div><div style="text-align:center;padding:6px"><button onclick="this.closest(\'tr\').remove();var _b=window._analyzeBtns[\''+rowId+'\'];if(_b)analyzeAlertFull(_b,\''+tA.replace(/'/g,"\\'")+'\',\''+tB.replace(/'/g,"\\'")+'\','+pA+','+pB+','+z+',\''+rowId+'\')" style="background:none;border:1px solid var(--border);color:var(--subtext);border-radius:4px;padding:4px 12px;font-size:9px;cursor:pointer">Full Analysis (API call)</button></div></td></tr>';
       var _aRow = btn.closest('tr');
       if (_aRow) _aRow.insertAdjacentHTML('afterend', _ch);
       return;
