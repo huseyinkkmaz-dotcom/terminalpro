@@ -3893,7 +3893,9 @@ function getDividendCapture_() {
         if (Math.abs(z) < 1.8) continue;
 
         // Spread capture = distance from current spread to mean
-        var spread = priceA - priceB;
+        // Credit pairs use hedge-ratio-adjusted spread (col 24 = hedgeRatio)
+        var hr = (sheets[s].mode === 'credit' && row[24]) ? parseFloat(row[24]) || 1.0 : 1.0;
+        var spread = priceA - hr * priceB;
         var spreadCapture = Math.abs(spread - mean);
 
         // Must have at least $0.30 spread capture potential
