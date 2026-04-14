@@ -61,9 +61,14 @@ When resuming, check this file FIRST. Each item has a status. Pick up the first 
 - **Fix**: `analyzeAlert()` checks screener cache first. If data <24h old, renders compact cached result immediately with "Full Analysis (API call)" fallback button. New `analyzeAlertFull()` function bypasses cache.
 
 ### 10. Half-Life as First-Class Trading Signal
-- **Status**: PARTIAL (sortable column done; sizer/backtest integration pending)
+- **Status**: DONE
 - **Priority**: HIGH
-- **Fix**: Added `data-hl` attribute to alert rows, `sortHL()` function, Quality column header is now sortable by half-life. Invalid HL sorts to bottom (999). Sizer integration and backtest expected-hold-days estimator deferred.
+- **Fix**: Added `data-hl` attribute to alert rows, `sortHL()` function, Quality column header is now sortable by half-life. Invalid HL sorts to bottom (999). HL now integrated into sizing: `hlMult = clamp(21/HL, 0.5x, 2.0x)` applied in `inlineSizer()`, `recalcInlineSizer()`, `buildInlineSizerCards()` (new HL Mult card), `runSizer()` (portfolio-level) with new HL Mult column, and backend `getPositionSizing_()`. HL also integrated into backtest: per-pair `pairMaxHold = min(3*HL, maxHold)` with new `HL_CAP` exit reason.
+
+### 11. β-Adjusted Size Suggestion in Trade Modal
+- **Status**: DONE
+- **Priority**: MEDIUM
+- **Fix**: `openModal()` now reads `hedgeRatio` from `_alertDataMap`. For credit pairs (β≠1.0), shows yellow hint below SIZE B with β value. Typing into SIZE A auto-fills SIZE B = round(SIZE A × β). Override manually if desired.
 
 ---
 
@@ -88,10 +93,9 @@ When resuming, check this file FIRST. Each item has a status. Pick up the first 
 - **Fix**: Add "PRICE ADJ" badge to pair in WebCache. Surface in alerts view.
 
 ### B4. Half-Life in Sizer + Backtest
-- **Status**: BACKLOG
+- **Status**: DONE (see item #10 above)
 - **Priority**: HIGH
-- **Issue**: HL is sortable but not yet used in sizer (shorter HL = can size larger) or backtest (expected-hold-days estimator).
-- **Fix**: Integrate HL into Kelly sizing and backtest hold duration.
+- **Fix**: HL multiplier in sizers (inline, portfolio, backend) + per-pair max hold cap in backtest.
 
 ---
 
@@ -109,3 +113,5 @@ When resuming, check this file FIRST. Each item has a status. Pick up the first 
 | #8 30/60d Windows | 2026-04-13 | (current) | Dropped 15d/90d from screener + display |
 | #9 Cache Analyze | 2026-04-13 | (current) | Screener cache → instant inline results |
 | #10 HL Sortable | 2026-04-13 | (current) | Quality column sortable by half-life |
+| #10b HL Sizer+BT | 2026-04-14 | (current) | HL multiplier in sizers; per-pair max hold in backtest |
+| #11 β Auto-fill | 2026-04-14 | (current) | Trade modal auto-fills SIZE B from SIZE A × β |

@@ -4046,6 +4046,15 @@ function runBacktest_(zThreshold, exitZ, maxHold, mode) {
       // For credit pairs, use hedge-ratio-adjusted spread (priceA - β·priceB)
       var hr = (pair.mode === 'credit') ? computeHedgeRatio_(pricesA, pricesB) : 1.0;
 
+      // Per-pair dynamic max-hold: min(3 * HL, global maxHold). 3 half-lives ≈ 87.5% expected reversion.
+      // Short-HL pairs don't need long holds; very slow pairs are capped by global maxHold.
+      var pairSpreadSeries = [];
+      for (var spIdx = 0; spIdx < pricesA.length; spIdx++) pairSpreadSeries.push(pricesA[spIdx] - hr * pricesB[spIdx]);
+      var hlRes = ouHalfLife_(pairSpreadSeries);
+      var pairMaxHold = (hlRes.isValid && hlRes.halfLife > 0)
+        ? Math.max(5, Math.min(maxHold, Math.round(3 * hlRes.halfLife)))
+        : maxHold;
+
       pairsProcessed++;
       var tradesBefore = allTrades.length;
       var openTrade = null;
@@ -4079,15 +4088,21 @@ function runBacktest_(zThreshold, exitZ, maxHold, mode) {
             };
           }
         } else {
-          // Exit conditions: Z crosses back inside exitZ band, or max hold reached
+          // Exit conditions: Z crosses back inside exitZ band, or per-pair HL-adjusted max hold reached
           var holdDays = day - openTrade.entryDay;
-          var exitNow = Math.abs(zScore) <= exitZ || holdDays >= maxHold;
+          var exitNow = Math.abs(zScore) <= exitZ || holdDays >= pairMaxHold;
           if (exitNow) {
             var exitSpread = spread;
             var pnlA = (pricesA[day] - openTrade.entryPriceA) * openTrade.dirA;
             var pnlB = (pricesB[day] - openTrade.entryPriceB) * openTrade.dirB;
             // A leg: 100 shares. B leg: 100*hr shares (hedge-ratio-adjusted for credit pairs)
             var tradePnl = pnlA * 100 + pnlB * Math.round(100 * hr);
+            var _exitReason;
+            if (holdDays >= pairMaxHold) {
+              _exitReason = (hlRes.isValid && pairMaxHold < maxHold) ? 'HL_CAP' : 'MAX_HOLD';
+            } else {
+              _exitReason = 'Z_REVERT';
+            }
             allTrades.push({
               id: pair.id, tA: pair.tA, tB: pair.tB,
               mode: pair.mode, sector: pair.sector,
@@ -4098,7 +4113,7 @@ function runBacktest_(zThreshold, exitZ, maxHold, mode) {
               entrySpread: parseFloat(openTrade.entrySpread.toFixed(4)),
               exitSpread: parseFloat(exitSpread.toFixed(4)),
               pnl: parseFloat(tradePnl.toFixed(2)),
-              exitReason: holdDays >= maxHold ? 'MAX_HOLD' : 'Z_REVERT'
+              exitReason: _exitReason
             });
             openTrade = null;
           }
@@ -4301,10 +4316,16 @@ function getPositionSizing_(maxLossPerTrade) {
       var stdev = parseFloat(a.stdev) || 0;
       if (pA <= 0 || pB <= 0 || stdev <= 0) continue;
 
-      // Core sizing: shares = maxLoss / (stopSigma * stdev)
+      // HL-adjusted sizing: shorter half-life recycles capital faster, allows larger size
+      // hlMult = clamp(21 / HL, 0.5x, 2.0x), where 21 trading days ≈ 1 month baseline
+      var hlRaw = parseFloat(a.halfLife);
+      var hlValid = a.halfLifeValid === true && hlRaw > 0 && hlRaw < 200;
+      var hlMult = hlValid ? Math.max(0.5, Math.min(2.0, 21 / hlRaw)) : 1.0;
+
+      // Core sizing: shares = (maxLoss * hlMult) / (stopSigma * stdev)
       // StDev is the spread standard deviation (price-space)
       var spreadRisk = sigma * stdev;
-      var shares = Math.floor(maxLossPerTrade / spreadRisk);
+      var shares = Math.floor((maxLossPerTrade * hlMult) / spreadRisk);
       if (shares <= 0) continue;
 
       var notional = shares * (pA + pB);
@@ -4342,7 +4363,9 @@ function getPositionSizing_(maxLossPerTrade) {
         kellyShares: kellyShares,
         kellyFraction: kellyFraction,
         winRate: winRate !== null ? parseFloat((winRate * 100).toFixed(1)) : null,
-        expProfit: a.expProfit
+        expProfit: a.expProfit,
+        halfLife: hlValid ? hlRaw : null,
+        hlMult: parseFloat(hlMult.toFixed(2))
       });
     }
 

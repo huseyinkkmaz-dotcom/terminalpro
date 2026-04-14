@@ -563,10 +563,11 @@ th .th-hint{font-weight:400;font-size:8px;letter-spacing:0;text-transform:none;c
 <div><label id="lblA" style="font-size:9px;color:var(--subtext);font-weight:900;display:block;margin-bottom:8px">PRICE A</label><input type="text" id="pA" style="width:100%;background:var(--bg);border:1px solid var(--border);color:white;padding:14px;border-radius:8px;box-sizing:border-box"></div>
 <div><label id="lblB" style="font-size:9px;color:var(--subtext);font-weight:900;display:block;margin-bottom:8px">PRICE B</label><input type="text" id="pB" style="width:100%;background:var(--bg);border:1px solid var(--border);color:white;padding:14px;border-radius:8px;box-sizing:border-box"></div>
 </div>
-<div style="display:grid;grid-template-columns:1fr 1fr;gap:15px;margin-bottom:35px">
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:15px;margin-bottom:25px">
 <div><label style="font-size:9px;color:var(--subtext);font-weight:900;display:block;margin-bottom:8px">SIZE A</label><input type="text" id="sA" value="0" style="width:100%;background:var(--bg);border:1px solid var(--border);color:white;padding:14px;border-radius:8px;box-sizing:border-box"></div>
 <div><label style="font-size:9px;color:var(--subtext);font-weight:900;display:block;margin-bottom:8px">SIZE B</label><input type="text" id="sB" value="0" style="width:100%;background:var(--bg);border:1px solid var(--border);color:white;padding:14px;border-radius:8px;box-sizing:border-box"></div>
 </div>
+<div id="betaHint" style="display:none;font-size:10px;color:var(--yellow);margin-top:-15px;margin-bottom:15px;padding:8px 12px;background:rgba(250,204,21,.08);border-left:2px solid var(--yellow);border-radius:3px;line-height:1.4"></div>
 <div id="exitParamsInfo" style="display:none;background:rgba(16,185,129,.08);border:1px solid rgba(16,185,129,.3);border-radius:8px;padding:10px 14px;margin-bottom:15px;font-size:10px;color:var(--text)"></div>
 <button onclick="doSubmit()" style="background:var(--accent);color:var(--bg);border:none;padding:18px;width:100%;border-radius:8px;font-weight:900;cursor:pointer;font-size:13px">CONFIRM</button>
 <button onclick="closeModal()" style="background:none;border:none;color:var(--subtext);width:100%;margin-top:15px;cursor:pointer;font-size:12px">CANCEL</button>
@@ -1019,7 +1020,7 @@ Optimized baskets from <strong style="color:var(--text)">sweep-validated backtes
 </div>
 <div id="psLoading" style="display:none;text-align:center;padding:12px;color:var(--subtext);font-size:11px">Calculating...</div>
 <div id="psSummary" style="display:none;margin-bottom:12px"></div>
-<div id="psTable" style="display:none;overflow-x:auto;max-height:300px;overflow-y:auto"><table id="psResultTable" style="font-size:12px"><thead><tr><th>Pair</th><th>Z</th><th>StDev</th><th>Shares</th><th>Notional</th><th>Max Loss</th><th>Kelly</th><th>Exp Profit</th></tr></thead><tbody></tbody></table></div>
+<div id="psTable" style="display:none;overflow-x:auto;max-height:300px;overflow-y:auto"><table id="psResultTable" style="font-size:12px"><thead><tr><th>Pair</th><th>Z</th><th>StDev</th><th title="Half-life-adjusted size multiplier: clamp(21/HL, 0.5x, 2.0x)">HL Mult</th><th>Shares</th><th>Notional</th><th>Max Loss</th><th>Kelly</th><th>Exp Profit</th></tr></thead><tbody></tbody></table></div>
 </div>
 </div>
 <div id="btSignals" style="margin-bottom:25px"></div>
@@ -1427,7 +1428,42 @@ window.addEventListener("DOMContentLoaded",async()=>{
 });
 async function switchMode(mode,el){if(mode===currentMode)return;currentMode=mode;activeSector='';document.querySelectorAll('.strat-pill').forEach(p=>p.classList.remove('active'));el.classList.add('active');document.getElementById('sInput').value='';document.getElementById('excludeInput').value='';document.getElementById('alerts').setAttribute('data-mode',mode);try{setConnStatus("loading");console.log("[TerminalPro] Switching to mode:",mode);const data=await apiGet("getData",{mode:mode});if(data&&data.ok){updateUI(data);setConnStatus("ok");}else{console.error("[TerminalPro] switchMode error:",data);setConnStatus("err");}}catch(e){console.error("[TerminalPro] switchMode failed:",e.message);setConnStatus("err");}}
 function tab(t,el){document.querySelectorAll('.tab-content').forEach(x=>x.classList.remove('active'));document.querySelectorAll('.nav-item').forEach(x=>x.classList.remove('active'));document.getElementById(t).classList.add('active');el.classList.add('active');}
-function openModal(id,tA,tB,exitParams){activeId=id;window._pendingExitParams=exitParams||null;document.getElementById('modalTitle').innerText=id;document.getElementById('lblA').innerText=(tA||"PRICE A")+" PRICE";document.getElementById('lblB').innerText=(tB||"PRICE B")+" PRICE";document.getElementById('pA').value="";document.getElementById('pB').value="";document.getElementById('sA').value="0";document.getElementById('sB').value="0";var epInfo=document.getElementById('exitParamsInfo');if(epInfo){if(exitParams&&exitParams.targetExitZ){epInfo.style.display='block';epInfo.innerHTML='<span style="color:var(--low);font-weight:900">Exit targets will be stamped:</span> Exit Z: '+parseFloat(exitParams.targetExitZ).toFixed(1)+'σ · Profit capture: '+(exitParams.profitCapturePct||'—')+'% · Max hold: '+(exitParams.maxHoldDays||'—')+'d';}else{epInfo.style.display='none';}}document.getElementById('entryModal').style.display='block';}
+function openModal(id,tA,tB,exitParams){
+activeId=id;window._pendingExitParams=exitParams||null;
+document.getElementById('modalTitle').innerText=id;
+document.getElementById('lblA').innerText=(tA||"PRICE A")+" PRICE";
+document.getElementById('lblB').innerText=(tB||"PRICE B")+" PRICE";
+document.getElementById('pA').value="";document.getElementById('pB').value="";
+var sA_el=document.getElementById('sA');var sB_el=document.getElementById('sB');
+sA_el.value="0";sB_el.value="0";
+// β-adjusted size suggestion for credit pairs
+var _alertKey=id.toUpperCase().replace(/[^A-Z0-9|]/g,'');
+var _aRec=window._alertDataMap?window._alertDataMap[_alertKey]:null;
+var beta=(_aRec&&_aRec.hedgeRatio)?parseFloat(_aRec.hedgeRatio):1.0;
+var isCreditBeta=beta&&beta!==1.0&&beta>0;
+window._modalBeta=isCreditBeta?beta:0;
+var bh=document.getElementById('betaHint');
+if(bh){
+if(isCreditBeta){
+bh.style.display='block';
+bh.innerHTML='Credit pair hedge ratio <strong style="color:var(--accent)">\u03B2 = '+beta.toFixed(3)+'</strong>. Enter SIZE A; SIZE B will auto-fill to round(SIZE A &times; \u03B2). Override manually if needed.';
+}else{bh.style.display='none';}
+}
+sA_el.oninput=function(){
+if(!window._modalBeta)return;
+var sAval=parseFloat(sA_el.value);
+if(isNaN(sAval))return;
+sB_el.value=String(Math.round(sAval*window._modalBeta));
+};
+var epInfo=document.getElementById('exitParamsInfo');
+if(epInfo){
+if(exitParams&&exitParams.targetExitZ){
+epInfo.style.display='block';
+epInfo.innerHTML='<span style="color:var(--low);font-weight:900">Exit targets will be stamped:</span> Exit Z: '+parseFloat(exitParams.targetExitZ).toFixed(1)+'&sigma; &middot; Profit capture: '+(exitParams.profitCapturePct||'\u2014')+'% &middot; Max hold: '+(exitParams.maxHoldDays||'\u2014')+'d';
+}else{epInfo.style.display='none';}
+}
+document.getElementById('entryModal').style.display='block';
+}
 function closeModal(){document.getElementById('entryModal').style.display='none';}
 async function doSubmit(){try{var pA=parseFloat(document.getElementById('pA').value);var pB=parseFloat(document.getElementById('pB').value);var sA=parseFloat(document.getElementById('sA').value);var sB=parseFloat(document.getElementById('sB').value);if(isNaN(pA)||isNaN(pB)||pA<=0||pB<=0){alert('Enter valid positive prices for both legs.');return;}if((isNaN(sA)||sA===0)&&(isNaN(sB)||sB===0)){alert('Enter a non-zero share count for at least one leg.');return;}if(pA>10000||pB>10000){alert('Price exceeds $10,000 — check for typos.');return;}if(Math.abs(sA)>100000||Math.abs(sB)>100000){alert('Size exceeds 100,000 shares — check for typos.');return;}var params={id:activeId,priceA:pA,priceB:pB,sizeA:sA,sizeB:sB};var ep=window._pendingExitParams;if(ep){if(ep.targetExitZ)params.targetExitZ=ep.targetExitZ;if(ep.profitCapturePct)params.profitCapturePct=ep.profitCapturePct;if(ep.partialAtPct)params.partialAtPct=ep.partialAtPct;if(ep.sourcePortfolio)params.sourcePortfolio=ep.sourcePortfolio;if(ep.maxHoldDays)params.maxHoldDays=ep.maxHoldDays;}window._pendingExitParams=null;await apiGet("saveTrade",params);closeModal();refreshData();}catch(e){alert("Failed to save: "+(e.message||e));}}
 // ── UNIFIED MANAGE POSITION MODAL ──
@@ -2809,8 +2845,12 @@ var stdev=parseFloat(alert.stdev)||0;
 var pA=parseFloat(alert.pA)||0;
 var pB=parseFloat(alert.pB)||0;
 if(stdev<=0||pA<=0||pB<=0)return;
+// HL-adjusted sizing: shorter HL recycles capital faster, allows larger size
+var hl=(alert.halfLifeValid&&alert.halfLife)?parseFloat(alert.halfLife):0;
+var hlMult=1.0;
+if(hl>0&&hl<200)hlMult=Math.max(0.5,Math.min(2.0,21/hl));
 var spreadRisk=sigma*stdev;
-var shares=Math.floor(maxLoss/spreadRisk);
+var shares=Math.floor((maxLoss*hlMult)/spreadRisk);
 if(shares<=0)return;
 var notional=shares*(pA+pB);
 var maxLossActual=shares*spreadRisk;
@@ -2839,7 +2879,7 @@ var kelly=Math.min((winRate*b-(1-winRate))/b,1.0);
 // console.log('[Kelly Debug]   → RESULT: b='+b.toFixed(4)+' kelly='+kelly.toFixed(4)+' shares='+shares+' kellyShares='+Math.floor(shares*Math.min(kelly*0.5,1.0)));
 if(kelly>0){kellyFraction=parseFloat((kelly*100).toFixed(1));kellyShares=Math.floor(shares*Math.min(kelly*0.5,1.0));}
 }
-recs.push({tA:alert.tA,tB:alert.tB,z:parseFloat(alert.z),stdev:parseFloat(stdev.toFixed(4)),shares:shares,notional:parseFloat(notional.toFixed(2)),maxLoss:parseFloat(maxLossActual.toFixed(2)),kellyShares:kellyShares,kellyFraction:kellyFraction,winRate:winRate!==null?parseFloat((winRate*100).toFixed(1)):null,expProfit:alert.expProfit,avgMae:scr?scr.avgMae:null,spreadRisk:parseFloat(spreadRisk.toFixed(4)),lossSource:scr&&parseFloat(scr.avgMae)>0?'MAE':'2\u03C3'});
+recs.push({tA:alert.tA,tB:alert.tB,z:parseFloat(alert.z),stdev:parseFloat(stdev.toFixed(4)),shares:shares,notional:parseFloat(notional.toFixed(2)),maxLoss:parseFloat(maxLossActual.toFixed(2)),kellyShares:kellyShares,kellyFraction:kellyFraction,winRate:winRate!==null?parseFloat((winRate*100).toFixed(1)):null,expProfit:alert.expProfit,avgMae:scr?scr.avgMae:null,spreadRisk:parseFloat(spreadRisk.toFixed(4)),lossSource:scr&&parseFloat(scr.avgMae)>0?'MAE':'2\u03C3',halfLife:hl>0?hl:null,hlMult:parseFloat(hlMult.toFixed(2))});
 });
 // Count open trades from portfolio
 var openCount=document.querySelectorAll('#portfolioGrid .trade-card').length;
@@ -2864,7 +2904,7 @@ var recs=sd.recommendations||[];
 document.getElementById('psTable').style.display='block';
 var tb=document.querySelector('#psResultTable tbody');
 if(!tb)return;
-if(recs.length===0){tb.innerHTML='<tr><td colspan="8" style="text-align:center;color:var(--subtext);padding:20px">No alert pairs available for sizing</td></tr>';return;}
+if(recs.length===0){tb.innerHTML='<tr><td colspan="9" style="text-align:center;color:var(--subtext);padding:20px">No alert pairs available for sizing</td></tr>';return;}
 var h='';
 recs.forEach(function(r){
 var zClr=Math.abs(r.z)>=2?'var(--high)':'var(--yellow)';
@@ -2874,10 +2914,17 @@ var lossLabel=r.lossSource==='MAE'?'<span style="color:var(--low);font-size:9px"
 kellyCell='<span style="color:var(--low);font-weight:900">'+r.kellyShares+'</span>'+
 '<span style="color:var(--subtext);font-size:10px;margin-left:4px">('+r.kellyFraction+'% K, '+r.winRate+'% WR '+lossLabel+')</span>';
 }
+var hlCell='<span style="color:var(--subtext)">1.00&times;</span>';
+if(r.halfLife&&r.halfLife>0){
+var hlClr=(r.hlMult>=1.0)?'var(--accent)':'var(--yellow)';
+hlCell='<span style="color:'+hlClr+';font-weight:900" title="HL='+r.halfLife.toFixed(1)+'d; size multiplier=clamp(21/HL, 0.5x, 2.0x)">'+r.hlMult.toFixed(2)+'&times;</span>'+
+'<span style="color:var(--subtext);font-size:10px;margin-left:4px">HL '+r.halfLife.toFixed(1)+'d</span>';
+}
 h+='<tr>';
 h+='<td style="font-weight:900;font-size:12px">'+r.tA+' / '+r.tB+'</td>';
 h+='<td style="font-family:JetBrains Mono;color:'+zClr+'">'+parseFloat(r.z).toFixed(2)+'&sigma;</td>';
 h+='<td style="font-family:JetBrains Mono;color:var(--subtext)">'+r.stdev+'</td>';
+h+='<td style="font-family:JetBrains Mono">'+hlCell+'</td>';
 h+='<td style="font-family:JetBrains Mono;font-weight:900">'+r.shares+'</td>';
 h+='<td style="font-family:JetBrains Mono">$'+r.notional.toLocaleString()+'</td>';
 h+='<td style="font-family:JetBrains Mono;color:var(--high)">$'+r.maxLoss+'</td>';
@@ -2922,22 +2969,27 @@ function inlineSizer(btn, tA, tB, pA, pB, z, stdev, rowId, pairId){
 var existing=document.getElementById('isz-'+rowId);
 if(existing){existing.remove();btn.classList.remove('done');return;}
 btn.classList.add('done');
+// Look up HL from alert data for HL-adjusted sizing
+var _aKey=(tA+'|'+tB).toUpperCase().replace(/[^A-Z0-9|]/g,'');
+var _alert=window._alertDataMap[_aKey];
+var hl=(_alert&&_alert.halfLifeValid&&_alert.halfLife)?parseFloat(_alert.halfLife):0;
+var hlMult=1.0;
+if(hl>0&&hl<200)hlMult=Math.max(0.5,Math.min(2.0,21/hl));
 var sigma=2;
 var spreadRisk=sigma*stdev;
 var maxLoss=_inlineSizerMaxLoss;
-var shares=spreadRisk>0?Math.floor(maxLoss/spreadRisk):0;
+var adjMaxLoss=maxLoss*hlMult;
+var shares=spreadRisk>0?Math.floor(adjMaxLoss/spreadRisk):0;
 var notional=shares*(pA+pB);
 var maxLossActual=shares*spreadRisk;
 // Kelly from screener cache or alert data
 var kellyShares=null,kellyFrac=null,winRate=null;
 var scrKey=cleanIdFE(pairId);
 var scr=screenerCache[scrKey];
-// console.log('[Kelly Debug] Inline pair='+pairId+' scrKey='+scrKey+' scrFound='+(!!scr)+' avgMae='+(scr?scr.avgMae:'N/A')+' spreadRisk='+spreadRisk.toFixed(4));
 if(scr&&scr.wr30!==undefined&&scr.ep30!==undefined){
 winRate=parseFloat(scr.wr30)/100;
 var avgW=parseFloat(scr.ep30)||0;
 var avgL=(scr&&parseFloat(scr.avgMae)>0)?parseFloat(scr.avgMae):spreadRisk;
-// console.log('[Kelly Debug]   → inline: avgMae='+scr.avgMae+' avgL='+avgL.toFixed(4)+' avgW='+avgW.toFixed(4)+' wr='+scr.wr30);
 if(avgW>0&&avgL>0&&winRate>0&&winRate<=1){
 var b2=avgW/avgL;
 var k2=Math.min((winRate*b2-(1-winRate))/b2,1.0);
@@ -2947,11 +2999,11 @@ if(k2>0){kellyFrac=parseFloat((k2*100).toFixed(1));kellyShares=Math.floor(shares
 var h='<tr class="analyze-row" id="isz-'+rowId+'"><td colspan="10"><div class="isz-wrap">';
 h+='<div class="isz-header"><span style="font-weight:900;color:var(--yellow);font-size:11px;text-transform:uppercase;letter-spacing:.5px">&#9638; Position Sizer</span>';
 h+='<div style="display:flex;align-items:center;gap:6px"><label style="font-size:10px;color:var(--subtext);font-weight:700">Max Loss $</label>';
-h+='<input type="number" class="isz-input" id="iszML-'+rowId+'" value="'+maxLoss+'" step="50" min="50" onchange="recalcInlineSizer(this,\''+rowId+'\','+pA+','+pB+','+stdev+',\''+scrKey+'\')">';
+h+='<input type="number" class="isz-input" id="iszML-'+rowId+'" value="'+maxLoss+'" step="50" min="50" onchange="recalcInlineSizer(this,\''+rowId+'\','+pA+','+pB+','+stdev+',\''+scrKey+'\','+hl+')">';
 h+='</div></div>';
 h+='<div class="isz-grid" id="iszGrid-'+rowId+'">';
 var _ilsSrc=(scr&&parseFloat(scr.avgMae)>0)?'MAE':'2\u03C3';
-h+=buildInlineSizerCards(shares,notional,maxLossActual,z,stdev,kellyShares,kellyFrac,winRate,_ilsSrc);
+h+=buildInlineSizerCards(shares,notional,maxLossActual,z,stdev,kellyShares,kellyFrac,winRate,_ilsSrc,hl,hlMult);
 h+='</div>';
 // Pre-fill trade button
 h+='<div style="margin-top:8px;text-align:right"><button class="scale-btn" style="font-size:10px;padding:4px 14px" onclick="openModal(\''+pairId.replace(/'/g,"\\'")+'\',\''+tA.replace(/'/g,"\\'")+'\',\''+tB.replace(/'/g,"\\'")+'\')">Open Trade</button></div>';
@@ -2959,13 +3011,21 @@ h+='</div></td></tr>';
 var aRow=btn.closest('tr');
 if(aRow)aRow.insertAdjacentHTML('afterend',h);
 }
-function buildInlineSizerCards(shares,notional,maxLoss,z,stdev,kellyShares,kellyFrac,winRate,lossSource){
+function buildInlineSizerCards(shares,notional,maxLoss,z,stdev,kellyShares,kellyFrac,winRate,lossSource,hl,hlMult){
 var h='';
 h+='<div class="isz-card"><div class="isz-label">Shares</div><div class="isz-val" style="color:var(--accent)">'+shares+'</div></div>';
 h+='<div class="isz-card"><div class="isz-label">Notional</div><div class="isz-val">$'+notional.toFixed(0)+'</div></div>';
 h+='<div class="isz-card"><div class="isz-label">Max Loss</div><div class="isz-val" style="color:var(--high)">$'+maxLoss.toFixed(0)+'</div></div>';
 h+='<div class="isz-card"><div class="isz-label">Z-Score</div><div class="isz-val" style="color:var(--accent)">'+parseFloat(z).toFixed(2)+'&sigma;</div></div>';
 h+='<div class="isz-card"><div class="isz-label">StDev</div><div class="isz-val" style="color:var(--subtext)">'+stdev.toFixed(4)+'</div></div>';
+// HL multiplier card — sizing scales with mean-reversion speed
+if(hl&&hl>0&&hl<200){
+var hlColor=(hlMult>=1.0)?'var(--accent)':'var(--yellow)';
+var hlTip='Half-life '+hl.toFixed(1)+'d. Size multiplier = clamp(21/HL, 0.5x, 2.0x). Shorter HL recycles capital faster, so larger size is allowed.';
+h+='<div class="isz-card" title="'+hlTip+'"><div class="isz-label">HL Mult</div><div class="isz-val" style="color:'+hlColor+'">'+hlMult.toFixed(2)+'&times;</div><div style="font-size:9px;color:var(--subtext);margin-top:2px">HL '+hl.toFixed(1)+'d</div></div>';
+}else{
+h+='<div class="isz-card" title="Half-life not computable for this pair; no HL adjustment applied."><div class="isz-label">HL Mult</div><div class="isz-val" style="color:var(--subtext)">1.00&times;</div><div style="font-size:9px;color:var(--subtext);margin-top:2px">HL &mdash;</div></div>';
+}
 if(kellyShares!==null){
 var lsTag=lossSource==='MAE'?'<span style="color:var(--low)">MAE</span>':'<span style="color:var(--yellow)">2\u03C3</span>';
 h+='<div class="isz-card isz-kelly"><div class="isz-label">Kelly</div><div class="isz-val" style="color:var(--low)">'+kellyShares+' sh</div><div style="font-size:9px;color:var(--subtext);margin-top:2px">'+kellyFrac+'% K · '+(winRate*100).toFixed(0)+'% WR · '+lsTag+'</div></div>';
@@ -2974,11 +3034,15 @@ h+='<div class="isz-card"><div class="isz-label">Kelly</div><div class="isz-val"
 }
 return h;
 }
-function recalcInlineSizer(input,rowId,pA,pB,stdev,scrKey){
+function recalcInlineSizer(input,rowId,pA,pB,stdev,scrKey,hl){
 var ml=parseFloat(input.value)||500;
 _inlineSizerMaxLoss=ml;
+var hlNum=parseFloat(hl)||0;
+var hlMult=1.0;
+if(hlNum>0&&hlNum<200)hlMult=Math.max(0.5,Math.min(2.0,21/hlNum));
+var adjML=ml*hlMult;
 var sigma=2;var spreadRisk=sigma*stdev;
-var shares=spreadRisk>0?Math.floor(ml/spreadRisk):0;
+var shares=spreadRisk>0?Math.floor(adjML/spreadRisk):0;
 var notional=shares*(pA+pB);var maxLoss=shares*spreadRisk;
 var kellyShares=null,kellyFrac=null,winRate=null;
 var scr=screenerCache[scrKey];
@@ -2989,7 +3053,7 @@ if(avgW>0&&avgL>0&&winRate>0&&winRate<=1){var b2=avgW/avgL;var k2=Math.min((winR
 }
 var grid=document.getElementById('iszGrid-'+rowId);
 var _rlsSrc=(scr&&parseFloat(scr.avgMae)>0)?'MAE':'2\u03C3';
-if(grid){var z=0;try{var row=grid.closest('tr').previousElementSibling;z=parseFloat(row.getAttribute('data-z'))||0;}catch(e){}grid.innerHTML=buildInlineSizerCards(shares,notional,maxLoss,z,stdev,kellyShares,kellyFrac,winRate,_rlsSrc);}
+if(grid){var z=0;try{var row=grid.closest('tr').previousElementSibling;z=parseFloat(row.getAttribute('data-z'))||0;}catch(e){}grid.innerHTML=buildInlineSizerCards(shares,notional,maxLoss,z,stdev,kellyShares,kellyFrac,winRate,_rlsSrc,hlNum,hlMult);}
 }
 // ═══════════════════════════════════════════════════════════════════
 // REGIME DETECTION — loaded on init, updates banner + score
