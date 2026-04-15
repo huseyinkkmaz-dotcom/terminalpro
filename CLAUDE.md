@@ -231,7 +231,7 @@ Pre-computed probability analysis for top 20 alert pairs. Updated daily at 9 AM 
 
 **Exit target columns (J-O)** are stamped at trade entry when entering from a model portfolio or backtest signal. Empty for manually entered trades. Per-trade targets override global exit params in `checkExitSignals_`.
 
-## ClosedTrades Sheet Column Map (19 columns, 0-indexed)
+## ClosedTrades Sheet Column Map (21 columns, 0-indexed)
 
 | Index | Col | Name | Description |
 |-------|-----|------|-------------|
@@ -248,6 +248,8 @@ Pre-computed probability analysis for top 20 alert pairs. Updated daily at 9 AM 
 | 16 | Q | TargetExitZ | Original exit Z target (carried from OpenTrades) |
 | 17 | R | TargetPnL | Original PnL target (carried from OpenTrades) |
 | 18 | S | SourcePortfolio | Source portfolio (carried from OpenTrades) |
+| 19 | T | CloseReason | Free-text close classification (Target Hit / Stop Loss / Time Stop / manual) |
+| 20 | U | TradeGroupID | UUID-like identifier linking all partial-close rows of the same trade lifecycle. Stamped at trade open (`cleanId(realId) + '_' + Date.now()`) and preserved across partial closes. Used by the History tab's "Group Partials" toggle to consolidate multiple partial closes into one display row and make stats (trades, wins, win rate) count trades not rows. |
 
 ## Deployment
 
