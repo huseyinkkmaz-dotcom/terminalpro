@@ -3,6 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; connect-src https://script.google.com; img-src 'self' data:;">
 <title>Terminal Pro Vol 2</title>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&family=JetBrains+Mono:wght@700&display=swap" rel="stylesheet">
 <style>
@@ -1075,6 +1076,9 @@ console.log("[TerminalPro] App Initialized");
 // Edit (pencil) > Version: New Version > Deploy. The URL never changes.
 // ===========================================================================
 const GAS_URL="https://script.google.com/macros/s/AKfycbxerbmXkrbcrUh7sdMrc240vtPa-nK1EBgtxOSkhqIcsTEiWOpeZJsUdV8OeIlX9DKFVQ/exec";
+// API_KEY: Set this to the same value as the API_KEY Script Property in your GAS project.
+// When empty, auth is skipped (backwards compat). Generate a random 64-char string for production.
+const API_KEY="";
 // --- Global state (declared before any function uses them) ---
 let currentMode = "intra";
 let activeId = "";
@@ -1151,6 +1155,7 @@ function sqPopulateCalc(idx){
 }
 function cleanIdFE(id) { return String(id).replace(/\|/g, '_').replace(/[^a-zA-Z0-9_-]/g, '').toUpperCase(); }
 function escHtml(s){if(s==null)return'';return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
+function escAttr(s){if(s==null)return'';return String(s).replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/"/g,'\\"').replace(/</g,'\\x3c').replace(/>/g,'\\x3e').replace(/\n/g,'\\n').replace(/\r/g,'');}
 // ── CSV EXPORT HELPERS ──
 function csvCell(v){if(v==null)return'';var s=String(v);if(/[",\n\r]/.test(s))return '"'+s.replace(/"/g,'""')+'"';return s;}
 function csvRows(headers,rows){var out=headers.map(csvCell).join(',')+'\r\n';for(var i=0;i<rows.length;i++)out+=rows[i].map(csvCell).join(',')+'\r\n';return out;}
@@ -1409,7 +1414,7 @@ async function apiGet(action,params={},timeoutMs){
   if(!GAS_URL||GAS_URL.indexOf("PASTE")!==-1||GAS_URL.indexOf("http")!==0){throw new Error("GAS_URL not configured. Open index.html and set your Apps Script deployment URL.");}
   var ck=_cacheKey(action,params);var cached=_apiCache[ck];if(cached&&(Date.now()-cached.ts)<API_CACHE_TTL){console.log("[TerminalPro] apiGet cache hit:",action);return cached.data;}
   console.log("[TerminalPro] apiGet:",action,params);
-  const url=new URL(GAS_URL);url.searchParams.set("action",action);for(const[k,v]of Object.entries(params))url.searchParams.set(k,v);
+  const url=new URL(GAS_URL);url.searchParams.set("action",action);if(API_KEY)url.searchParams.set("key",API_KEY);for(const[k,v]of Object.entries(params))url.searchParams.set(k,v);
   var maxRetries=2;var attempt=0;
   while(true){
     attempt++;
@@ -1544,7 +1549,7 @@ var tpF=parseFloat(targetPnL)||0;
 var html='';
 // Close reason badge
 if(closeReason){var rClr='var(--subtext)';if(closeReason==='Stop Loss')rClr='var(--high)';else if(closeReason==='Target Hit')rClr='var(--low)';else if(closeReason==='Time Stop')rClr='var(--yellow)';
-html+='<div style="margin-bottom:12px"><span style="padding:4px 10px;border-radius:6px;border:1px solid '+rClr+';color:'+rClr+';font-size:9px;font-weight:900;text-transform:uppercase">'+closeReason+'</span></div>';}
+html+='<div style="margin-bottom:12px"><span style="padding:4px 10px;border-radius:6px;border:1px solid '+rClr+';color:'+rClr+';font-size:9px;font-weight:900;text-transform:uppercase">'+escHtml(closeReason)+'</span></div>';}
 // Main metrics grid
 html+='<div class="journal-detail-item"><div class="journal-detail-label">Net PnL</div><div class="journal-detail-val" style="color:'+pnlClr+'">'+(pnlF>=0?'+':'')+pnl+'$</div></div>';
 html+='<div class="journal-detail-item"><div class="journal-detail-label">Cap Gains</div><div class="journal-detail-val" style="color:'+cgClr+'">'+(cgF>=0?'+':'')+capGains+'$</div></div>';
@@ -2144,7 +2149,7 @@ var hdClr=h.holdDays<=7?'var(--low)':h.holdDays<=30?'var(--yellow)':'var(--high)
 // Close reason badge
 var reasonBadge='';
 if(h.closeReason){var rClr='var(--subtext)';if(h.closeReason==='Stop Loss')rClr='var(--high)';else if(h.closeReason==='Target Hit')rClr='var(--low)';else if(h.closeReason==='Time Stop')rClr='var(--yellow)';
-reasonBadge='<div class="action-tag" style="color:'+rClr+';border-color:'+rClr+';font-size:7px;padding:2px 6px">'+h.closeReason+'</div>';}
+reasonBadge='<div class="action-tag" style="color:'+rClr+';border-color:'+rClr+';font-size:7px;padding:2px 6px">'+escHtml(h.closeReason)+'</div>';}
 // Target vs actual
 var targetCell='—';
 if(h.targetPnL!=null&&h.targetPnL>0){var tpct=Math.round((p/h.targetPnL)*100);var tClr=tpct>=100?'var(--low)':tpct>=50?'var(--yellow)':'var(--high)';
@@ -2157,10 +2162,10 @@ groupBadge='<div onclick="histToggleExpand(\''+gkey+'\')" style="cursor:pointer;
 }else if(!_histGrouped&&h.tradeGroupId){
 var groupCount=hd.filter(function(x){return x.tradeGroupId===h.tradeGroupId;}).length;
 if(groupCount>1)groupBadge='<div style="font-size:8px;color:var(--purple);margin-top:2px">'+groupCount+' linked</div>';}
-var hn=String(h.note||'').replace(/'/g,"\\'").replace(/\n/g,'\\n');var nbCls=h.note?'note-btn has-note':'note-btn';var nbLbl=h.note?'Edit Note':'Add Note';
-var hgid=String(h.tradeGroupId||'').replace(/'/g,"\\'");
+var hn=escAttr(h.note||'');var nbCls=h.note?'note-btn has-note':'note-btn';var nbLbl=h.note?'Edit Note':'Add Note';
+var hgid=escAttr(h.tradeGroupId||'');
 var entryZnum=parseFloat(h.entryZ)||0;var exitZnum=parseFloat(h.exitZ)||0;
-hh+='<tr><td><div style="font-weight:900;color:var(--accent)">'+h.id+'</div><div style="font-size:10px;color:var(--subtext);margin-top:2px">Z: '+entryZnum.toFixed(2)+'σ → '+exitZnum.toFixed(2)+'σ</div>'+groupBadge+'</td>';
+hh+='<tr><td><div style="font-weight:900;color:var(--accent)">'+escHtml(h.id)+'</div><div style="font-size:10px;color:var(--subtext);margin-top:2px">Z: '+entryZnum.toFixed(2)+'σ → '+exitZnum.toFixed(2)+'σ</div>'+groupBadge+'</td>';
 hh+='<td><div class="action-tag" style="color:'+typeClr+';border-color:'+typeClr+';font-size:8px">'+h.closeType+'</div></td>';
 hh+='<td>'+reasonBadge+'</td>';
 hh+='<td><div class="mono-data" style="font-size:11px">$'+h.costA+' / $'+h.costB+'</div></td>';
@@ -2173,8 +2178,8 @@ hh+='<td><div class="mono-data" style="color:'+ndc+'">'+ndStr+'</div></td>';
 hh+='<td><div class="mono-data" style="color:'+pc+';font-weight:900">'+(p>=0?'+':'')+h.pnl+'$</div></td>';
 hh+='<td><div class="mono-data" style="color:'+pc+'">'+(rc>=0?'+':'')+rc.toFixed(1)+'%</div></td>';
 hh+='<td>'+targetCell+'</td>';
-hh+='<td><button class="'+nbCls+'" id="nbtn-'+h.rowIdx+'" onclick="openJournal('+h.rowIdx+',\''+h.id.replace(/'/g,"\\'")+'\',\''+h.pnl+'\',\''+h.openDate+'\',\''+h.closeDate+'\',\''+h.holdDays+'\',\''+entryZnum+'\',\''+exitZnum+'\',\''+h.capGains+'\',\''+h.netDiv+'\',\''+hn+'\',\''+String(h.closeReason||'').replace(/'/g,"\\'")+'\',\''+String(h.targetPnL||'').toString().replace(/'/g,"\\'")+'\',\''+String(h.paidDiv||'').toString().replace(/'/g,"\\'")+'\',\''+String(h.rcvdDiv||'').toString().replace(/'/g,"\\'")+'\',\''+hgid+'\')">'+nbLbl+'</button></td>';
-hh+='<td><button onclick="deleteClosedTrade('+h.rowIdx+',\''+h.id.replace(/'/g,"\\'")+'\',event)" style="background:none;border:1px solid rgba(239,68,68,0.3);color:var(--high);cursor:pointer;padding:4px 8px;border-radius:6px;font-size:10px;opacity:0.5;transition:opacity .2s" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.5" title="Remove this entry">&#10005;</button></td>';
+hh+='<td><button class="'+nbCls+'" id="nbtn-'+h.rowIdx+'" onclick="openJournal('+h.rowIdx+',\''+escAttr(h.id)+'\',\''+h.pnl+'\',\''+escAttr(h.openDate)+'\',\''+escAttr(h.closeDate)+'\',\''+h.holdDays+'\',\''+entryZnum+'\',\''+exitZnum+'\',\''+h.capGains+'\',\''+h.netDiv+'\',\''+hn+'\',\''+escAttr(h.closeReason||'')+'\',\''+escAttr(String(h.targetPnL||''))+'\',\''+escAttr(String(h.paidDiv||''))+'\',\''+escAttr(String(h.rcvdDiv||''))+'\',\''+hgid+'\')">'+nbLbl+'</button></td>';
+hh+='<td><button onclick="deleteClosedTrade('+h.rowIdx+',\''+escAttr(h.id)+'\',event)" style="background:none;border:1px solid rgba(239,68,68,0.3);color:var(--high);cursor:pointer;padding:4px 8px;border-radius:6px;font-size:10px;opacity:0.5;transition:opacity .2s" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.5" title="Remove this entry">&#10005;</button></td>';
 hh+='</tr>';
 // Expansion rows: when grouped and expanded, render each partial inline below the group row
 if(isMultiGroup&&_histExpandedGroups[h.key]){
@@ -2183,15 +2188,15 @@ var pp=parseFloat(pr.pnl)||0;var ppc=pp>=0?'var(--low)':'var(--high)';
 var ptClr=pr.closeType==='PARTIAL'?'var(--yellow)':'var(--subtext)';
 var pcg=parseFloat(pr.capGains)||0;var pcgc=pcg>=0?'var(--low)':'var(--high)';
 var pnd=parseFloat(pr.netDiv)||0;var pndc=pnd>=0?'var(--low)':'var(--high)';var pndStr=pnd!==0?((pnd>=0?'+':'')+pnd.toFixed(2)+'$'):'—';
-var prn=String(pr.note||'').replace(/'/g,"\\'").replace(/\n/g,'\\n');
+var prn=escAttr(pr.note||'');
 var prNbCls=pr.note?'note-btn has-note':'note-btn';var prNbLbl=pr.note?'Edit Note':'Add Note';
 var prEntryZ=parseFloat(pr.entryZ)||0,prExitZ=parseFloat(pr.exitZ)||0;
-var prGid=String(pr.tradeGroupId||'').replace(/'/g,"\\'");
+var prGid=escAttr(pr.tradeGroupId||'');
 var prc=parseFloat(pr.returnPct)||0;
 hh+='<tr style="background:rgba(139,92,246,.035);border-left:3px solid var(--purple)">';
 hh+='<td style="padding-left:24px"><div style="font-size:10px;color:var(--subtext);font-weight:700">\u2937 Partial #'+(prIdx+1)+'</div><div style="font-size:10px;color:var(--subtext);margin-top:2px">Z: '+prEntryZ.toFixed(2)+'σ → '+prExitZ.toFixed(2)+'σ</div></td>';
 hh+='<td><div class="action-tag" style="color:'+ptClr+';border-color:'+ptClr+';font-size:8px">'+pr.closeType+'</div></td>';
-hh+='<td>'+(pr.closeReason?'<div class="action-tag" style="color:var(--subtext);border-color:var(--subtext);font-size:7px;padding:2px 6px">'+pr.closeReason+'</div>':'')+'</td>';
+hh+='<td>'+(pr.closeReason?'<div class="action-tag" style="color:var(--subtext);border-color:var(--subtext);font-size:7px;padding:2px 6px">'+escHtml(pr.closeReason)+'</div>':'')+'</td>';
 hh+='<td><div class="mono-data" style="font-size:11px;color:var(--subtext)">$'+pr.costA+' / $'+pr.costB+'</div></td>';
 hh+='<td><div class="mono-data" style="font-size:11px">$'+pr.exitPriceA+' / $'+pr.exitPriceB+'</div></td>';
 hh+='<td><div class="mono-data" style="font-size:11px">'+pr.sizeA+' / '+pr.sizeB+'</div></td>';
@@ -2202,8 +2207,8 @@ hh+='<td><div class="mono-data" style="color:'+pndc+'">'+pndStr+'</div></td>';
 hh+='<td><div class="mono-data" style="color:'+ppc+';font-weight:900">'+(pp>=0?'+':'')+pr.pnl+'$</div></td>';
 hh+='<td><div class="mono-data" style="color:'+ppc+'">'+(prc>=0?'+':'')+prc.toFixed(1)+'%</div></td>';
 hh+='<td>\u2014</td>';
-hh+='<td><button class="'+prNbCls+'" id="nbtn-'+pr.rowIdx+'" onclick="openJournal('+pr.rowIdx+',\''+pr.id.replace(/'/g,"\\'")+'\',\''+pr.pnl+'\',\''+pr.openDate+'\',\''+pr.closeDate+'\',\''+pr.holdDays+'\',\''+prEntryZ+'\',\''+prExitZ+'\',\''+pr.capGains+'\',\''+pr.netDiv+'\',\''+prn+'\',\''+String(pr.closeReason||'').replace(/'/g,"\\'")+'\',\''+String(pr.targetPnL||'').toString().replace(/'/g,"\\'")+'\',\''+String(pr.paidDiv||'').toString().replace(/'/g,"\\'")+'\',\''+String(pr.rcvdDiv||'').toString().replace(/'/g,"\\'")+'\',\''+prGid+'\')">'+prNbLbl+'</button></td>';
-hh+='<td><button onclick="deleteClosedTrade('+pr.rowIdx+',\''+pr.id.replace(/'/g,"\\'")+'\',event)" style="background:none;border:1px solid rgba(239,68,68,0.3);color:var(--high);cursor:pointer;padding:4px 8px;border-radius:6px;font-size:10px;opacity:0.5;transition:opacity .2s" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.5" title="Remove this partial">&#10005;</button></td>';
+hh+='<td><button class="'+prNbCls+'" id="nbtn-'+pr.rowIdx+'" onclick="openJournal('+pr.rowIdx+',\''+escAttr(pr.id)+'\',\''+pr.pnl+'\',\''+escAttr(pr.openDate)+'\',\''+escAttr(pr.closeDate)+'\',\''+pr.holdDays+'\',\''+prEntryZ+'\',\''+prExitZ+'\',\''+pr.capGains+'\',\''+pr.netDiv+'\',\''+prn+'\',\''+escAttr(pr.closeReason||'')+'\',\''+escAttr(String(pr.targetPnL||''))+'\',\''+escAttr(String(pr.paidDiv||''))+'\',\''+escAttr(String(pr.rcvdDiv||''))+'\',\''+prGid+'\')">'+prNbLbl+'</button></td>';
+hh+='<td><button onclick="deleteClosedTrade('+pr.rowIdx+',\''+escAttr(pr.id)+'\',event)" style="background:none;border:1px solid rgba(239,68,68,0.3);color:var(--high);cursor:pointer;padding:4px 8px;border-radius:6px;font-size:10px;opacity:0.5;transition:opacity .2s" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.5" title="Remove this partial">&#10005;</button></td>';
 hh+='</tr>';
 });}
 });hh+='</tbody>';document.getElementById('historyTable').querySelector('tbody').outerHTML=hh;}

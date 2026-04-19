@@ -320,13 +320,65 @@ function computeHedgeRatio_(seriesA, seriesB) {
 }
 
 // ============================================================
+// SECURITY: AUTH, RATE LIMITING, AUDIT LOGGING
+// ============================================================
+function verifyAuth_(e) {
+  var key = '';
+  if (e && e.parameter && e.parameter.key) key = e.parameter.key;
+  var expected = PropertiesService.getScriptProperties().getProperty('API_KEY');
+  if (!expected || expected.length < 16) return true; // no key configured = open (backwards compat)
+  return key === expected;
+}
+
+function checkRateLimit_(action) {
+  var cache = CacheService.getScriptCache();
+  var key = 'rl_' + action;
+  var count = parseInt(cache.get(key) || '0');
+  var limit = 60;
+  if (action === 'clearHistory' || action === 'deleteClosedTrade') limit = 5;
+  else if (action === 'saveTrade' || action === 'closeTrade' || action === 'partialClose') limit = 20;
+  if (count >= limit) throw new Error('Rate limit exceeded for ' + action + '. Try again in 60 seconds.');
+  cache.put(key, String(count + 1), 60);
+}
+
+function auditLog_(action, params) {
+  try {
+    var ss = SpreadsheetApp.getActive();
+    var sheet = ss.getSheetByName('AuditLog');
+    if (!sheet) {
+      sheet = ss.insertSheet('AuditLog');
+      sheet.getRange(1, 1, 1, 3).setValues([['Timestamp', 'Action', 'Params']]);
+      sheet.getRange(1, 1, 1, 3).setFontWeight('bold');
+    }
+    var paramStr = '';
+    try { paramStr = JSON.stringify(params || {}).substring(0, 500); } catch(ex) { paramStr = String(params); }
+    sheet.appendRow([new Date(), action, paramStr]);
+    // Keep audit log to last 2000 rows
+    if (sheet.getLastRow() > 2001) sheet.deleteRows(2, sheet.getLastRow() - 2001);
+  } catch(ex) { /* audit logging should never break the main request */ }
+}
+
+var WRITE_ACTIONS_ = {
+  'saveTrade':1, 'closeTrade':1, 'partialClose':1, 'addDividend':1,
+  'saveNote':1, 'clearHistory':1, 'deleteClosedTrade':1,
+  'saveWatchlist':1, 'removeWatchlist':1, 'saveExitParams':1,
+  'saveNotificationSettings':1, 'runModelPortfolios':1, 'backfillTargets':1
+};
+
+// ============================================================
 // ROUTING
 // ============================================================
 function doGet(e) {
+  if (!verifyAuth_(e)) {
+    return ContentService.createTextOutput(JSON.stringify({ok:false, error:'unauthorized'}))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
   var action = (e && e.parameter && e.parameter.action) ? e.parameter.action : 'getData';
   var mode = (e && e.parameter && e.parameter.mode) ? e.parameter.mode : 'intra';
   var result = {};
   try {
+    checkRateLimit_(action);
+    if (WRITE_ACTIONS_[action]) auditLog_(action, e && e.parameter ? e.parameter : {});
     if (action === 'getData' || action === 'getMacroValuation') {
       setupMacroSheet();
     }
@@ -565,10 +617,16 @@ function doGet(e) {
     .setMimeType(ContentService.MimeType.JSON);
 }
 function doPost(e) {
+  if (!verifyAuth_(e)) {
+    return ContentService.createTextOutput(JSON.stringify({ok:false, error:'unauthorized'}))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
   try {
     var payload = JSON.parse(e.postData.contents);
     var action = payload.action || '';
     if (!action) return ContentService.createTextOutput(JSON.stringify({ok:false,message:'Missing action'})).setMimeType(ContentService.MimeType.JSON);
+    checkRateLimit_(action);
+    auditLog_(action, {id: payload.id || '', action: action});
     if (action === 'saveTrade') {
       saveTradeToSheet(payload);
       return ContentService.createTextOutput(JSON.stringify({ok:true,message:"Trade saved"})).setMimeType(ContentService.MimeType.JSON);
@@ -1332,18 +1390,26 @@ function getClosedTrades() {
   } catch(e) { return []; }
 }
 function clearHistory() {
-  var ss = SpreadsheetApp.getActive();
-  var sheet = ss.getSheetByName('ClosedTrades');
-  if (!sheet || sheet.getLastRow() <= 1) return;
-  sheet.deleteRows(2, sheet.getLastRow() - 1);
+  var lock = LockService.getDocumentLock();
+  if (!lock.tryLock(10000)) throw new Error('Could not acquire lock — another operation is in progress.');
+  try {
+    var ss = SpreadsheetApp.getActive();
+    var sheet = ss.getSheetByName('ClosedTrades');
+    if (!sheet || sheet.getLastRow() <= 1) return;
+    sheet.deleteRows(2, sheet.getLastRow() - 1);
+  } finally { lock.releaseLock(); }
 }
 function deleteClosedTrade(rowIdx) {
-  var row = parseInt(rowIdx);
-  if (!row || row < 2) throw new Error('Invalid row index');
-  var ss = SpreadsheetApp.getActive();
-  var sheet = ss.getSheetByName('ClosedTrades');
-  if (!sheet || row > sheet.getLastRow()) throw new Error('Row does not exist');
-  sheet.deleteRow(row);
+  var lock = LockService.getDocumentLock();
+  if (!lock.tryLock(10000)) throw new Error('Could not acquire lock — another operation is in progress.');
+  try {
+    var row = parseInt(rowIdx);
+    if (!row || row < 2) throw new Error('Invalid row index');
+    var ss = SpreadsheetApp.getActive();
+    var sheet = ss.getSheetByName('ClosedTrades');
+    if (!sheet || row > sheet.getLastRow()) throw new Error('Row does not exist');
+    sheet.deleteRow(row);
+  } finally { lock.releaseLock(); }
 }
 // ============================================================
 // BASKET ANALYTICS
@@ -3210,19 +3276,28 @@ function addDividendToTrade_(id, type, amount) {
 // Saves a journal note to a specific ClosedTrades row.
 // row = 1-indexed sheet row number (from getClosedTrades rowIdx field)
 function saveTradeNote(row, note) {
-  if (!row || row < 2) throw new Error('Invalid row number');
-  var ss = SpreadsheetApp.getActive();
-  var sheet = ss.getSheetByName('ClosedTrades');
-  if (!sheet) throw new Error('ClosedTrades sheet not found');
-  if (row > sheet.getLastRow()) throw new Error('Row does not exist');
-  // Notes column = P (col 16)
-  sheet.getRange(row, 16).setValue(note);
-  return true;
+  var lock = LockService.getDocumentLock();
+  if (!lock.tryLock(10000)) throw new Error('Could not acquire lock — another operation is in progress.');
+  try {
+    if (!row || row < 2) throw new Error('Invalid row number');
+    if (typeof note === 'string' && note.length > 2000) note = note.substring(0, 2000);
+    var ss = SpreadsheetApp.getActive();
+    var sheet = ss.getSheetByName('ClosedTrades');
+    if (!sheet) throw new Error('ClosedTrades sheet not found');
+    if (row > sheet.getLastRow()) throw new Error('Row does not exist');
+    sheet.getRange(row, 16).setValue(note);
+    return true;
+  } finally { lock.releaseLock(); }
 }
 // ============================================================
 // WATCHLIST
 // ============================================================
 function saveToWatchlist(id, mode) {
+  var lock = LockService.getDocumentLock();
+  if (!lock.tryLock(10000)) throw new Error('Could not acquire lock — another operation is in progress.');
+  try { return saveToWatchlist_(id, mode); } finally { lock.releaseLock(); }
+}
+function saveToWatchlist_(id, mode) {
   var ss = SpreadsheetApp.getActive();
   var sheet = ss.getSheetByName('Watchlist');
   if (!sheet) {
@@ -3267,14 +3342,18 @@ function saveToWatchlist(id, mode) {
   sheet.appendRow([id, new Date(), curZ, mode, expProfit, curSpread]);
 }
 function removeFromWatchlist(id) {
-  var ss = SpreadsheetApp.getActive();
-  var sheet = ss.getSheetByName('Watchlist');
-  if (!sheet || sheet.getLastRow() <= 1) return;
-  var data = sheet.getDataRange().getValues();
-  var cleanTarget = cleanId(id);
-  for (var i = data.length - 1; i >= 1; i--) {
-    if (cleanId(data[i][0]) === cleanTarget) { sheet.deleteRow(i + 1); break; }
-  }
+  var lock = LockService.getDocumentLock();
+  if (!lock.tryLock(10000)) throw new Error('Could not acquire lock — another operation is in progress.');
+  try {
+    var ss = SpreadsheetApp.getActive();
+    var sheet = ss.getSheetByName('Watchlist');
+    if (!sheet || sheet.getLastRow() <= 1) return;
+    var data = sheet.getDataRange().getValues();
+    var cleanTarget = cleanId(id);
+    for (var i = data.length - 1; i >= 1; i--) {
+      if (cleanId(data[i][0]) === cleanTarget) { sheet.deleteRow(i + 1); break; }
+    }
+  } finally { lock.releaseLock(); }
 }
 function getWatchlistData() {
   try {
@@ -5379,6 +5458,8 @@ function getExitAlerts_() {
  * Called via ?action=saveExitParams&exitZ=0.5&maxHold=60&stopLossPct=5
  */
 function saveExitParams_(exitZ, maxHold, stopLossPct) {
+  var lock = LockService.getDocumentLock();
+  if (!lock.tryLock(10000)) throw new Error('Could not acquire lock — another operation is in progress.');
   try {
     var ss = SpreadsheetApp.getActive();
     var sheet = ss.getSheetByName('ExitParams');
@@ -5387,7 +5468,6 @@ function saveExitParams_(exitZ, maxHold, stopLossPct) {
       sheet.getRange(1, 1, 1, 2).setValues([['Key', 'Value']]);
       sheet.getRange(1, 1, 1, 2).setFontWeight('bold');
     }
-    // Clear and rewrite
     if (sheet.getLastRow() > 1) sheet.deleteRows(2, sheet.getLastRow() - 1);
     sheet.getRange(2, 1, 3, 2).setValues([
       ['exitZ', exitZ],
@@ -5398,7 +5478,7 @@ function saveExitParams_(exitZ, maxHold, stopLossPct) {
   } catch (e) {
     console.error('saveExitParams_ error: ' + e);
     return false;
-  }
+  } finally { lock.releaseLock(); }
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -5522,25 +5602,40 @@ function getCorrelationMonitor_() {
 // NOTIFICATION SETTINGS — stub (planned feature)
 // ═══════════════════════════════════════════════════════════════════
 function saveNotificationSettings_(chatId, botToken) {
-  var ss = SpreadsheetApp.getActive();
-  var sheet = ss.getSheetByName('NotificationSettings');
-  if (!sheet) {
-    sheet = ss.insertSheet('NotificationSettings');
-    sheet.getRange(1, 1, 1, 2).setValues([['Key', 'Value']]);
-  }
-  if (sheet.getLastRow() > 1) sheet.deleteRows(2, sheet.getLastRow() - 1);
-  sheet.getRange(2, 1, 2, 2).setValues([['chatId', chatId], ['botToken', botToken]]);
+  var lock = LockService.getDocumentLock();
+  if (!lock.tryLock(10000)) throw new Error('Could not acquire lock — another operation is in progress.');
+  try {
+    if (typeof chatId === 'string' && chatId.length > 100) throw new Error('Invalid chatId');
+    if (typeof botToken === 'string' && botToken.length > 200) throw new Error('Invalid botToken');
+    var props = PropertiesService.getScriptProperties();
+    props.setProperty('NOTIF_CHAT_ID', chatId || '');
+    props.setProperty('NOTIF_BOT_TOKEN', botToken || '');
+    // Clean up legacy sheet if it exists
+    var ss = SpreadsheetApp.getActive();
+    var sheet = ss.getSheetByName('NotificationSettings');
+    if (sheet) {
+      if (sheet.getLastRow() > 1) sheet.deleteRows(2, sheet.getLastRow() - 1);
+      sheet.getRange(2, 1, 2, 2).setValues([['chatId', '(moved to ScriptProperties)'], ['botToken', '(moved to ScriptProperties)']]);
+    }
+  } finally { lock.releaseLock(); }
 }
 
 function getNotificationSettings_() {
   try {
+    var props = PropertiesService.getScriptProperties();
+    var chatId = props.getProperty('NOTIF_CHAT_ID') || '';
+    var botToken = props.getProperty('NOTIF_BOT_TOKEN') || '';
+    if (chatId || botToken) return { chatId: chatId, botToken: botToken };
+    // Fallback: migrate from legacy sheet
     var ss = SpreadsheetApp.getActive();
     var sheet = ss.getSheetByName('NotificationSettings');
     if (!sheet || sheet.getLastRow() <= 1) return { chatId: '', botToken: '' };
     var data = sheet.getDataRange().getValues();
     var settings = {};
     for (var i = 1; i < data.length; i++) {
-      settings[String(data[i][0]).trim()] = String(data[i][1] || '');
+      var k = String(data[i][0]).trim();
+      var v = String(data[i][1] || '');
+      if (v.indexOf('(moved') === -1) settings[k] = v;
     }
     return settings;
   } catch (e) {
