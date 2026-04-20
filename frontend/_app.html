@@ -2054,7 +2054,7 @@ groups[key].rows.push(t);
 });
 return order.map(function(k){
 var g=groups[k];var r=g.rows.slice();
-r.sort(function(a,b){return String(a.closeDate||'').localeCompare(String(b.closeDate||''));});
+r.sort(function(a,b){return new Date(a.closeDate||0)-new Date(b.closeDate||0);});
 var totalPnl=0,totalCapGains=0,totalNetDiv=0,totalPaidDiv=0,totalRcvdDiv=0;
 var sumExAxSz=0,sumSzA=0,sumExBxSz=0,sumSzB=0;
 var hasFull=false;var lastRow=r[r.length-1];

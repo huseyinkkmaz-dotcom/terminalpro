@@ -262,18 +262,73 @@ Pre-computed probability analysis for top 20 alert pairs. Updated daily at 9 AM 
 5. Run `fetchDividendDates()` to populate DivDates sheet
 6. Deploy → Manage Deployments → New Version → Deploy
 7. The deployment URL stays the same (format: `https://script.google.com/macros/s/.../exec`)
+8. **Set API_KEY** in Project Settings → Script Properties → add `API_KEY` = same value as in frontend `_app.html`
 
 ### Vercel (Frontend) — done in command prompt
 
-1. Set `GAS_URL` in index.html to the GAS deployment URL
-2. From the `frontend/` directory, run `vercel --prod`
-3. Or use: `npm run deploy:frontend` from the project root
+1. Set `GAS_URL` and `API_KEY` in `_app.html` (not `index.html` — the app file was renamed to `_app.html`)
+2. Set Vercel environment variables: `SITE_PASSWORD` (the login password) and optionally `AUTH_SECRET` (random string for cookie signing; auto-generated if not set)
+3. From the `frontend/` directory, run `vercel --prod`
+4. Or use: `npm run deploy:frontend` from the project root
+
+### Frontend file structure
+
+```
+frontend/
+  api/
+    index.js       ← Vercel serverless function (password gate)
+  _app.html        ← The actual dashboard (renamed from index.html)
+  vercel.json      ← Rewrites all routes through auth gate
+```
+
+The serverless function (`api/index.js`) checks a `tp_auth` cookie. If valid → serves `_app.html`. If not → shows a login page. The `SITE_PASSWORD` env var controls the password. If not set, the site is open (backwards compat).
 
 ### npm Scripts (from project root)
 
 - `npm run push:gas` — push GAS files via clasp
 - `npm run deploy:frontend` — deploy frontend to Vercel
 - `npm run deploy` — push GAS + deploy frontend
+
+## Security Architecture
+
+### Authentication Layers
+
+1. **Website password** — Vercel serverless function at `api/index.js` checks `SITE_PASSWORD` env var. Login sets an `HttpOnly; Secure; SameSite=Strict` cookie valid 7 days. No one sees the HTML source, GAS URL, or API key without the password.
+2. **API key** — Every GAS request includes a `key` parameter checked by `verifyAuth_()` against the `API_KEY` Script Property. Protects against direct API access even if someone discovers the GAS URL.
+3. **Rate limiting** — `checkRateLimit_()` via CacheService: 60 calls/min general, 20/min for trade ops, 5/min for destructive ops (clearHistory, deleteClosedTrade).
+4. **Audit logging** — All write actions logged to `AuditLog` sheet with timestamp + action + params. Auto-trims to 2000 rows.
+5. **LockService** — All write actions wrapped in `LockService.getDocumentLock()` with 10s timeout.
+6. **CSP** — Content-Security-Policy meta tag: `connect-src https://script.google.com` blocks data exfiltration.
+7. **XSS prevention** — `escHtml()` for HTML content, `escAttr()` for onclick attribute strings.
+
+### Credential Storage
+
+- **Telegram bot token** — stored in `PropertiesService.getScriptProperties()` (encrypted at rest), NOT in sheet cells
+- **API_KEY** — stored in GAS Script Properties (encrypted at rest) + frontend `_app.html` constant (protected by site password)
+- **SITE_PASSWORD** — stored as Vercel environment variable (marked as "Sensitive")
+
+## V25 Statistical Improvements (2026-04)
+
+### Completed Features
+
+1. **OLS Hedge Ratio for Credit Pairs** — `computeHedgeRatio_()` computes β via OLS, clamped [0.3, 3.0]. Credit pairs use adjusted spread `priceA - β·priceB`. Applied across all engines (backtest, sizer, screener).
+2. **Half-Life as Trading Signal** — OU half-life (`ouHalfLife_()`) integrated into:
+   - Quality column (sortable by HL, click "Quality" header)
+   - Position sizing: `hlMult = clamp(21/HL, 0.5×, 2.0×)` in inlineSizer, recalcInlineSizer, runSizer, getPositionSizing_
+   - Backtest: per-pair `pairMaxHold = min(3×HL, maxHold)` with `HL_CAP` exit reason
+   - New "HL Mult" card in inline sizer and column in portfolio sizer
+3. **β-Adjusted Size in Trade Modal** — `openModal()` reads `hedgeRatio` from `_alertDataMap`. For credit pairs (β≠1.0), shows yellow hint below SIZE B. Typing SIZE A auto-fills SIZE B = round(SIZE A × β).
+4. **History Tab Grouping** — `groupHistoryByTrade()` consolidates partial closes of the same trade into one display row. Groups by `tradeGroupId` (UUID set at trade open) with fallback to composite key for legacy rows. Stats count groups not rows. "Group Partials" toggle (default ON) with purple expand/collapse for individual partials.
+5. **30d/60d Win Rate Windows Only** — Dropped 15d and 90d windows from screener, display, and aggregate stats.
+6. **3 Model Portfolios** — Reduced from 10, labeled Aggressive/Balanced/Diversified.
+7. **Rate Regime Badge** — Shows "RATE MOVE +/-Xbp" when 30d 10Y yield change exceeds 25bp.
+8. **Screener Cache for Inline Analysis** — `analyzeAlert()` checks screener cache first; renders cached result instantly with "Full Analysis" fallback button.
+
+### Key Formulas
+
+- **HL multiplier**: `clamp(21 / HL, 0.5, 2.0)` — 21 trading days baseline. HL=10d → 2.0×, HL=21d → 1.0×, HL=42d → 0.5×.
+- **HL backtest cap**: `3 × HL` — 3 half-lives ≈ 87.5% expected reversion.
+- **β source of truth**: `_alertDataMap[key].hedgeRatio` (scalar, clamped [0.3, 3.0]).
 
 ## Google Sheets Required
 
