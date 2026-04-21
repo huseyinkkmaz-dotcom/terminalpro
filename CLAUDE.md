@@ -34,52 +34,59 @@ Google Sheets (Data Layer)
     ├── BasketCache sheet   → Auto: pre-computed portfolio basket analytics
     └── ScreenerCache sheet → Auto: pre-computed probability analysis for top alert pairs
 
-Google Apps Script (API Backend)
-    ├── Code.gs             → doGet/doPost routing, data reading, trade operations
+Google Apps Script (API Backend — ~7000 lines)
+    ├── Code.gs             → doGet/doPost routing, data reading, trade operations, backtest, sizer, screener
     └── SetupDashboard.gs   → Sheet builder, credit pair generator, triggers, dividend fetcher
 
-Vercel (Frontend)
-    └── index.html          → Single-file dashboard (HTML + CSS + JS)
+Vercel (Frontend — password-gated)
+    ├── api/index.js        → Serverless auth gate (HMAC cookie, login page)
+    ├── _app.html           → Single-file dashboard (HTML + CSS + JS, ~4400 lines)
+    └── vercel.json         → Routes all traffic through auth gate
 ```
 
 ## Key File Descriptions
 
-### `gas/Code.gs` — API Backend (V24)
+### `gas/Code.gs` — API Backend (V25, ~7000 lines)
 
-- **doGet()** routes `?action=getData|saveTrade|closeTrade|addDividend|saveNote|getBasketAnalytics|getScreenerData|analyzePair` with optional `&mode=intra|credit`
+**Security layer** — All requests pass through `verifyAuth_(e)` → `checkRateLimit_(action)` → `auditLog_()` for write actions. All write actions wrapped in `LockService.getDocumentLock()`.
+
+**doGet()** routes 35+ actions with `?action=X&mode=intra|credit`:
+- **Data**: `getData`, `getMacroValuation`, `getBasketAnalytics`, `getPortfolioAnalytics`, `getScreenerData`, `getRegimeData`, `getCorrelationMonitor`
+- **Analysis**: `analyzePair` (supports custom `windows` param), `sweepPair`, `getOptimalSweep`, `getSensitivityHeatmap`, `getBacktestResults`, `getPositionSizing`
+- **Trades**: `saveTrade`, `closeTrade`, `partialClose`, `addDividend`, `saveNote`, `getTradeEvents`, `getTradeAlerts`, `getExitAlerts`, `saveExitParams`, `backfillTargets`
+- **Portfolio**: `getModelPortfolios`, `runModelPortfolios`, `getJournalAnalytics`, `getDividendCapture`
+- **Other**: `getWatchlist`, `saveWatchlist`, `removeWatchlist`, `clearHistory`, `deleteClosedTrade`, `saveNotificationSettings`, `getNotificationSettings`
+
+**doPost()** routes: `saveTrade`, `closeTrade`, `partialClose`, `addDividend` (JSON payload).
+
 - **WebCache failsafe** — API prefers `WebCache` / `WebCacheCredit` (static snapshots) over `Live` / `CreditLive` (GOOGLEFINANCE formulas). Faster responses, decoupled from formula recalculation.
 - **getAlertData(mode)** reads WebCache (or Live fallback) sheet. Filters:
   - Skips pairs with missing/zero prices
   - Skips pairs with < 40 trading days of history (HistCount column Q/index 16)
   - Skips pairs where either ticker has empty Coupon Yield (columns I,J / index 8,9)
   - Only returns pairs with |Z-Score| >= 1.8
-  - Enriches each pair with `divDate` and `divLeg` from the DivDates sheet (nearest upcoming ex-div from either leg)
-- **getOpenTrades()** merges Live + CreditLive for unified portfolio lookup, returns PaidDiv/ReceivedDiv totals
-- **saveTradeToSheet() / closeTradeInSheet()** check both Live and CreditLive
+  - Enriches each pair with `divDate`, `divLeg`, `halfLife`, `halfLifeValid`, `hedgeRatio`, `callRiskA`, `callRiskB`, `pA`, `pB`
+- **getOpenTrades()** merges Live + CreditLive via hash-map lookup, returns PaidDiv/ReceivedDiv totals, `currentZ`, `sector`
+- **saveTradeToSheet()** — validates positive prices, non-zero size, $10k price / 100k share caps. Stamps `tradeGroupId` for partial-close grouping.
 - **addDividendToTrade(id, type, amount)** accumulates dividend cash flows on open positions. `type` is `paid` (short leg owes) or `received` (long leg earns). Amounts are additive (accumulator pattern).
 - **PnL formula** — `Net PnL = Capital Gains + Received Div - Paid Div`. Applied in both open trade display and closed trade history.
-- **saveTradeNote(row, note)** saves a journal note to a specific ClosedTrades row. Uses 1-indexed sheet row number (returned as `rowIdx` from `getClosedTrades`). Notes column = P (col 16).
-- **getBasketAnalytics()** computes portfolio-level metrics for all open trades:
-  - Weighted average Z-score (instant, from current live data)
-  - Rolling 30/60/90-day Z-scores (from TickerHistory historical prices)
-  - Sector concentration percentages
-  - Strategy mix (intra vs credit count)
-  - Last 30 daily basket values for sparkline
-  - Returns `currentZ` and `sector` per trade in `getOpenTrades()` for frontend computation
-- **analyzeSinglePair_(tA, tB, priceA, priceB, currentZ)** — lightweight endpoint for inline alert analysis:
-  - Builds 2-leg sandbox pair (auto-detects long/short from Z-sign)
-  - Runs `computeBasketMetrics_` + `computeHistoricalProbabilities_` for that pair
-  - Returns win rates (30/60/90d), bad scenario, rolling Z-scores, expected profit
-  - Called via `?action=analyzePair&tA=X&tB=Y&pA=25&pB=24&z=2.5`
-- **runNightlyScreener()** — daily 9 AM trigger, pre-computes probability analysis for top 20 alert pairs:
-  - Reads alerts from both intra + credit modes
-  - Sorts by |Z| descending, takes top 20
-  - Runs `analyzeSinglePair_` for each with 5-min timeout safety
-  - Writes results to `ScreenerCache` sheet
-- **getScreenerData_()** — reads pre-computed screener results from `ScreenerCache` sheet
-- **getAlertData()** now includes `pA` and `pB` (leg prices) in each alert object
+- **getBasketAnalytics()** computes portfolio-level metrics: weighted avg Z, rolling 30/60/90-day Z-scores, sector concentration, strategy mix, max drawdown, last 30 daily basket values for sparkline.
+- **analyzeSinglePair_(tA, tB, priceA, priceB, currentZ, windows, mode)** — builds 2-leg sandbox pair, runs probability engine, returns win rates (30/60d), expected profit, bad scenario, rolling Z-scores.
+- **runBacktest_(zThreshold, exitZ, maxHold, mode)** — full backtest engine with HL-dynamic hold cap (`pairMaxHold = min(3×HL, maxHold)`), exit reasons: `Z_REVERT`, `HL_CAP`, `MAX_HOLD`. Soft-blacklisted tickers included for survivorship bias avoidance.
+- **getPositionSizing_(maxLossPerTrade)** — HL-adjusted sizing (`hlMult = clamp(21/HL, 0.5, 2.0)`), optional Kelly sizing from ScreenerCache.
+- **checkExitSignals_(params)** — 6 exit triggers: STATISTICAL_TARGET, TIME_STOP, STOP_LOSS, PARTIAL_PROFIT, FULL_TARGET, STAGNATION. Supports per-trade parameter overrides from OpenTrades cols J-O.
+- **runNightlyScreener()** — daily 9 AM trigger, pre-computes probability analysis for top 20 alert pairs to `ScreenerCache`.
+- **runModelPortfolioGenerator()** — generates 3 model portfolios (Aggressive/Balanced/Diversified) from candidate pool.
+- **Notification settings** — credentials stored in `PropertiesService.getScriptProperties()` (not in sheets). Telegram send not yet active.
 
-### `gas/SetupDashboard.gs` — Setup & Automation (V24)
+**Key statistical functions** (line numbers):
+- `getAdfCriticalValues_(n)` — line 38 (MacKinnon 1994 response surface)
+- `adfTest_(series)` — line 76 (ADF with min 30 observations)
+- `ouHalfLife_(series)` — line 189 (returns `{halfLife, lambda, isValid}`)
+- `engleGrangerTest_(seriesA, seriesB)` — line 238 (2-step cointegration)
+- `computeHedgeRatio_(seriesA, seriesB)` — line 306 (OLS β, clamped [0.3, 3.0])
+
+### `gas/SetupDashboard.gs` — Setup & Automation (~2400 lines)
 
 **Batched setup system** — uses `PropertiesService` to save/resume progress across GAS timeouts.
 
@@ -108,37 +115,54 @@ Vercel (Frontend)
   - 20-hour cache window to avoid rate limiting
 - **updateLivePrices()** — reads computed values from Live/CreditLive, writes static snapshots to WebCache/WebCacheCredit every 10 minutes
 
-### `frontend/index.html` — Dashboard UI
+### `frontend/_app.html` — Dashboard UI (~4400 lines)
 
-- Standalone HTML file deployed to Vercel
-- Strategy pill switch: "Intra-Company" (blue accent) / "Credit Arb" (purple accent)
-- Fetches from GAS via `?action=getData&mode=intra|credit`
-- Features: Z-score trend ribbons, volume spike tags, sortable columns, trade entry modal
-- **Div Date column** — shows nearest ex-dividend date with color coding:
-  - Red: <= 7 days away
-  - Yellow: <= 30 days away
-  - Gray: > 30 days away
-  - Shows which leg (A or B) has the upcoming dividend
-- **Portfolio Health Bar** — collapsible analytics panel on Active Portfolio tab:
-  - Weighted average Z-score (instant, computed from portfolio data in frontend)
-  - Rolling 30/60/90-day Z-scores (fetched from `?action=getBasketAnalytics` backend endpoint)
-  - Sector concentration bar chart
-  - Strategy mix (intra vs credit)
-  - Color-coded: Green (neutral |Z|<0.5), Blue (mild), Yellow (elevated), Red (extreme |Z|>=1.8)
-- **Composite Setup Score** — 0-100 score computed in frontend from alert data:
-  - Factors: |Z| magnitude (20pts), expected profit (20pts), liquidity (15pts), volume spike (5pts), Z-trend convergence (15pts), age sweet spot (10pts), yield (10pts), div proximity penalty (-5pts), screener bonus (5pts)
-  - Displayed as first column in alerts table, sorted by default
-  - Filter pills: Top 5, Top 10, Top 20, All
-- **Inline Analyze Button** — per-alert probability analysis:
-  - Gear icon next to each pair in alerts table
-  - On click: calls `?action=analyzePair` → expands row with 30/60/90d win rates, expected profit, bad scenario
-  - Auto-detects trade direction from Z-sign (Z>0 → short spread, Z<0 → long spread)
-  - Toggle behavior: click again to collapse
-- **Pre-Screened Badges** — win rate badges from nightly screener cache:
-  - Loaded on page init from `?action=getScreenerData`
-  - Shows colored "XX% WR" badge next to pair name if pre-analyzed
-  - Feeds +5 bonus points into composite score
-- **CRITICAL**: Line 1 of `<script>` has `GAS_URL` constant — must be set to deployed GAS URL
+Single-file dashboard (HTML + CSS + JS). Served through Vercel auth gate — never directly accessible.
+
+**Key constants** (set before deploying):
+- `GAS_URL` — line 1078 (deployed GAS URL)
+- `API_KEY` — line 1081 (must match GAS Script Property)
+- CSP meta tag — line 6 (restricts `connect-src` to `script.google.com`)
+
+**Security helpers**:
+- `escHtml()` — line 1157 (HTML entity encoding for user-facing interpolation)
+- `escAttr()` — line 1158 (attribute-safe escaping for onclick strings)
+- `cleanIdFE()` — line 1156 (replaces `|` with `_`, strips non-alphanumeric except `-`)
+- `apiGet()` — line 1413 (retry logic: 2 retries, exponential backoff 2s/4s, on 5xx/network errors)
+
+**8 tabs**: Alerts (line 712), Portfolio (line 733), Macro (line 797), Risk Lab (line 823), History (line 856), Dividend Capture (line 904, hidden), Models (line 921), Backtest (line 948)
+
+**Strategy pill switch**: "Intra-Company" (blue accent) / "Credit Arb" (purple accent)
+
+**Alerts tab features**:
+- Quality column with ADF badges, HL:Xd display, CALLABLE warnings, call risk tracking
+- Z-score trend ribbons from AlertsLog (hourly snapshots)
+- Volume spike tags, sortable columns
+- **Inline Analyze** — gear icon per alert → expands row with 30/60d win rates, expected profit, bad scenario. Checks screener cache first, falls back to live `?action=analyzePair`.
+- **Inline Sizer** — HL-adjusted position sizing with `hlMult = clamp(21/HL, 0.5, 2.0)`. Shows HL Mult card (line ~3085). `recalcInlineSizer()` (line 3155) and `buildInlineSizerCards()` (line 3132) also use hlMult.
+- **Pre-Screened Badges** — "XX% WR" badges from nightly screener cache
+- **CSV Export** — `csvCell()`, `csvRows()`, `downloadCsv()` (lines 1160-1162). UTF-8 BOM for Excel.
+- Div Date column with color coding: Red (<=7d), Yellow (<=30d), Gray (>30d), with "EST" badge for projected dates
+
+**Trade entry modal** (`openModal()` — line 1438):
+- **β auto-fill for credit pairs**: reads `hedgeRatio` from `_alertDataMap`. For β≠1.0, shows yellow `betaHint` div (line 571) and auto-fills SIZE B = round(SIZE A × β) on input.
+
+**Portfolio tab**:
+- Portfolio Health Bar with weighted avg Z, rolling 30/60/90d Z-scores, sector concentration, strategy mix, max drawdown
+- Color-coded: Green (|Z|<0.5), Blue (mild), Yellow (elevated), Red (|Z|>=1.8)
+- Data staleness indicator in header ("Data: 5m ago") with green/yellow/red coding
+- Concentration warning when >50% in one sector
+- Portfolio sizer (`runSizer()` line 2945 / `renderSizer()` line 3009) with HL Mult column
+
+**History tab**:
+- **Group Partials toggle** (line 878, default ON) — `groupHistoryByTrade()` (line 2047) consolidates partial closes into one display row. Groups by `tradeGroupId` with composite key fallback for legacy rows. Stats count groups not rows. Purple expand/collapse for individual partials.
+- CSV Export button for history data
+
+**Other tabs**:
+- Macro: Treasury yield comparison, macro valuation (`loadMacroValuation()` line 2848), rate regime badge
+- Risk Lab: Cross-pair correlation, portfolio analytics
+- Models: 3 model portfolios (Aggressive/Balanced/Diversified)
+- Backtest: Full backtest engine (`runBacktest()` line 3486), optimal sweep (`runOptimalSweep()` line 3416)
 
 ## Live Sheet Column Map (24 columns, 0-indexed)
 
@@ -173,11 +197,12 @@ Both `Live` and `CreditLive` share this layout:
 
 ## DivDates Sheet (auto-populated)
 
-| A: Ticker | B: NextDivDate | C: LastFetched |
-|-----------|---------------|----------------|
-| BAC-B | 2026-03-15 | 2026-02-20T06:00:00 |
+| A: Ticker | B: NextDivDate | C: LastFetched | D: IsEstimated |
+|-----------|---------------|----------------|----------------|
+| BAC-B | 2026-03-15 | 2026-02-20T06:00:00 | CONFIRMED |
+| PSA-F | 2026-06-15 | 2026-02-20T06:00:00 | ESTIMATED |
 
-Populated by `fetchDividendDates()` via Yahoo Finance. 20-hour cache — tickers fetched within the last 20 hours are skipped.
+Populated by `fetchDividendDates()` via Yahoo Finance. 20-hour cache — tickers fetched within the last 20 hours are skipped. `IsEstimated`: `CONFIRMED` (direct from Yahoo) vs `ESTIMATED` (+91 day projection). Frontend shows yellow "EST" badge next to projected dates.
 
 ## BasketCache Sheet (auto-populated)
 
@@ -205,7 +230,7 @@ Pre-computed probability analysis for top 20 alert pairs. Updated daily at 9 AM 
 4. **WebCache layer** — API reads from WebCache/WebCacheCredit (static values), not directly from Live/CreditLive (formulas). The `updateLivePrices()` trigger snapshots formula results every 10 minutes. If you change Live sheet structure, WebCache must match.
 5. **GAS deployment** — Every code change requires: Manage Deployments → New Version → Deploy. The URL stays the same but the version must increment.
 6. **GOOGLEFINANCE limits** — ~1000 GOOGLEFINANCE calls per sheet. Each pair uses ~6 calls in Live (price×2, volumeavg×2, volume×2) + 2 in Levels (historical). With 500+ credit pairs, sheets may load slowly (30-60s).
-7. **Frontend is a single file** — All HTML, CSS, and JS live in `index.html`. No build step. Deploy via `vercel --prod` from the `frontend/` directory.
+7. **Frontend is a single file** — All HTML, CSS, and JS live in `_app.html`. No build step. Deploy via `vercel --prod` from the `frontend/` directory. The file is served through the Vercel auth gate (`api/index.js`), never directly.
 8. **ZScoreAge tracking** — The hourly trigger manages this. If |z| >= 1.8 and no timestamp exists → creates one. If |z| < 1.8 and timestamp exists → deletes it. Age = days since first crossing.
 9. **DivDates fetch** — Yahoo Finance has rate limits. The 20-hour cache in LastFetched prevents hammering. Phase 1 (batch API) handles most tickers; Phase 2 (chart fallback) catches the rest.
 
@@ -347,31 +372,30 @@ The serverless function (`api/index.js`) checks a `tp_auth` cookie. If valid →
 **Coupon Yield empty = variable/reset rate → excluded from dashboard.**
 **Credit Rating empty = excluded from credit arb pairing.**
 
-## ADF Backlog (Tier 2 & Tier 3 — pending)
+## ADF Backlog
 
-Tier 1 shipped: full-history lookback (no 90d cap), tri-state ADF (pass/weak/fail at 5%/10%), no hard score cap, ±5 nudge instead.
+**Tier 1 — DONE**: Full-history lookback (no 90d cap), tri-state ADF (pass/weak/fail at 5%/10%), MacKinnon (1994) response surface for size-adjusted critical values, min 30 observations.
 
-**Tier 2 — better statistics (do next):**
-1. Engle-Granger cointegration test. OLS priceA = α + β·priceB, then ADF on the residuals. Replace nominal-spread ADF for credit pairs especially. Store hedge ratio β so it can be used for sizing too.
-2. Pair ADF with half-life as secondary check — if HL is clean (5–25d) treat as tradeable even if ADF is borderline.
+**Tier 2 — DONE (V25)**:
+1. ~~Engle-Granger cointegration test~~ — `engleGrangerTest_()` at Code.gs:238. OLS priceA = α + β·priceB, ADF on residuals with EG-specific critical values.
+2. ~~Hedge ratio β for sizing~~ — `computeHedgeRatio_()` at Code.gs:306. OLS β clamped [0.3, 3.0], used in credit pair spread, backtest, sizer.
+3. ~~HL as secondary check~~ — OU half-life integrated into quality column, sizer, and backtest. HL 5–25d treated as tradeable signal.
 
-**Tier 3 — regime awareness:**
-3. Rolling ADF: run on the last 60d in addition to the full window. Surface "was cointegrated, isn't anymore" pairs as a danger badge.
+**Tier 3 — regime awareness (pending):**
+1. Rolling ADF: run on the last 60d in addition to the full window. Surface "was cointegrated, isn't anymore" pairs as a danger badge.
 
-## Quant Audit Improvements (V24+)
+## Quant Audit Improvements (V24-V25)
 
 ### Statistical Foundation
-- **ADF Cointegration Test** — Each alert pair runs an Augmented Dickey-Fuller test on the nominal spread series. Non-stationary pairs (ADF p > 5%) have their composite score capped at 30 and display a red "✗ ADF" badge. Function: `adfTest_()` in Code.gs.
-- **OU Half-Life** — Ornstein-Uhlenbeck half-life per pair (`ouHalfLife_()` in Code.gs). Displayed as "HL:Xd" in the Quality column. Used for adaptive age scoring in the composite score.
+- **ADF Cointegration Test** — Each alert pair runs an Augmented Dickey-Fuller test on the spread series. Non-stationary pairs (ADF p > 5%) display a red "✗ ADF" badge. Function: `adfTest_()` in Code.gs line 76. Size-adjusted critical values via `getAdfCriticalValues_()` (MacKinnon 1994).
+- **Engle-Granger Cointegration** — Two-step test for credit pairs: OLS regression + ADF on residuals. Function: `engleGrangerTest_()` in Code.gs line 238.
+- **OU Half-Life** — Ornstein-Uhlenbeck half-life per pair (`ouHalfLife_()` in Code.gs line 189). Displayed as "HL:Xd" in the Quality column. Drives position sizing multiplier and backtest hold caps.
 
 ### Call Risk Tracking
-- Each alert now includes `callRiskA` / `callRiskB` objects when a leg trades above par ($25). The Quality column shows red "CALLABLE" badges. The composite score penalizes above-par callables proportionally to the premium.
+- Each alert includes `callRiskA` / `callRiskB` objects when a leg trades above par ($25). The Quality column shows red "CALLABLE" badges.
 
-### Composite Score V3
-- ADF stationarity as hard gate (non-stationary capped at 30)
-- Half-life replaces arbitrary age sweet spot (3-10d → HL-relative)
-- Removed correlated components (Z-mag + EP + age triple-counting eliminated)
-- Call risk penalty for above-par preferreds
+### Composite Score — REMOVED
+- The `computeSetupScore()` function and associated UI (score bars, score rings, score badges) have been removed. The Quality column now surfaces ADF/half-life/call-risk as standalone badges instead.
 
 ### Survivorship Bias Fix
 - **BLACKLIST** split into `BLACKLIST` (hard — data quality) and `SOFT_BLACKLIST` (poor performers). Backtests now use `isHardBlacklisted()` — only data-quality exclusions. Poor performers are included to prevent inflated backtest results.
@@ -383,20 +407,9 @@ Tier 1 shipped: full-history lookback (no 90d cap), tri-state ADF (pass/weak/fai
 - **Max Drawdown** — `getBasketAnalytics()` now computes peak-to-trough drawdown from basket history. Displayed in the Health Bar's new "Risk Metrics" section.
 - **Concentration Warning** — Alerts when >50% of portfolio notional is in one sector.
 
-### Dividend Date Transparency
-- **DivDates sheet** now has 4th column `IsEstimated` — `CONFIRMED` (direct from Yahoo) vs `ESTIMATED` (+91 day projection).
-- Frontend shows yellow "EST" badge next to projected dates.
-
 ### Data Staleness
 - Header now shows time since last WebCache update (e.g., "Data: 5m ago") with color coding: green (<15m), yellow (15-30m), red (>30m stale).
 - `MIN_WIN_RATE_SAMPLES` raised from 5 to 20 for statistical rigor.
-
-### DivDates Sheet (updated)
-
-| A: Ticker | B: NextDivDate | C: LastFetched | D: IsEstimated |
-|-----------|---------------|----------------|----------------|
-| BAC-B | 2026-03-15 | 2026-02-20T06:00:00 | CONFIRMED |
-| PSA-F | 2026-06-15 | 2026-02-20T06:00:00 | ESTIMATED |
 
 ## Hardening Priority Matrix (session progress tracker)
 
@@ -416,18 +429,18 @@ Running audit of the 18-item consolidated priority matrix. Check this section fi
 | 10 | Probability engine spread bias | MED | DONE | b6c6e57 | `computeHistoricalProbabilitiesWide_` now only matches triggers on the same side of the mean as the current signal. |
 | 11 | TNX division by 10 (verify) | MED | DONE | (current) | `getMacroData()` now autodetects: values ≥ 10 treated as CBOE index form (÷10), values < 10 treated as raw yield. Future-proofs against GOOGLEFINANCE API changes. |
 | 12 | Memory leaks (timers) | MED | DONE | (current) | `toggleLive()` skips refresh when `document.hidden`; `beforeunload` handler clears `liveTimer` + `_titleFlashTimer`. Audit confirmed `_searchTimer`, `safetyTimer`, `_titleFlashTimer` were already properly managed. |
-| 13 | `cleanIdFE` collision risk | MED | DONE | 7c55041 | Now preserves pipe (`|`) and hyphen (`-`) so `BAC-B\|BAC-M` anchors correctly to the DOM. |
+| 13 | `cleanIdFE` collision risk | MED | DONE | 7c55041 | Replaces `\|` with `_`, preserves hyphen (`-`), strips other non-alphanumeric. `BAC-B\|BAC-M` → `BAC-B_BAC-M` for safe DOM IDs. |
 | 14 | No data export (CSV) | MED | DONE | (current) | CSV helpers: `csvCell`, `csvRows`, `downloadCsv`. Buttons: "⬇ CSV" in alerts filter bar (exports visible filtered rows from `_alertDataMap`), "⬇ Export CSV" in History tab (exports `_historyData`). UTF-8 BOM for Excel, proper quoting of embedded commas/quotes/newlines. |
 | 15 | No retry logic on API calls | MED | DONE | 7c55041 | `apiGet()` wraps the fetch in a retry loop, up to 2 retries, exponential backoff (2s / 4s), only on AbortError / NetworkError / HTTP 5xx. |
 | 16 | doPost incomplete | LOW | DONE | b6c6e57 | `doPost` now routes partialClose / addDividend and rejects unknown actions with a clear error. |
-| 17 | Composite score undocumented | LOW | DONE | (current) | `computeSetupScore` inline block-comment already documents all 10 components. Function marked DEPRECATED — the score system was removed in commit 3cdbbcc; quality column now surfaces ADF/half-life/call-risk as standalone badges. |
-| 18 | Dead code / hidden features | LOW | PARTIAL | (current) | `computeSetupScore` flagged as DEPRECATED in-place (150 lines of dead code preserved for reference). Score-related CSS classes (`.score-bar*`, `.score-ring`, `.score-badge`, `.score-cell`) also dead. Full removal deferred to avoid risky bulk deletion in the same commit as other hardening. Audit confirmed `loadTreasuryBanner` / `renderTreasuryBanner` ARE called (agent report was wrong); `_searchTimer`, `safetyTimer`, `_titleFlashTimer` all properly managed. |
+| 17 | Composite score undocumented | LOW | DONE | (current) | `computeSetupScore` fully removed. Quality column now surfaces ADF/half-life/call-risk as standalone badges. |
+| 18 | Dead code / hidden features | LOW | PARTIAL | (current) | `computeSetupScore` function removed. Orphaned CSS classes (`.score-bar*`, `.score-ring`, `.score-badge`, `.score-cell`) still present — removal deferred. `loadTreasuryBanner` / `renderTreasuryBanner` confirmed active. All timers properly managed. |
 
-**All 18 matrix items now DONE except #18 (PARTIAL — dead-code physical removal deferred to a future cleanup commit).**
+**All 18 matrix items DONE except #18 (PARTIAL — orphaned CSS cleanup deferred).**
 
 ### Follow-up cleanup TODOs (safe to tackle next session)
 
-- [ ] Delete the dead `computeSetupScore()` function (lines ~1157-1312 in `frontend/index.html`) and the unused `.score-bar`, `.score-bar-fill`, `.score-cell`, `.score-badge`, `.score-ring*` CSS rules (lines 284-285, 494-498).
-- [ ] Audit the other ~100 remaining `innerHTML =` assignments for lower-risk interpolations (static/numeric) and migrate to `textContent` where trivially safe.
-- [ ] Add integration tests for the new CSV export helpers (`csvCell`, `csvRows`).
+- [ ] Remove dead `.score-bar`, `.score-bar-fill`, `.score-cell`, `.score-badge`, `.score-ring*` CSS rules from `_app.html` (orphaned after `computeSetupScore` removal).
+- [ ] Audit the ~100 remaining `innerHTML =` assignments for lower-risk interpolations (static/numeric) and migrate to `textContent` where trivially safe.
+- [ ] Add integration tests for the CSV export helpers (`csvCell`, `csvRows`).
 - [ ] Consider rolling ADF surveillance (Tier 3 from ADF backlog above).
